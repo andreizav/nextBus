@@ -166,10 +166,17 @@ export async function getLiveBusStatus(
     );
     etaMinutes = calculateEtaMinutes(stopsAway, distanceToStop, nearestVehicle.speed_kmh);
 
+    const matchedStop =
+      allStops.find((s) => s.stop_sequence === nearestVehicle.current_stop_sequence) ??
+      allStops[Math.max(0, Math.min(allStops.length - 1, nearestVehicle.current_stop_sequence - 1))];
+
     nearestBus = {
       ...nearestVehicle,
       stops_away: stopsAway,
-      eta_minutes: etaMinutes
+      eta_minutes: etaMinutes,
+      current_stop_code: matchedStop?.stop_code,
+      current_stop_name: matchedStop?.stop_name,
+      current_stop_name_he: matchedStop?.stop_name_he
     };
   }
 

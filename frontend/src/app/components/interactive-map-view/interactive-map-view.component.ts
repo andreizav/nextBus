@@ -26,41 +26,64 @@ import type { LiveBusStatusResponse, WidgetLang } from '../../models/bus.models'
     <section
       class="interactive-card nb-card"
       [attr.dir]="lang() === 'he' ? 'rtl' : 'ltr'"
-      aria-label="Interactive transit map and nearby cafes"
+      aria-label="Interactive transit map, bus arrival ETA, and nearby cafes"
     >
       <header class="interactive-header">
-        <div>
-          <span class="interactive-pill">
-            <span aria-hidden="true">🗺️</span>
-            {{ labels().badge }}
-          </span>
-          <h2 class="interactive-title">
-            {{ labels().routeLabel }} {{ state().route.short_name }} —
-            @if (lang() === 'he') {
-              {{ state().user_stop.stop_name_he }}
-            } @else {
-              {{ state().user_stop.stop_name }}
+        <div class="interactive-route">
+          <div class="route-badge-sm" aria-label="Route number">
+            {{ state().route.short_name }}
+          </div>
+          <div class="route-info">
+            <span class="interactive-pill">
+              <span aria-hidden="true">🗺️</span>
+              {{ labels().badge }}
+            </span>
+            <h2 class="interactive-title">
+              {{ labels().routeLabel }} {{ state().route.short_name }} —
+              @if (lang() === 'he') {
+                {{ state().user_stop.stop_name_he }}
+              } @else {
+                {{ state().user_stop.stop_name }}
+              }
+            </h2>
+            @if (state().nearest_bus?.current_stop_name) {
+              <p class="bus-current-sub">
+                <span aria-hidden="true">🚌</span>
+                {{ labels().busNowAt }}:
+                {{
+                  lang() === 'he'
+                    ? state().nearest_bus?.current_stop_name_he
+                    : state().nearest_bus?.current_stop_name
+                }}
+              </p>
             }
-          </h2>
+          </div>
         </div>
 
-        <div class="zoom-controls">
-          <button
-            type="button"
-            class="ctrl-btn nb-btn"
-            (click)="recenterMap()"
-            [title]="labels().recenter"
-          >
-            🎯
-          </button>
-          <button
-            type="button"
-            class="ctrl-btn nb-btn"
-            (click)="switchDirection.emit(state().route.direction_id === 0 ? 1 : 0)"
-            title="Switch direction"
-          >
-            ⇄
-          </button>
+        <div class="header-right">
+          <div class="eta-box-interactive" role="status" aria-live="polite">
+            <span class="eta-val">{{ etaText() }}</span>
+            <span class="eta-sub">{{ stopsAwayText() }}</span>
+          </div>
+
+          <div class="zoom-controls">
+            <button
+              type="button"
+              class="ctrl-btn nb-btn"
+              (click)="recenterMap()"
+              [title]="labels().recenter"
+            >
+              🎯
+            </button>
+            <button
+              type="button"
+              class="ctrl-btn nb-btn"
+              (click)="switchDirection.emit(state().route.direction_id === 0 ? 1 : 0)"
+              title="Switch direction"
+            >
+              ⇄
+            </button>
+          </div>
         </div>
       </header>
 
@@ -73,8 +96,7 @@ import type { LiveBusStatusResponse, WidgetLang } from '../../models/bus.models'
             (#{{ state().user_stop.stop_code }})
           </span>
           <span>
-            ETA: {{ state().nearest_bus?.eta_minutes ?? '-' }} min
-            ({{ state().nearest_bus?.stops_away ?? 0 }} stops)
+            {{ etaText() }} • {{ stopsAwayText() }}
           </span>
         </div>
       </div>
@@ -139,11 +161,36 @@ import type { LiveBusStatusResponse, WidgetLang } from '../../models/bus.models'
         gap: 0.75rem;
       }
 
+      .interactive-route {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        min-inline-size: 0;
+        flex: 1 1 260px;
+      }
+
+      .route-badge-sm {
+        display: grid;
+        place-items: center;
+        inline-size: 3rem;
+        block-size: 3rem;
+        flex-shrink: 0;
+        border-radius: 0.75rem;
+        background: #38bdf8;
+        color: #041322;
+        font-size: 1.35rem;
+        font-weight: 800;
+      }
+
+      .route-info {
+        min-inline-size: 0;
+      }
+
       .interactive-pill {
         display: inline-flex;
         align-items: center;
         gap: 0.35rem;
-        font-size: 0.75rem;
+        font-size: 0.72rem;
         font-weight: 700;
         color: #34d399;
         text-transform: uppercase;
@@ -151,9 +198,43 @@ import type { LiveBusStatusResponse, WidgetLang } from '../../models/bus.models'
       }
 
       .interactive-title {
-        margin: 0.25rem 0 0;
-        font-size: 1.05rem;
+        margin: 0.15rem 0 0;
+        font-size: 1rem;
         font-weight: 700;
+      }
+
+      .bus-current-sub {
+        margin: 0.15rem 0 0;
+        font-size: 0.78rem;
+        color: #cbd5e1;
+      }
+
+      .header-right {
+        display: flex;
+        align-items: center;
+        gap: 0.65rem;
+      }
+
+      .eta-box-interactive {
+        background: #13223b;
+        border: 1.5px solid #38bdf8;
+        border-radius: 0.75rem;
+        padding-block: 0.45rem;
+        padding-inline: 0.85rem;
+        text-align: end;
+      }
+
+      .eta-val {
+        display: block;
+        font-size: 1.15rem;
+        font-weight: 800;
+        color: #38bdf8;
+      }
+
+      .eta-sub {
+        display: block;
+        font-size: 0.72rem;
+        color: #cbd5e1;
       }
 
       .zoom-controls {
@@ -312,8 +393,9 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
     switch (this.lang()) {
       case 'he':
         return {
-          badge: 'מפה חיה (OpenStreetMap) • @defer',
+          badge: 'מפה ובתי קפה • @defer',
           routeLabel: 'קו',
+          busNowAt: 'האוטובוס כעת',
           nearestStop: 'תחנה קרובה',
           recenter: 'מרכז למיקום שלי',
           offersTitle: 'בתי קפה אמיתיים בסביבה',
@@ -323,8 +405,9 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
         };
       case 'en':
         return {
-          badge: 'Live OSM Map • @defer Chunk',
+          badge: 'Map & Cafes • @defer Chunk',
           routeLabel: 'Line',
+          busNowAt: 'Bus now at',
           nearestStop: 'Nearest stop',
           recenter: 'Center on my location',
           offersTitle: 'Real Cafes Nearby (OpenStreetMap)',
@@ -334,8 +417,9 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
         };
       default:
         return {
-          badge: 'Живая карта OpenStreetMap • @defer',
+          badge: 'Карта и кофейни • @defer',
           routeLabel: 'Маршрут',
+          busNowAt: 'Автобус сейчас',
           nearestStop: 'Ближайшая остановка',
           recenter: 'Центрировать на мне',
           offersTitle: 'Настоящие кафе рядом (OpenStreetMap)',
@@ -344,6 +428,26 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
           openMaps: 'Открыть на карте'
         };
     }
+  });
+
+  readonly etaText = computed(() => {
+    const eta = this.state().nearest_bus?.eta_minutes;
+    if (eta === undefined) {
+      return this.lang() === 'he' ? 'אין נתונים' : this.lang() === 'en' ? 'No ETA' : 'Нет данных';
+    }
+    if (eta === 0) {
+      return this.lang() === 'he' ? 'בתחנה' : this.lang() === 'en' ? 'Arriving' : 'Прибывает';
+    }
+    if (this.lang() === 'he') return `בעוד ${eta} דק׳`;
+    if (this.lang() === 'en') return `In ${eta} min`;
+    return `Через ${eta} мин`;
+  });
+
+  readonly stopsAwayText = computed(() => {
+    const stops = this.state().nearest_bus?.stops_away ?? 0;
+    if (this.lang() === 'he') return `${stops} תחנות ממך`;
+    if (this.lang() === 'en') return `${stops} stops away`;
+    return `${stops} ост. до вас`;
   });
 
   constructor() {
@@ -401,7 +505,6 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
 
     const boundsPoints: L.LatLngExpression[] = [];
 
-    // 1. Route path polyline & GTFS stops
     if (data.timeline_stops.length > 0) {
       const polyCoords: L.LatLngExpression[] = data.timeline_stops.map((s) => [s.lat, s.lon]);
       L.polyline(polyCoords, { color: '#38bdf8', weight: 4, opacity: 0.75 }).addTo(
@@ -424,7 +527,6 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
       }
     }
 
-    // 2. User exact GPS location
     if (data.user_location) {
       const userPos: L.LatLngExpression = [data.user_location.lat, data.user_location.lon];
       boundsPoints.push(userPos);
@@ -443,7 +545,6 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
 
     boundsPoints.push([data.user_stop.lat, data.user_stop.lon]);
 
-    // 3. Live bus position
     if (data.nearest_bus) {
       const busPos: L.LatLngExpression = [data.nearest_bus.lat, data.nearest_bus.lon];
       boundsPoints.push(busPos);
@@ -460,7 +561,6 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
         .addTo(this.markersLayer);
     }
 
-    // 4. Real nearby cafes from OpenStreetMap
     for (const offer of data.nearby_offers) {
       const cafePos: L.LatLngExpression = [offer.lat, offer.lon];
       boundsPoints.push(cafePos);

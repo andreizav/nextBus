@@ -39,6 +39,9 @@ export interface VehicleTelemetry {
 export interface NearestBusInfo extends VehicleTelemetry {
   stops_away: number;
   eta_minutes: number;
+  current_stop_code?: string;
+  current_stop_name?: string;
+  current_stop_name_he?: string;
 }
 
 export interface StopTimelineItem {

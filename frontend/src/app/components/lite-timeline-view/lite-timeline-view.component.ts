@@ -1,25 +1,6 @@
 import { CommonModule } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
-import type {
-  BoundingBox,
-  LiveBusStatusResponse,
-  MapProjection,
-  WidgetLang
-} from '../../models/bus.models';
-
-function projectCoord(lat: number, lon: number, bbox: BoundingBox): MapProjection {
-  const lonSpan = bbox.maxLon - bbox.minLon;
-  const latSpan = bbox.maxLat - bbox.minLat;
-  if (lonSpan <= 0 || latSpan <= 0) {
-    return { xPercent: 50, yPercent: 50 };
-  }
-  const rawX = ((lon - bbox.minLon) / lonSpan) * 100;
-  const rawY = ((bbox.maxLat - lat) / latSpan) * 100;
-  return {
-    xPercent: Math.min(98, Math.max(2, Number(rawX.toFixed(2)))),
-    yPercent: Math.min(98, Math.max(2, Number(rawY.toFixed(2))))
-  };
-}
+import type { LiveBusStatusResponse, WidgetLang } from '../../models/bus.models';
 
 @Component({
   selector: 'nb-lite-timeline-view',
@@ -30,7 +11,7 @@ function projectCoord(lat: number, lon: number, bbox: BoundingBox): MapProjectio
     <section
       class="lite-card nb-card"
       [attr.dir]="lang() === 'he' ? 'rtl' : 'ltr'"
-      aria-label="Live bus arrival timeline"
+      aria-label="Live bus arrival status"
     >
       <header class="lite-header">
         <div class="route-identity">
@@ -49,9 +30,7 @@ function projectCoord(lat: number, lon: number, bbox: BoundingBox): MapProjectio
                 {{ state().user_stop.stop_name }}
               }
             </h2>
-            @if (lang() !== 'he') {
-              <p class="stop-hebrew" dir="rtl">{{ state().user_stop.stop_name_he }}</p>
-            }
+            <p class="stop-code-meta">#{{ state().user_stop.stop_code }}</p>
           </div>
         </div>
 
@@ -75,129 +54,82 @@ function projectCoord(lat: number, lon: number, bbox: BoundingBox): MapProjectio
         </button>
       </div>
 
-      <div class="lite-grid">
-        <div class="timeline-panel">
-          <div class="timeline-track">
-            <div
-              class="timeline-fill"
-              [style.transform]="'scaleY(' + progressScale() + ')'"
-            ></div>
-            <div
-              class="timeline-bus-dot"
-              [style.top.%]="busProgressPercent()"
-              aria-hidden="true"
-            >
-              🚌
-            </div>
-          </div>
-
-          <ul class="stop-list">
-            @for (stop of state().timeline_stops; track stop.stop_id) {
-              <li
-                class="stop-row"
-                [class.is-passed]="stop.status === 'passed'"
-                [class.is-user]="stop.stop_sequence === state().user_stop.stop_sequence"
-                [class.is-bus]="
-                  state().nearest_bus &&
-                  stop.stop_sequence === state().nearest_bus?.current_stop_sequence
-                "
-              >
-                <span class="stop-marker" aria-hidden="true">
-                  @if (stop.stop_sequence === state().user_stop.stop_sequence) {
-                    ★
-                  } @else if (
-                    state().nearest_bus &&
-                    stop.stop_sequence === state().nearest_bus?.current_stop_sequence
-                  ) {
-                    ●
-                  } @else {
-                    ○
-                  }
-                </span>
-                <div class="stop-names">
-                  <span class="stop-primary">
-                    @if (lang() === 'he') {
-                      {{ stop.stop_name_he }}
-                    } @else {
-                      {{ stop.stop_name }}
-                    }
-                  </span>
-                  @if (lang() !== 'he') {
-                    <span class="stop-secondary" dir="rtl">{{ stop.stop_name_he }}</span>
-                  }
-                </div>
-                <span class="stop-code">#{{ stop.stop_code }}</span>
-              </li>
-            }
-          </ul>
+      <div class="bus-status-banner" role="region" aria-label="Current bus location">
+        <div class="status-metric">
+          <span class="metric-label">{{ labels().busNowAt }}</span>
+          @if (currentBusStop(); as busStop) {
+            <strong class="metric-stop" [attr.dir]="lang() === 'he' ? 'rtl' : 'auto'">
+              <span aria-hidden="true">🚌</span>
+              {{ lang() === 'he' ? busStop.name_he : busStop.name }}
+            </strong>
+            <span class="metric-sub">
+              @if (busStop.code) {
+                #{{ busStop.code }} •
+              }
+              {{ labels().stopOrder }} {{ busStop.seq }}
+            </span>
+          } @else {
+            <strong class="metric-stop">{{ labels().noBusYet }}</strong>
+          }
         </div>
 
-        <figure class="static-map-frame">
-          <div class="static-map-canvas">
-            <img
-              class="static-map-img"
-              [src]="state().lite_map.static_image_url"
-              alt="Street map showing Route 49 corridor, stop location, and live bus position"
-              width="600"
-              height="320"
-              loading="eager"
-            />
+        <div class="status-count">
+          <span class="count-number">{{ state().nearest_bus?.stops_away ?? '-' }}</span>
+          <span class="count-label">{{ labels().stopsRemaining }}</span>
+        </div>
+      </div>
 
-            @if (gpsProjection(); as gps) {
-              <div
-                class="projected-pin gps-pin"
-                [style.left.%]="gps.xPercent"
-                [style.top.%]="gps.yPercent"
-                [title]="labels().legendUser"
-              >
-                <span class="pin-circle gps-circle" aria-hidden="true">📍</span>
-              </div>
-            }
+      <div class="timeline-panel">
+        <div class="timeline-track">
+          <div
+            class="timeline-fill"
+            [style.transform]="'scaleY(' + progressScale() + ')'"
+          ></div>
+          <div
+            class="timeline-bus-dot"
+            [style.top.%]="busProgressPercent()"
+            aria-hidden="true"
+          >
+            🚌
+          </div>
+        </div>
 
-            <div
-              class="projected-pin stop-pin"
-              [style.left.%]="userProjection().xPercent"
-              [style.top.%]="userProjection().yPercent"
-              [title]="state().user_stop.stop_name"
+        <ul class="stop-list">
+          @for (stop of state().timeline_stops; track stop.stop_id) {
+            <li
+              class="stop-row"
+              [class.is-passed]="stop.status === 'passed'"
+              [class.is-user]="stop.stop_sequence === state().user_stop.stop_sequence"
+              [class.is-bus]="
+                state().nearest_bus &&
+                stop.stop_sequence === state().nearest_bus?.current_stop_sequence
+              "
             >
-              <span class="pin-circle stop-circle" aria-hidden="true">🚏</span>
-              <span class="pin-badge stop-badge">#{{ state().user_stop.stop_code }}</span>
-            </div>
-
-            @if (state().nearest_bus; as bus) {
-              <div
-                class="projected-pin bus-pin"
-                [style.left.%]="busProjection().xPercent"
-                [style.top.%]="busProjection().yPercent"
-                [title]="'Bus ' + state().route.short_name + ' (' + bus.vehicle_id + ')'"
-              >
-                <span class="pin-circle bus-circle" aria-hidden="true">🚌</span>
-                <span class="pin-badge bus-badge">
-                  {{ state().route.short_name }} • {{ etaText() }}
+              <span class="stop-marker" aria-hidden="true">
+                @if (stop.stop_sequence === state().user_stop.stop_sequence) {
+                  ★
+                } @else if (
+                  state().nearest_bus &&
+                  stop.stop_sequence === state().nearest_bus?.current_stop_sequence
+                ) {
+                  ●
+                } @else {
+                  ○
+                }
+              </span>
+              <div class="stop-names">
+                <span class="stop-primary" dir="auto">
+                  @if (lang() === 'he') {
+                    {{ stop.stop_name_he }}
+                  } @else {
+                    {{ stop.stop_name }}
+                  }
                 </span>
               </div>
-            }
-          </div>
-
-          <figcaption class="map-legend">
-            <span class="legend-item">
-              <span class="legend-swatch bus-swatch" aria-hidden="true"></span>
-              {{ labels().legendBus }}
-            </span>
-            <span class="legend-item">
-              <span class="legend-swatch stop-swatch" aria-hidden="true"></span>
-              {{ labels().legendStop }}
-            </span>
-            <span class="legend-item">
-              <span class="legend-swatch gps-swatch" aria-hidden="true"></span>
-              {{ labels().legendUser }}
-            </span>
-            <span class="legend-item">
-              <span class="legend-line" aria-hidden="true"></span>
-              {{ labels().legendRoute }}
-            </span>
-          </figcaption>
-        </figure>
+              <span class="stop-code">#{{ stop.stop_code }}</span>
+            </li>
+          }
+        </ul>
       </div>
     </section>
   `,
@@ -268,24 +200,24 @@ function projectCoord(lat: number, lon: number, bbox: BoundingBox): MapProjectio
         color: #f8fafc;
       }
 
-      .stop-hebrew {
+      .stop-code-meta {
         margin: 0.15rem 0 0;
-        font-size: 0.875rem;
-        color: #cbd5e1;
+        font-size: 0.8rem;
+        color: #94a3b8;
       }
 
       .eta-box {
         background: #13223b;
-        border: 1px solid #38bdf8;
+        border: 1.5px solid #38bdf8;
         border-radius: 0.875rem;
-        padding-block: 0.625rem;
-        padding-inline: 1rem;
+        padding-block: 0.65rem;
+        padding-inline: 1.1rem;
         text-align: end;
       }
 
       .eta-value {
         display: block;
-        font-size: 1.375rem;
+        font-size: 1.5rem;
         font-weight: 800;
         color: #38bdf8;
       }
@@ -331,11 +263,65 @@ function projectCoord(lat: number, lon: number, bbox: BoundingBox): MapProjectio
         background: #273751;
       }
 
-      .lite-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      .bus-status-banner {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        align-items: center;
         gap: 1rem;
-        align-items: start;
+        background: #0f1d33;
+        border: 1px solid #2f4b75;
+        border-radius: 0.875rem;
+        padding-block: 0.875rem;
+        padding-inline: 1rem;
+      }
+
+      .status-metric {
+        display: grid;
+        gap: 0.2rem;
+        min-inline-size: 0;
+        flex: 1 1 220px;
+      }
+
+      .metric-label {
+        font-size: 0.75rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: #7dd3fc;
+      }
+
+      .metric-stop {
+        font-size: 1.05rem;
+        color: #f8fafc;
+      }
+
+      .metric-sub {
+        font-size: 0.8rem;
+        color: #cbd5e1;
+      }
+
+      .status-count {
+        display: grid;
+        place-items: center;
+        background: #13223b;
+        border: 1px solid #2b3c5d;
+        border-radius: 0.75rem;
+        padding-block: 0.5rem;
+        padding-inline: 0.9rem;
+        min-inline-size: 6.5rem;
+      }
+
+      .count-number {
+        font-size: 1.45rem;
+        font-weight: 800;
+        color: #34d399;
+        line-height: 1.1;
+      }
+
+      .count-label {
+        font-size: 0.72rem;
+        color: #cbd5e1;
       }
 
       .timeline-panel {
@@ -427,155 +413,10 @@ function projectCoord(lat: number, lon: number, bbox: BoundingBox): MapProjectio
         white-space: nowrap;
       }
 
-      .stop-secondary {
-        font-size: 0.75rem;
-        color: #94a3b8;
-      }
-
       .stop-code {
         font-size: 0.75rem;
         color: #94a3b8;
         flex-shrink: 0;
-      }
-
-      .static-map-frame {
-        margin: 0;
-        border-radius: 0.75rem;
-        overflow: hidden;
-        border: 1px solid #2b3c5d;
-        background: #0d1726;
-      }
-
-      .static-map-canvas {
-        position: relative;
-        overflow: hidden;
-        background: #e2e8f0;
-      }
-
-      .static-map-img {
-        display: block;
-        inline-size: 100%;
-        block-size: auto;
-        aspect-ratio: 15 / 8;
-        object-fit: fill;
-      }
-
-      .projected-pin {
-        position: absolute;
-        transform: translate(-50%, -50%);
-        display: inline-flex;
-        align-items: center;
-        gap: 0.25rem;
-        pointer-events: none;
-        transition: left 1.5s linear, top 1.5s linear;
-      }
-
-      .gps-pin {
-        z-index: 2;
-      }
-
-      .stop-pin {
-        z-index: 3;
-      }
-
-      .bus-pin {
-        z-index: 4;
-      }
-
-      .pin-circle {
-        inline-size: 1.75rem;
-        block-size: 1.75rem;
-        border-radius: 999px;
-        display: grid;
-        place-items: center;
-        font-size: 0.9rem;
-        border: 2px solid #ffffff;
-        box-shadow: 0 2px 8px rgba(15, 23, 42, 0.55);
-      }
-
-      .gps-circle {
-        inline-size: 1.5rem;
-        block-size: 1.5rem;
-        background: #34d399;
-        color: #041322;
-      }
-
-      .stop-circle {
-        background: #fbbf24;
-        color: #0b1220;
-      }
-
-      .bus-circle {
-        background: #0284c7;
-        color: #ffffff;
-        box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.45), 0 3px 10px rgba(0, 0, 0, 0.55);
-      }
-
-      .pin-badge {
-        font-size: 0.7rem;
-        font-weight: 800;
-        padding-block: 0.12rem;
-        padding-inline: 0.4rem;
-        border-radius: 999px;
-        white-space: nowrap;
-        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
-      }
-
-      .stop-badge {
-        background: rgba(11, 18, 32, 0.92);
-        color: #fde68a;
-        border: 1px solid #fbbf24;
-      }
-
-      .bus-badge {
-        background: rgba(11, 18, 32, 0.94);
-        color: #7dd3fc;
-        border: 1px solid #38bdf8;
-      }
-
-      .map-legend {
-        display: flex;
-        flex-wrap: wrap;
-        justify-content: space-between;
-        gap: 0.5rem 0.75rem;
-        padding-block: 0.55rem;
-        padding-inline: 0.75rem;
-        font-size: 0.73rem;
-        color: #cbd5e1;
-        background: #0d1726;
-        border-block-start: 1px solid #24344f;
-      }
-
-      .legend-item {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.35rem;
-      }
-
-      .legend-swatch {
-        inline-size: 0.65rem;
-        block-size: 0.65rem;
-        border-radius: 999px;
-        border: 1px solid #ffffff;
-      }
-
-      .bus-swatch {
-        background: #0284c7;
-      }
-
-      .stop-swatch {
-        background: #fbbf24;
-      }
-
-      .gps-swatch {
-        background: #34d399;
-      }
-
-      .legend-line {
-        inline-size: 0.95rem;
-        block-size: 3px;
-        border-radius: 999px;
-        background: #0284c7;
       }
     `
   ]
@@ -589,32 +430,65 @@ export class LiteTimelineViewComponent {
     switch (this.lang()) {
       case 'he':
         return {
-          liteBadge: 'מצב Lite • ללא SDK כבד',
+          liteBadge: 'מצב Lite • ללא מפה',
           switchDir: 'החלף כיוון',
-          legendBus: 'אוטובוס',
-          legendStop: 'התחנה שלך',
-          legendUser: 'המיקום שלך',
-          legendRoute: 'מסלול הקו'
+          busNowAt: 'האוטובוס נמצא כעת בתחנה',
+          stopOrder: 'תחנה מס׳',
+          stopsRemaining: 'תחנות ממך',
+          noBusYet: 'אין מידע על מיקום האוטובוס'
         };
       case 'en':
         return {
-          liteBadge: 'Lite Mode • Zero Heavy SDK',
+          liteBadge: 'Lite Mode • Map-Free ETA',
           switchDir: 'Switch Direction',
-          legendBus: 'Bus',
-          legendStop: 'Your Stop',
-          legendUser: 'You',
-          legendRoute: 'Route Path'
+          busNowAt: 'Bus is currently at stop',
+          stopOrder: 'Stop seq',
+          stopsRemaining: 'stops away',
+          noBusYet: 'Waiting for bus telemetry'
         };
       default:
         return {
-          liteBadge: 'Режим Lite • Без тяжелых SDK',
+          liteBadge: 'Режим Lite • Без карты',
           switchDir: 'Сменить направление',
-          legendBus: 'Автобус',
-          legendStop: 'Остановка',
-          legendUser: 'Вы',
-          legendRoute: 'Маршрут'
+          busNowAt: 'Автобус сейчас на остановке',
+          stopOrder: 'Остановка №',
+          stopsRemaining: 'остановок до вас',
+          noBusYet: 'Ожидание телеметрии'
         };
     }
+  });
+
+  readonly currentBusStop = computed(() => {
+    const bus = this.state().nearest_bus;
+    if (!bus) return null;
+
+    if (bus.current_stop_name) {
+      return {
+        name: bus.current_stop_name,
+        name_he: bus.current_stop_name_he ?? bus.current_stop_name,
+        code: bus.current_stop_code ?? '',
+        seq: bus.current_stop_sequence
+      };
+    }
+
+    const fromTimeline = this.state().timeline_stops.find(
+      (s) => s.stop_sequence === bus.current_stop_sequence
+    );
+    if (fromTimeline) {
+      return {
+        name: fromTimeline.stop_name,
+        name_he: fromTimeline.stop_name_he,
+        code: fromTimeline.stop_code,
+        seq: fromTimeline.stop_sequence
+      };
+    }
+
+    return {
+      name: `#${bus.current_stop_sequence}`,
+      name_he: `#${bus.current_stop_sequence}`,
+      code: '',
+      seq: bus.current_stop_sequence
+    };
   });
 
   readonly etaText = computed(() => {
@@ -642,23 +516,6 @@ export class LiteTimelineViewComponent {
     const match = this.state().route.available_directions.find((d) => d.direction_id === dir);
     if (!match) return this.state().route.direction_label;
     return this.lang() === 'he' ? match.label_he : match.label;
-  });
-
-  readonly busProjection = computed(() => {
-    const bus = this.state().nearest_bus;
-    if (!bus) return this.state().lite_map.bus_projection;
-    return projectCoord(bus.lat, bus.lon, this.state().lite_map.bbox);
-  });
-
-  readonly userProjection = computed(() => {
-    const stop = this.state().user_stop;
-    return projectCoord(stop.lat, stop.lon, this.state().lite_map.bbox);
-  });
-
-  readonly gpsProjection = computed(() => {
-    const loc = this.state().user_location;
-    if (!loc) return null;
-    return projectCoord(loc.lat, loc.lon, this.state().lite_map.bbox);
   });
 
   readonly busProgressPercent = computed(() => {
