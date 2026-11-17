@@ -41,9 +41,11 @@ flowchart LR
    - `stop_id TEXT NOT NULL REFERENCES stops(stop_id) ON DELETE CASCADE`
    - `stop_sequence INT NOT NULL`
 
-### RPC Function
-- `find_nearest_stop_for_line(line_num TEXT, user_lat FLOAT, user_lon FLOAT)`
-  Returns the nearest stop for the specified bus line using PostGIS KNN `<->` distance ordering on `GEOGRAPHY(Point, 4326)`.
+### RPC Functions
+1. `find_nearest_stop_for_line(line_num TEXT, user_lat FLOAT, user_lon FLOAT, preferred_dir SMALLINT DEFAULT NULL)`
+   Returns the nearest stop for the specified bus line using PostGIS KNN `<->` distance ordering on `GEOGRAPHY(Point, 4326)`.
+2. `find_direct_routes_between_points(origin_lat FLOAT, origin_lon FLOAT, dest_lat FLOAT, dest_lon FLOAT, radius_meters INT DEFAULT 500)`
+   Uses `ST_DWithin` to find boarding stops (Set A) within `radius_meters` of origin and alighting stops (Set B) within `radius_meters` of destination, joins `route_stops` enforcing strict travel direction (`rs_origin.stop_sequence < rs_dest.stop_sequence`), and returns one optimal `(origin_stop, dest_stop)` pair per route and direction with `stops_between`.
 
 ---
 
@@ -53,11 +55,13 @@ flowchart LR
 | :--- | :--- | :--- | :--- |
 | `bus:state:{route_id}:{direction_id}` | String (JSON) | `60s` | Cached SIRI telemetry array (`vehicles[]`, `updated_at`, `source`) for a route & direction. |
 | `bus:active_routes` | Sorted Set (ZSET) | Sliding `15m` score | Members formatted as `"{route_id}:{direction_id}"`; score is `Date.now() + 15 * 60 * 1000`. |
+| `geo:cache:{query_hash}` | String (JSON) | `86400s` (24h) | Cached Google Places / Geocoding result (`lat`, `lon`, `formatted_address`, `place_name`). |
 
 ---
 
-## 4. MCP Tool Contract (`get_live_bus_status`)
+## 4. MCP Tool Contracts
 
+### 4.1 `get_live_bus_status`
 - **Tool Name:** `get_live_bus_status`
 - **Annotations:** `readOnlyHint: true`, `destructiveHint: false`
 - **Input Schema (Zod):**
@@ -69,54 +73,50 @@ flowchart LR
     "include_nearby_places": false
   }
   ```
-- **Output JSON Contract:**
+
+### 4.2 `find_best_buses_to_destination`
+- **Tool Name:** `find_best_buses_to_destination`
+- **Annotations:** `readOnlyHint: true`, `destructiveHint: false`
+- **Input Schema (Zod):**
   ```json
   {
-    "render_mode": "lite",
+    "user_location": { "lat": 32.7895, "lon": 34.9640 },
+    "destination_location": { "lat": 32.7832, "lon": 34.9859, "label": "Поликлиника на Хорев, Хайфа" }
+  }
+  ```
+- **Output JSON Contract (Extended with `entry_context`, `destination`, `recommended_options`):**
+  ```json
+  {
+    "entry_context": "mcp",
+    "render_mode": "interactive",
     "updated_at": "2026-11-17T16:10:00.000Z",
     "cache_hit": true,
-    "route": {
-      "route_id": "route-49-haifa",
-      "short_name": "49",
-      "long_name": "Tirat Carmel - Haifa Hof HaCarmel",
-      "direction_id": 0,
-      "direction_label": "Tirat Carmel -> Hof HaCarmel",
-      "available_directions": [
-        { "direction_id": 0, "label": "Tirat Carmel -> Hof HaCarmel" },
-        { "direction_id": 1, "label": "Hof HaCarmel -> Tirat Carmel" }
-      ]
+    "destination": {
+      "lat": 32.7832,
+      "lon": 34.9859,
+      "place_name": "Поликлиника на Хорев",
+      "formatted_address": "Horev St, Haifa, Israel"
     },
-    "user_stop": {
-      "stop_id": "stop-41004",
-      "stop_code": "41004",
-      "stop_name": "HaHagana / Tirat Carmel",
-      "stop_name_he": "ההגנה / טירת כרמל",
-      "stop_sequence": 5,
-      "lat": 32.7712,
-      "lon": 34.9718
-    },
-    "nearest_bus": {
-      "vehicle_id": "egged-49-101",
-      "lat": 32.7655,
-      "lon": 34.9730,
-      "bearing": 12,
-      "recorded_at_time": "2026-11-17T16:09:50.000Z",
-      "current_stop_sequence": 3,
-      "stops_away": 2,
-      "eta_minutes": 4
-    },
+    "recommended_options": [
+      {
+        "rank": 1,
+        "route": { "route_id": "stride-10024", "short_name": "24", "long_name": "...", "direction_id": 0, "direction_label": "..." },
+        "origin_stop": { "stop_id": "...", "stop_code": "42656", "stop_name": "...", "stop_name_he": "...", "stop_sequence": 3, "lat": 32.790385, "lon": 34.96134 },
+        "dest_stop": { "stop_id": "...", "stop_code": "43101", "stop_name": "...", "stop_name_he": "...", "stop_sequence": 10, "lat": 32.7832, "lon": 34.9859 },
+        "bus": { "vehicle_id": "egged-24-101", "lat": 32.7870, "lon": 34.9590, "bearing": 90, "recorded_at_time": "...", "current_stop_sequence": 1, "stops_away": 2, "eta_minutes": 4 },
+        "eta_to_boarding_min": 4,
+        "stops_between": 7,
+        "ride_duration_min": 13,
+        "total_arrival_min": 17,
+        "estimated_arrival_time": "19:45",
+        "timeline_stops": []
+      }
+    ],
+    "route": { "route_id": "stride-10024", "short_name": "24", "long_name": "...", "direction_id": 0, "direction_label": "...", "available_directions": [] },
+    "user_stop": { "stop_id": "...", "stop_code": "42656", "stop_name": "...", "stop_name_he": "...", "stop_sequence": 3, "lat": 32.790385, "lon": 34.96134 },
+    "nearest_bus": { "vehicle_id": "egged-24-101", "lat": 32.7870, "lon": 34.9590, "bearing": 90, "recorded_at_time": "...", "current_stop_sequence": 1, "stops_away": 2, "eta_minutes": 4 },
     "timeline_stops": [],
-    "lite_map": {
-      "static_image_url": "/assets/haifa-route-49-static.svg",
-      "bbox": {
-        "minLat": 32.755,
-        "maxLat": 32.805,
-        "minLon": 34.950,
-        "maxLon": 34.990
-      },
-      "bus_projection": { "xPercent": 57.5, "yPercent": 79.0 },
-      "user_projection": { "xPercent": 54.5, "yPercent": 67.6 }
-    },
+    "lite_map": { "static_image_url": "...", "bbox": { "minLat": 32.755, "maxLat": 32.805, "minLon": 34.950, "maxLon": 34.990 }, "bus_projection": { "xPercent": 57.5, "yPercent": 79.0 }, "user_projection": { "xPercent": 54.5, "yPercent": 67.6 } },
     "nearby_offers": []
   }
   ```
@@ -127,8 +127,9 @@ flowchart LR
 
 | Method | Path | Purpose |
 | :--- | :--- | :--- |
-| `POST` | `/mcp` | MCP JSON-RPC / Streamable HTTP endpoint exposing `get_live_bus_status` |
-| `GET` | `/api/live-status` | 15s widget polling endpoint (reads strictly from Redis cache + refreshes `bus:active_routes`) |
+| `POST` | `/mcp` | MCP JSON-RPC / Streamable HTTP endpoint exposing `get_live_bus_status` and `find_best_buses_to_destination` |
+| `POST` | `/api/search-routes` | Standalone A -> B search: geocodes `query` via Google Places/Geocoding + Redis `geo:cache` and returns Top-3 buses (`entry_context: "standalone"`) |
+| `GET` | `/api/live-status` | 15s widget polling endpoint; supports single `line_number` or multi-route `route_ids` with destination coords for Top-3 live refresh from Redis |
 | `GET` | `/.well-known/google-connected-apps` | Google Connected Console domain verification JSON |
 | `GET` | `/privacy` | Static Privacy Policy HTML page |
 | `GET` | `/terms` | Static Terms of Service HTML page |
