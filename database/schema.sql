@@ -42,10 +42,13 @@ CREATE INDEX IF NOT EXISTS idx_route_stops_lookup
   ON route_stops (route_id, direction_id, stop_sequence);
 
 -- 4. Single-query PostGIS RPC to locate nearest stop for a bus line
+DROP FUNCTION IF EXISTS find_nearest_stop_for_line(TEXT, FLOAT, FLOAT);
+
 CREATE OR REPLACE FUNCTION find_nearest_stop_for_line(
   line_num TEXT,
   user_lat FLOAT,
-  user_lon FLOAT
+  user_lon FLOAT,
+  preferred_dir SMALLINT DEFAULT NULL
 )
 RETURNS TABLE (
   route_id TEXT,
@@ -84,6 +87,7 @@ AS $$
   JOIN route_stops rs ON rs.route_id = r.route_id
   JOIN stops s ON s.stop_id = rs.stop_id
   WHERE r.route_short_name = line_num
+    AND (preferred_dir IS NULL OR rs.direction_id = preferred_dir)
   ORDER BY s.location <-> ST_SetSRID(ST_MakePoint(user_lon, user_lat), 4326)::geography
   LIMIT 1;
 $$;

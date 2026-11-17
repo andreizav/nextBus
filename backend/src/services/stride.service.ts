@@ -1,17 +1,12 @@
+import { haversineDistanceMeters } from './eta.service.js';
+import { supabaseService, type RouteStopCoord } from './supabase.service.js';
 import type { CachedRouteState, VehicleTelemetry } from '../types/bus.types.js';
 
 const STRIDE_API_BASE = 'https://open-bus-stride-api.hasadna.org.il';
 
-interface StrideSiriRide {
-  id: number;
-  gtfs_route_id?: number;
-  siri_route__line_ref?: number;
-  journey_ref?: string;
-}
-
 interface StrideVehicleLocation {
   id: number;
-  siri_ride_id?: number;
+  siri_ride__id?: number;
   lat?: number;
   lon?: number;
   bearing?: number;
@@ -20,7 +15,7 @@ interface StrideVehicleLocation {
   siri_ride__vehicle_ref?: string;
 }
 
-async function fetchWithTimeout<T>(url: string, timeoutMs = 4500): Promise<T | null> {
+async function fetchWithTimeout<T>(url: string, timeoutMs = 5000): Promise<T | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -37,86 +32,94 @@ async function fetchWithTimeout<T>(url: string, timeoutMs = 4500): Promise<T | n
   }
 }
 
-function buildFallbackVehicles(directionId: 0 | 1): VehicleTelemetry[] {
-  const nowIso = new Date().toISOString();
-  if (directionId === 0) {
-    return [
-      {
-        vehicle_id: 'egged-49-101',
-        lat: 32.7668,
-        lon: 34.9729,
-        bearing: 348,
-        recorded_at_time: nowIso,
-        current_stop_sequence: 3,
-        speed_kmh: 26
-      },
-      {
-        vehicle_id: 'egged-49-104',
-        lat: 32.7598,
-        lon: 34.9723,
-        bearing: 355,
-        recorded_at_time: nowIso,
-        current_stop_sequence: 1,
-        speed_kmh: 22
-      }
-    ];
+function findClosestStopSequence(
+  lat: number,
+  lon: number,
+  stops: RouteStopCoord[],
+  fallbackSeq: number
+): number {
+  if (stops.length === 0) return fallbackSeq;
+  let closestSeq = stops[0].stop_sequence;
+  let minDist = Infinity;
+  for (const stop of stops) {
+    const dist = haversineDistanceMeters(lat, lon, stop.lat, stop.lon);
+    if (dist < minDist) {
+      minDist = dist;
+      closestSeq = stop.stop_sequence;
+    }
   }
+  return closestSeq;
+}
+
+function resolveStrideLineRef(routeId: string, directionId: 0 | 1): string {
+  if (routeId.includes('10049') || routeId.includes('49')) {
+    return directionId === 0 ? '19632' : '19631';
+  }
+  return routeId.replace(/\D/g, '');
+}
+
+function buildFallbackVehicles(
+  directionId: 0 | 1,
+  stops: RouteStopCoord[]
+): VehicleTelemetry[] {
+  const nowIso = new Date().toISOString();
+  const midIdx = Math.max(0, Math.min(stops.length - 1, Math.floor(stops.length * 0.72)));
+  const sampleStop = stops[midIdx];
 
   return [
     {
-      vehicle_id: 'egged-49-202',
-      lat: 32.7892,
-      lon: 34.9613,
-      bearing: 168,
+      vehicle_id: directionId === 0 ? 'egged-49-fallback-0' : 'egged-49-fallback-1',
+      lat: sampleStop?.lat ?? 32.7795,
+      lon: sampleStop?.lon ?? 34.9665,
+      bearing: directionId === 0 ? 345 : 165,
       recorded_at_time: nowIso,
-      current_stop_sequence: 2,
+      current_stop_sequence: sampleStop?.stop_sequence ?? 26,
       speed_kmh: 25
     }
   ];
 }
 
 /**
- * Fetches live vehicle positions from Open Bus Stride API (/siri_rides/list and /siri_vehicle_locations/list).
+ * Fetches live vehicle GPS positions from Open Bus Stride API (/siri_vehicle_locations/list).
  * Intended ONLY for the 15s background polling worker and cold-cache bootstrap.
  */
 export async function fetchLiveVehiclesFromStride(
   routeId: string,
   directionId: 0 | 1
 ): Promise<CachedRouteState> {
-  const numericLineRef = routeId.replace(/\D/g, '');
-  const now = new Date();
-  const fiveMinutesAgo = new Date(now.getTime() - 5 * 60 * 1000).toISOString();
-  const nowIso = now.toISOString();
+  const lineRef = resolveStrideLineRef(routeId, directionId);
+  const nowIso = new Date().toISOString();
+  const routeStops = await supabaseService.getDirectionStopCoords(routeId, directionId);
 
   let vehicles: VehicleTelemetry[] = [];
 
-  if (numericLineRef) {
-    const ridesUrl = `${STRIDE_API_BASE}/siri_rides/list?siri_route__line_refs=${encodeURIComponent(
-      numericLineRef
-    )}&scheduled_start_time_from=${encodeURIComponent(fiveMinutesAgo)}&limit=5`;
+  if (lineRef) {
+    const locationsUrl = `${STRIDE_API_BASE}/siri_vehicle_locations/list?siri_routes__line_ref=${encodeURIComponent(
+      lineRef
+    )}&order_by=recorded_at_time%20desc&limit=20`;
 
-    const rides = await fetchWithTimeout<StrideSiriRide[]>(ridesUrl);
-    const rideIds = (rides ?? []).map((r) => r.id).filter(Boolean);
+    const locations = await fetchWithTimeout<StrideVehicleLocation[]>(locationsUrl);
+    if (locations && locations.length > 0) {
+      const seenVehicles = new Set<string>();
+      for (const loc of locations) {
+        if (typeof loc.lat !== 'number' || typeof loc.lon !== 'number') continue;
+        const vehicleId = String(loc.siri_ride__vehicle_ref ?? `siri-${loc.siri_ride__id ?? loc.id}`);
+        if (seenVehicles.has(vehicleId)) continue;
+        seenVehicles.add(vehicleId);
 
-    if (rideIds.length > 0) {
-      const locationsUrl = `${STRIDE_API_BASE}/siri_vehicle_locations/list?siri_ride_ids=${rideIds.join(
-        ','
-      )}&recorded_at_time_from=${encodeURIComponent(fiveMinutesAgo)}&order_by=recorded_at_time%20desc&limit=10`;
+        const matchedSequence = findClosestStopSequence(loc.lat, loc.lon, routeStops, 1);
 
-      const locations = await fetchWithTimeout<StrideVehicleLocation[]>(locationsUrl);
-      if (locations && locations.length > 0) {
-        vehicles = locations
-          .filter((loc) => typeof loc.lat === 'number' && typeof loc.lon === 'number')
-          .slice(0, 4)
-          .map((loc, idx) => ({
-            vehicle_id: String(loc.siri_ride__vehicle_ref ?? `stride-${loc.siri_ride_id ?? loc.id}`),
-            lat: loc.lat!,
-            lon: loc.lon!,
-            bearing: typeof loc.bearing === 'number' ? loc.bearing : directionId === 0 ? 350 : 170,
-            recorded_at_time: loc.recorded_at_time ?? nowIso,
-            current_stop_sequence: Math.max(1, 3 - idx),
-            speed_kmh: typeof loc.velocity === 'number' && loc.velocity > 0 ? loc.velocity : 24
-          }));
+        vehicles.push({
+          vehicle_id: vehicleId,
+          lat: loc.lat,
+          lon: loc.lon,
+          bearing: typeof loc.bearing === 'number' ? loc.bearing : directionId === 0 ? 345 : 165,
+          recorded_at_time: loc.recorded_at_time ?? nowIso,
+          current_stop_sequence: matchedSequence,
+          speed_kmh: typeof loc.velocity === 'number' && loc.velocity > 0 ? loc.velocity : 25
+        });
+
+        if (vehicles.length >= 4) break;
       }
     }
   }
@@ -134,7 +137,7 @@ export async function fetchLiveVehiclesFromStride(
   return {
     route_id: routeId,
     direction_id: directionId,
-    vehicles: buildFallbackVehicles(directionId),
+    vehicles: buildFallbackVehicles(directionId, routeStops),
     updated_at: nowIso,
     source: 'fallback'
   };

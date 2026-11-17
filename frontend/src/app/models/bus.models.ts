@@ -79,12 +79,16 @@ export interface NearbyOffer {
   promo: string;
   lat: number;
   lon: number;
+  address?: string;
+  opening_hours?: string;
+  maps_url?: string;
 }
 
 export interface LiveBusStatusResponse {
   render_mode: RenderMode;
   updated_at: string;
   cache_hit: boolean;
+  user_location?: { lat: number; lon: number };
   route: RouteInfo;
   user_stop: UserStopInfo;
   nearest_bus: NearestBusInfo | null;

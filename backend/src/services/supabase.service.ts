@@ -1,7 +1,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import pg from 'pg';
 import { haversineDistanceMeters } from './eta.service.js';
-import type { NearbyOffer, StopTimelineItem } from '../types/bus.types.js';
+import type { StopTimelineItem } from '../types/bus.types.js';
 
 export interface NearestStopRpcRow {
   route_id: string;
@@ -18,107 +18,43 @@ export interface NearestStopRpcRow {
   distance_meters: number;
 }
 
-interface FallbackStopDef {
+export interface RouteStopCoord {
   stop_id: string;
   stop_code: string;
   stop_name: string;
   stop_name_he: string;
+  stop_sequence: number;
   lat: number;
   lon: number;
 }
 
-const LINE_49_STOPS_DIR_0: FallbackStopDef[] = [
+const LINE_49_FALLBACK_STOPS: RouteStopCoord[] = [
   {
-    stop_id: 'stop-41001',
-    stop_code: '41001',
-    stop_name: 'Tirat Carmel / HaAtzmaut',
-    stop_name_he: 'העצמאות / טירת כרמל',
-    lat: 32.7585,
-    lon: 34.9721
+    stop_id: 'stop-41949',
+    stop_code: '41949',
+    stop_name: 'מרכז לבריאות הנפש טירת כרמל (טירת כרמל)',
+    stop_name_he: 'מרכז לבריאות הנפש טירת כרמל (טירת כרמל)',
+    stop_sequence: 1,
+    lat: 32.750932,
+    lon: 34.974635
   },
   {
-    stop_id: 'stop-41002',
-    stop_code: '41002',
-    stop_name: 'Herzl / Tirat Carmel Mall',
-    stop_name_he: 'הרצל / קניון טירת כרמל',
-    lat: 32.7618,
-    lon: 34.9726
+    stop_id: 'stop-42656',
+    stop_code: '42656',
+    stop_name: "מת''מ (חיפה)",
+    stop_name_he: "מת''מ (חיפה)",
+    stop_sequence: 34,
+    lat: 32.790385,
+    lon: 34.96134
   },
   {
-    stop_id: 'stop-41003',
-    stop_code: '41003',
-    stop_name: 'Rambam / HaGalil',
-    stop_name_he: 'רמב״ם / הגליל',
-    lat: 32.7659,
-    lon: 34.9730
-  },
-  {
-    stop_id: 'stop-41004',
-    stop_code: '41004',
-    stop_name: 'HaHagana / Kfar Galim',
-    stop_name_he: 'ההגנה / כפר גלים',
-    lat: 32.7712,
-    lon: 34.9718
-  },
-  {
-    stop_id: 'stop-41005',
-    stop_code: '41005',
-    stop_name: 'MATAM High-Tech Park',
-    stop_name_he: 'פארק מת״ם / מבוא כרמל',
-    lat: 32.7804,
-    lon: 34.9658
-  },
-  {
-    stop_id: 'stop-41006',
-    stop_code: '41006',
-    stop_name: 'Haifa Mall / Fliman',
-    stop_name_he: 'קניון חיפה / פלימן',
-    lat: 32.7876,
-    lon: 34.9622
-  },
-  {
-    stop_id: 'stop-41007',
-    stop_code: '41007',
-    stop_name: 'Hof HaCarmel Central Station',
-    stop_name_he: 'מרכזית חוף הכרמל',
+    stop_id: 'stop-42600',
+    stop_code: '42600',
+    stop_name: 'ת. מרכזית חוף הכרמל/הורדה (חיפה)',
+    stop_name_he: 'ת. מרכזית חוף הכרמל/הורדה (חיפה)',
+    stop_sequence: 36,
     lat: 32.7938,
     lon: 34.9591
-  }
-];
-
-const NEARBY_COFFEE_OFFERS: NearbyOffer[] = [
-  {
-    id: 'offer-cafe-greg-matam',
-    name: 'Cafe Greg MATAM',
-    name_he: 'קפה גרג מת״ם',
-    category: 'Coffee & Pastries',
-    walk_minutes: 2,
-    distance_meters: 140,
-    promo: '10% off espresso while waiting for Bus 49',
-    lat: 32.7811,
-    lon: 34.9665
-  },
-  {
-    id: 'offer-aroma-haifa-mall',
-    name: 'Aroma Espresso Bar — Haifa Mall',
-    name_he: 'ארומה אספרסו בר — קניון חיפה',
-    category: 'Coffee',
-    walk_minutes: 3,
-    distance_meters: 240,
-    promo: 'Free pastry upgrade with iced coffee',
-    lat: 32.7872,
-    lon: 34.9631
-  },
-  {
-    id: 'offer-roladin-hof-hacarmel',
-    name: 'Roladin Hof HaCarmel',
-    name_he: 'רולדין חוף הכרמל',
-    category: 'Bakery & Coffee',
-    walk_minutes: 4,
-    distance_meters: 310,
-    promo: 'Morning combo 24 ILS',
-    lat: 32.7932,
-    lon: 34.9599
   }
 ];
 
@@ -127,20 +63,18 @@ class SupabaseService {
   private pgPool: pg.Pool | null = null;
   private initialized = false;
 
-  private getClient(): SupabaseClient | null {
-    if (!this.initialized) {
-      this.initialized = true;
-      const url = process.env.SUPABASE_URL;
-      const key = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_KEY;
-      if (url && key && url.startsWith('http')) {
-        this.client = createClient(url, key);
-      }
-      const dbUrl = process.env.DATABASE_URL;
-      if (dbUrl) {
-        this.pgPool = new pg.Pool({ connectionString: dbUrl });
-      }
+  private ensureInit(): void {
+    if (this.initialized) return;
+    this.initialized = true;
+    const url = process.env.SUPABASE_URL;
+    const key = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_KEY;
+    if (url && key && url.startsWith('http')) {
+      this.client = createClient(url, key);
     }
-    return this.client;
+    const dbUrl = process.env.DATABASE_URL;
+    if (dbUrl) {
+      this.pgPool = new pg.Pool({ connectionString: dbUrl });
+    }
   }
 
   async findNearestStopForLine(
@@ -150,10 +84,11 @@ class SupabaseService {
     preferredDirection?: 0 | 1,
     destinationHint?: string
   ): Promise<NearestStopRpcRow> {
-    const client = this.getClient();
-    if (client && preferredDirection === undefined) {
+    this.ensureInit();
+
+    if (this.client && preferredDirection === undefined) {
       try {
-        const { data, error } = await client.rpc('find_nearest_stop_for_line', {
+        const { data, error } = await this.client.rpc('find_nearest_stop_for_line', {
           line_num: lineNum,
           user_lat: userLat,
           user_lon: userLon
@@ -173,7 +108,7 @@ class SupabaseService {
             stop_lon: Number(row.stop_lon),
             route_short_name: String(row.route_short_name ?? lineNum),
             route_long_name: String(row.route_long_name ?? `Line ${lineNum}`),
-            distance_meters: Number(row.distance_meters ?? 0)
+            distance_meters: Math.round(Number(row.distance_meters ?? 0))
           };
         }
       } catch (err) {
@@ -181,11 +116,11 @@ class SupabaseService {
       }
     }
 
-    if (this.pgPool && preferredDirection === undefined) {
+    if (this.pgPool) {
       try {
         const res = await this.pgPool.query(
-          `SELECT * FROM find_nearest_stop_for_line($1, $2, $3)`,
-          [lineNum, userLat, userLon]
+          `SELECT * FROM find_nearest_stop_for_line($1, $2, $3, $4)`,
+          [lineNum, userLat, userLon, preferredDirection ?? null]
         );
         if (res.rows.length > 0) {
           const row = res.rows[0];
@@ -216,27 +151,21 @@ class SupabaseService {
           ? 1
           : 0;
 
-    const orderedStops =
-      inferredDir === 0 ? LINE_49_STOPS_DIR_0 : [...LINE_49_STOPS_DIR_0].reverse();
-
-    let bestStop = orderedStops[0];
-    let bestSequence = 1;
+    let bestStop = LINE_49_FALLBACK_STOPS[0];
     let minDist = Infinity;
-
-    orderedStops.forEach((stop, idx) => {
+    for (const stop of LINE_49_FALLBACK_STOPS) {
       const dist = haversineDistanceMeters(userLat, userLon, stop.lat, stop.lon);
       if (dist < minDist) {
         minDist = dist;
         bestStop = stop;
-        bestSequence = idx + 1;
       }
-    });
+    }
 
     return {
-      route_id: `route-${lineNum}-haifa`,
+      route_id: 'stride-10049',
       direction_id: inferredDir,
       stop_id: bestStop.stop_id,
-      stop_sequence: bestSequence,
+      stop_sequence: bestStop.stop_sequence,
       stop_code: bestStop.stop_code,
       stop_name: bestStop.stop_name,
       stop_name_he: bestStop.stop_name_he,
@@ -251,22 +180,69 @@ class SupabaseService {
     };
   }
 
-  getRouteStopsTimeline(
+  async getDirectionStopCoords(routeId: string, directionId: 0 | 1): Promise<RouteStopCoord[]> {
+    this.ensureInit();
+    if (this.pgPool) {
+      try {
+        const res = await this.pgPool.query(
+          `SELECT
+            s.stop_id,
+            s.stop_code,
+            s.stop_name,
+            COALESCE(s.stop_name_he, s.stop_name) AS stop_name_he,
+            rs.stop_sequence,
+            ST_Y(s.location::geometry)::FLOAT AS lat,
+            ST_X(s.location::geometry)::FLOAT AS lon
+          FROM route_stops rs
+          JOIN stops s ON s.stop_id = rs.stop_id
+          WHERE rs.route_id = $1 AND rs.direction_id = $2
+          ORDER BY rs.stop_sequence ASC`,
+          [routeId, directionId]
+        );
+        if (res.rows.length > 0) {
+          return res.rows.map((r) => ({
+            stop_id: String(r.stop_id),
+            stop_code: String(r.stop_code),
+            stop_name: String(r.stop_name),
+            stop_name_he: String(r.stop_name_he),
+            stop_sequence: Number(r.stop_sequence),
+            lat: Number(r.lat),
+            lon: Number(r.lon)
+          }));
+        }
+      } catch (err) {
+        console.warn('[PostgreSQL] Stop list query error:', (err as Error).message);
+      }
+    }
+
+    return LINE_49_FALLBACK_STOPS;
+  }
+
+  async getRouteStopsTimeline(
+    routeId: string,
     directionId: 0 | 1,
     userStopSequence: number,
     busStopSequence: number
-  ): StopTimelineItem[] {
-    const orderedStops =
-      directionId === 0 ? LINE_49_STOPS_DIR_0 : [...LINE_49_STOPS_DIR_0].reverse();
+  ): Promise<StopTimelineItem[]> {
+    const allStops = await this.getDirectionStopCoords(routeId, directionId);
 
-    return orderedStops.map((stop, index) => {
-      const seq = index + 1;
+    // Return focused window around bus & user stop (plus endpoints) if route has > 12 stops
+    let selected = allStops;
+    if (allStops.length > 14) {
+      const startSeq = Math.max(1, Math.min(busStopSequence, userStopSequence) - 3);
+      const endSeq = Math.min(allStops.length, Math.max(busStopSequence, userStopSequence) + 4);
+      selected = allStops.filter(
+        (s) => s.stop_sequence === 1 || (s.stop_sequence >= startSeq && s.stop_sequence <= endSeq)
+      );
+    }
+
+    return selected.map((stop) => {
       let status: StopTimelineItem['status'] = 'upcoming';
-      if (seq < busStopSequence) {
+      if (stop.stop_sequence < busStopSequence) {
         status = 'passed';
-      } else if (seq === userStopSequence) {
+      } else if (stop.stop_sequence === userStopSequence) {
         status = 'user_stop';
-      } else if (seq >= busStopSequence && seq < userStopSequence) {
+      } else if (stop.stop_sequence >= busStopSequence && stop.stop_sequence < userStopSequence) {
         status = 'approaching';
       }
 
@@ -275,25 +251,12 @@ class SupabaseService {
         stop_code: stop.stop_code,
         stop_name: stop.stop_name,
         stop_name_he: stop.stop_name_he,
-        stop_sequence: seq,
+        stop_sequence: stop.stop_sequence,
         lat: stop.lat,
         lon: stop.lon,
         status
       };
     });
-  }
-
-  getNearbyOffers(userLat: number, userLon: number): NearbyOffer[] {
-    return NEARBY_COFFEE_OFFERS.map((offer) => {
-      const distanceMeters = Math.round(
-        haversineDistanceMeters(userLat, userLon, offer.lat, offer.lon)
-      );
-      return {
-        ...offer,
-        distance_meters: distanceMeters,
-        walk_minutes: Math.max(1, Math.round(distanceMeters / 75))
-      };
-    }).sort((a, b) => a.distance_meters - b.distance_meters);
   }
 }
 

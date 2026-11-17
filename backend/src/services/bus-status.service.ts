@@ -6,6 +6,7 @@ import {
   resolveRenderMode,
   selectNearestApproachingVehicle
 } from './eta.service.js';
+import { fetchRealNearbyCafes } from './places.service.js';
 import { redisService } from './redis.service.js';
 import { fetchLiveVehiclesFromStride } from './stride.service.js';
 import { supabaseService } from './supabase.service.js';
@@ -16,12 +17,35 @@ import type {
   NearestBusInfo
 } from '../types/bus.types.js';
 
-const HAIFA_ROUTE_49_BBOX: BoundingBox = {
-  minLat: 32.755,
-  maxLat: 32.798,
-  minLon: 34.955,
-  maxLon: 34.980
-};
+function computeBoundingBox(
+  points: Array<{ lat: number; lon: number }>
+): BoundingBox {
+  if (points.length === 0) {
+    return { minLat: 32.75, maxLat: 32.80, minLon: 34.95, maxLon: 34.985 };
+  }
+
+  let minLat = Infinity;
+  let maxLat = -Infinity;
+  let minLon = Infinity;
+  let maxLon = -Infinity;
+
+  for (const p of points) {
+    if (p.lat < minLat) minLat = p.lat;
+    if (p.lat > maxLat) maxLat = p.lat;
+    if (p.lon < minLon) minLon = p.lon;
+    if (p.lon > maxLon) maxLon = p.lon;
+  }
+
+  const latPad = Math.max(0.005, (maxLat - minLat) * 0.15);
+  const lonPad = Math.max(0.005, (maxLon - minLon) * 0.15);
+
+  return {
+    minLat: Number((minLat - latPad).toFixed(5)),
+    maxLat: Number((maxLat + latPad).toFixed(5)),
+    minLon: Number((minLon - lonPad).toFixed(5)),
+    maxLon: Number((maxLon + lonPad).toFixed(5))
+  };
+}
 
 export interface GetLiveBusStatusParams {
   lineNumber: string;
@@ -101,7 +125,8 @@ export async function getLiveBusStatus(
   const busLat = nearestBus?.lat ?? nearestStop.stop_lat;
   const busLon = nearestBus?.lon ?? nearestStop.stop_lon;
 
-  const timelineStops = supabaseService.getRouteStopsTimeline(
+  const timelineStops = await supabaseService.getRouteStopsTimeline(
+    nearestStop.route_id,
     directionId,
     nearestStop.stop_sequence,
     nearestBus?.current_stop_sequence ?? 1
@@ -109,13 +134,21 @@ export async function getLiveBusStatus(
 
   const nearbyOffers =
     renderMode === 'interactive'
-      ? supabaseService.getNearbyOffers(nearestStop.stop_lat, nearestStop.stop_lon)
+      ? await fetchRealNearbyCafes(params.userLat, params.userLon)
       : [];
+
+  const bbox = computeBoundingBox([
+    { lat: params.userLat, lon: params.userLon },
+    { lat: nearestStop.stop_lat, lon: nearestStop.stop_lon },
+    { lat: busLat, lon: busLon },
+    ...timelineStops.map((s) => ({ lat: s.lat, lon: s.lon }))
+  ]);
 
   return {
     render_mode: renderMode,
     updated_at: cachedState?.updated_at ?? new Date().toISOString(),
     cache_hit: cacheHit,
+    user_location: { lat: params.userLat, lon: params.userLon },
     route: {
       route_id: nearestStop.route_id,
       short_name: nearestStop.route_short_name,
@@ -152,12 +185,12 @@ export async function getLiveBusStatus(
     timeline_stops: timelineStops,
     lite_map: {
       static_image_url: '/assets/haifa-route-49-static.svg',
-      bbox: HAIFA_ROUTE_49_BBOX,
-      bus_projection: projectCoordinatesToBbox(busLat, busLon, HAIFA_ROUTE_49_BBOX),
+      bbox,
+      bus_projection: projectCoordinatesToBbox(busLat, busLon, bbox),
       user_projection: projectCoordinatesToBbox(
         nearestStop.stop_lat,
         nearestStop.stop_lon,
-        HAIFA_ROUTE_49_BBOX
+        bbox
       )
     },
     nearby_offers: nearbyOffers

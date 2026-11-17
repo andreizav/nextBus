@@ -20,12 +20,18 @@ import { LiteTimelineViewComponent } from '../lite-timeline-view/lite-timeline-v
 
 const POLL_INTERVAL_MS = 15_000;
 
+const DEFAULT_COORDS = {
+  lat: 32.7895,
+  lon: 34.9640
+};
+
 const DEFAULT_FALLBACK_STATE: LiveBusStatusResponse = {
   render_mode: 'lite',
   updated_at: new Date().toISOString(),
   cache_hit: false,
+  user_location: DEFAULT_COORDS,
   route: {
-    route_id: 'route-49-haifa',
+    route_id: 'stride-10049',
     short_name: '49',
     long_name: 'Tirat Carmel -> Haifa Hof HaCarmel',
     direction_id: 0,
@@ -44,98 +50,27 @@ const DEFAULT_FALLBACK_STATE: LiveBusStatusResponse = {
     ]
   },
   user_stop: {
-    stop_id: 'stop-41005',
-    stop_code: '41005',
-    stop_name: 'MATAM High-Tech Park',
-    stop_name_he: 'פארק מת״ם / מבוא כרמל',
-    stop_sequence: 5,
-    lat: 32.7804,
-    lon: 34.9658,
-    distance_meters: 120
+    stop_id: 'stop-42656',
+    stop_code: '42656',
+    stop_name: "מת''מ (חיפה)",
+    stop_name_he: "מת''מ (חיפה)",
+    stop_sequence: 34,
+    lat: 32.790385,
+    lon: 34.96134,
+    distance_meters: 268
   },
   nearest_bus: {
-    vehicle_id: 'egged-49-101',
-    lat: 32.7668,
-    lon: 34.9729,
-    bearing: 348,
+    vehicle_id: 'egged-49-init',
+    lat: 32.7795,
+    lon: 34.9665,
+    bearing: 345,
     recorded_at_time: new Date().toISOString(),
-    current_stop_sequence: 3,
-    speed_kmh: 26,
-    stops_away: 2,
+    current_stop_sequence: 29,
+    speed_kmh: 25,
+    stops_away: 5,
     eta_minutes: 4
   },
-  timeline_stops: [
-    {
-      stop_id: 'stop-41001',
-      stop_code: '41001',
-      stop_name: 'Tirat Carmel / HaAtzmaut',
-      stop_name_he: 'העצמאות / טירת כרמל',
-      stop_sequence: 1,
-      lat: 32.7585,
-      lon: 34.9721,
-      status: 'passed'
-    },
-    {
-      stop_id: 'stop-41002',
-      stop_code: '41002',
-      stop_name: 'Herzl / Tirat Carmel Mall',
-      stop_name_he: 'הרצל / קניון טירת כרמל',
-      stop_sequence: 2,
-      lat: 32.7618,
-      lon: 34.9726,
-      status: 'passed'
-    },
-    {
-      stop_id: 'stop-41003',
-      stop_code: '41003',
-      stop_name: 'Rambam / HaGalil',
-      stop_name_he: 'רמב״ם / הגליל',
-      stop_sequence: 3,
-      lat: 32.7659,
-      lon: 34.973,
-      status: 'approaching'
-    },
-    {
-      stop_id: 'stop-41004',
-      stop_code: '41004',
-      stop_name: 'HaHagana / Kfar Galim',
-      stop_name_he: 'ההגנה / כפר גלים',
-      stop_sequence: 4,
-      lat: 32.7712,
-      lon: 34.9718,
-      status: 'approaching'
-    },
-    {
-      stop_id: 'stop-41005',
-      stop_code: '41005',
-      stop_name: 'MATAM High-Tech Park',
-      stop_name_he: 'פארק מת״ם / מבוא כרמל',
-      stop_sequence: 5,
-      lat: 32.7804,
-      lon: 34.9658,
-      status: 'user_stop'
-    },
-    {
-      stop_id: 'stop-41006',
-      stop_code: '41006',
-      stop_name: 'Haifa Mall / Fliman',
-      stop_name_he: 'קניון חיפה / פלימן',
-      stop_sequence: 6,
-      lat: 32.7876,
-      lon: 34.9622,
-      status: 'upcoming'
-    },
-    {
-      stop_id: 'stop-41007',
-      stop_code: '41007',
-      stop_name: 'Hof HaCarmel Central Station',
-      stop_name_he: 'מרכזית חוף הכרמל',
-      stop_sequence: 7,
-      lat: 32.7938,
-      lon: 34.9591,
-      status: 'upcoming'
-    }
-  ],
+  timeline_stops: [],
   lite_map: {
     static_image_url: '/assets/haifa-route-49-static.svg',
     bbox: {
@@ -144,8 +79,8 @@ const DEFAULT_FALLBACK_STATE: LiveBusStatusResponse = {
       minLon: 34.955,
       maxLon: 34.98
     },
-    bus_projection: { xPercent: 71.6, yPercent: 72.56 },
-    user_projection: { xPercent: 43.2, yPercent: 40.93 }
+    bus_projection: { xPercent: 52, yPercent: 45 },
+    user_projection: { xPercent: 45, yPercent: 32 }
   },
   nearby_offers: []
 };
@@ -170,6 +105,21 @@ const DEFAULT_FALLBACK_STATE: LiveBusStatusResponse = {
         </div>
 
         <div class="toolbar-actions">
+          <button
+            type="button"
+            class="geo-btn nb-btn"
+            [class.is-granted]="geoStatus() === 'granted'"
+            (click)="requestUserGeolocation()"
+            [disabled]="geoStatus() === 'locating'"
+          >
+            <span aria-hidden="true">📍</span>
+            {{
+              geoStatus() === 'locating'
+                ? labels().locating
+                : labels().locateMe
+            }}
+          </button>
+
           <div class="lang-group" role="group" aria-label="Language selection">
             <button
               type="button"
@@ -207,6 +157,26 @@ const DEFAULT_FALLBACK_STATE: LiveBusStatusResponse = {
         </div>
       </div>
 
+      <div class="geo-status-strip">
+        <span class="geo-coords">
+          @if (userCoords(); as coords) {
+            <span aria-hidden="true">🛰️</span>
+            {{ coords.lat.toFixed(5) }}, {{ coords.lon.toFixed(5) }}
+            @if (coords.accuracy) {
+              (±{{ coords.accuracy }}m)
+            }
+          } @else {
+            <span aria-hidden="true">🌐</span>
+            {{ labels().defaultArea }}
+          }
+        </span>
+        @if (busState().user_stop.distance_meters !== undefined) {
+          <span class="geo-dist">
+            {{ labels().toStop }}: {{ busState().user_stop.distance_meters }} m
+          </span>
+        }
+      </div>
+
       @if (viewMode() === 'lite') {
         <nb-lite-timeline-view
           [state]="busState()"
@@ -237,13 +207,13 @@ const DEFAULT_FALLBACK_STATE: LiveBusStatusResponse = {
         background: #070d18;
         color: #f8fafc;
         accent-color: #38bdf8;
-        inline-size: min(100%, 720px);
+        inline-size: min(100%, 760px);
         border: 1px solid #2b3c5d;
         border-radius: 1.25rem;
         padding-block: 1rem;
         padding-inline: 1rem;
         display: grid;
-        gap: 0.875rem;
+        gap: 0.75rem;
         box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
       }
 
@@ -252,7 +222,7 @@ const DEFAULT_FALLBACK_STATE: LiveBusStatusResponse = {
         flex-wrap: wrap;
         justify-content: space-between;
         align-items: center;
-        gap: 0.75rem;
+        gap: 0.65rem;
       }
 
       .brand {
@@ -281,7 +251,7 @@ const DEFAULT_FALLBACK_STATE: LiveBusStatusResponse = {
         display: flex;
         flex-wrap: wrap;
         align-items: center;
-        gap: 0.5rem;
+        gap: 0.45rem;
       }
 
       .lang-group {
@@ -290,7 +260,8 @@ const DEFAULT_FALLBACK_STATE: LiveBusStatusResponse = {
       }
 
       .pill-btn,
-      .mode-btn {
+      .mode-btn,
+      .geo-btn {
         background: #131e33;
         color: #e2e8f0;
         border: 1px solid #2b3c5d;
@@ -302,6 +273,11 @@ const DEFAULT_FALLBACK_STATE: LiveBusStatusResponse = {
         cursor: pointer;
       }
 
+      .geo-btn.is-granted {
+        border-color: #fbbf24;
+        color: #fde68a;
+      }
+
       .pill-btn.is-active {
         background: #38bdf8;
         color: #041322;
@@ -311,6 +287,32 @@ const DEFAULT_FALLBACK_STATE: LiveBusStatusResponse = {
       .mode-btn {
         border-color: #34d399;
         color: #6ee7b7;
+      }
+
+      .geo-status-strip {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        align-items: center;
+        gap: 0.5rem;
+        font-size: 0.78rem;
+        color: #cbd5e1;
+        background: #0d1627;
+        border: 1px solid #1e2d48;
+        border-radius: 0.625rem;
+        padding-block: 0.4rem;
+        padding-inline: 0.75rem;
+      }
+
+      .geo-coords {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+      }
+
+      .geo-dist {
+        color: #38bdf8;
+        font-weight: 600;
       }
 
       .defer-status {
@@ -332,7 +334,10 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
 
   readonly busState = signal<LiveBusStatusResponse>(DEFAULT_FALLBACK_STATE);
   readonly selectedDirection = signal<0 | 1>(0);
+  readonly hasExplicitDirection = signal(false);
   readonly lang = signal<WidgetLang>('ru');
+  readonly userCoords = signal<{ lat: number; lon: number; accuracy?: number } | null>(null);
+  readonly geoStatus = signal<'idle' | 'locating' | 'granted' | 'denied'>('idle');
   private readonly modeOverride = signal<RenderMode | null>(null);
   private readonly isTabHidden = signal(false);
   private readonly isInViewport = signal(true);
@@ -351,6 +356,10 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
         return {
           live: 'חי • 15 שניות',
           paused: 'מושהה ברקע',
+          locateMe: 'המיקום שלי',
+          locating: 'מאתר...',
+          defaultArea: 'חיפה (ברירת מחדל)',
+          toStop: 'מרחק לתחנה',
           openInteractive: 'מפה ובתי קפה',
           backToLite: 'חזרה למצב Lite',
           loadingMap: 'טוען מפה אינטראקטיבית...'
@@ -359,6 +368,10 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
         return {
           live: 'Live • 15s',
           paused: 'Polling paused',
+          locateMe: 'My Location',
+          locating: 'Locating...',
+          defaultArea: 'Haifa (default coords)',
+          toStop: 'To nearest stop',
           openInteractive: 'Interactive & Cafes',
           backToLite: 'Back to Lite',
           loadingMap: 'Loading interactive map module...'
@@ -367,6 +380,10 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
         return {
           live: 'Онлайн • 15с',
           paused: 'Пауза (не видим)',
+          locateMe: 'Моя геопозиция',
+          locating: 'Поиск GPS...',
+          defaultArea: 'Хайфа (координаты по умолчанию)',
+          toStop: 'До остановки',
           openInteractive: 'Карта и кофейни',
           backToLite: 'Назад в Lite',
           loadingMap: 'Загрузка интерактивной карты...'
@@ -396,6 +413,15 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
     const langParam = params.get('lang');
     if (langParam === 'ru' || langParam === 'en' || langParam === 'he') {
       this.lang.set(langParam);
+    }
+
+    const latParam = params.get('lat');
+    const lonParam = params.get('lon');
+    if (latParam && lonParam && !Number.isNaN(Number(latParam)) && !Number.isNaN(Number(lonParam))) {
+      this.userCoords.set({ lat: Number(latParam), lon: Number(lonParam) });
+      this.geoStatus.set('granted');
+    } else {
+      this.requestUserGeolocation();
     }
 
     this.isTabHidden.set(document.visibilityState === 'hidden');
@@ -434,7 +460,36 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
     }
   }
 
+  requestUserGeolocation(): void {
+    if (typeof navigator === 'undefined' || !('geolocation' in navigator)) {
+      this.geoStatus.set('denied');
+      return;
+    }
+
+    this.geoStatus.set('locating');
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        this.userCoords.set({
+          lat: position.coords.latitude,
+          lon: position.coords.longitude,
+          accuracy: Math.round(position.coords.accuracy)
+        });
+        this.geoStatus.set('granted');
+        void this.fetchLatestStatus();
+      },
+      () => {
+        this.geoStatus.set('denied');
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 8000,
+        maximumAge: 15000
+      }
+    );
+  }
+
   onDirectionSwitch(directionId: 0 | 1): void {
+    this.hasExplicitDirection.set(true);
     this.selectedDirection.set(directionId);
     void this.fetchLatestStatus();
   }
@@ -449,21 +504,27 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
     try {
       const params = new URLSearchParams(window.location.search);
       const line = params.get('line') ?? this.busState().route.short_name ?? '49';
-      const lat = params.get('lat') ?? String(this.busState().user_stop.lat);
-      const lon = params.get('lon') ?? String(this.busState().user_stop.lon);
+      const coords = this.userCoords() ?? DEFAULT_COORDS;
       const includeNearby = this.viewMode() === 'interactive';
+
+      const dirParam = this.hasExplicitDirection()
+        ? `&direction_id=${this.selectedDirection()}`
+        : '';
 
       const url = `/api/live-status?line_number=${encodeURIComponent(
         line
-      )}&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(
-        lon
-      )}&direction_id=${this.selectedDirection()}&include_nearby_places=${includeNearby}`;
+      )}&lat=${encodeURIComponent(coords.lat)}&lon=${encodeURIComponent(
+        coords.lon
+      )}${dirParam}&include_nearby_places=${includeNearby}`;
 
       const response = await fetch(url);
       if (!response.ok) return;
 
       const data = (await response.json()) as LiveBusStatusResponse;
       this.busState.set(data);
+      if (!this.hasExplicitDirection()) {
+        this.selectedDirection.set(data.route.direction_id);
+      }
     } catch {
       // Keep current signal snapshot if network temporarily fails
     }

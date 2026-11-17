@@ -72,12 +72,10 @@ class RedisService {
     }
   }
 
-  async getBusState(routeId: string, directionId: 0 | 1): Promise<CachedRouteState | null> {
-    const key = this.stateKey(routeId, directionId);
-
+  async getJson<T>(key: string): Promise<T | null> {
     if (await this.ensureConnected()) {
       const raw = await this.client!.get(key);
-      return raw ? (JSON.parse(raw) as CachedRouteState) : null;
+      return raw ? (JSON.parse(raw) as T) : null;
     }
 
     const entry = this.memoryStates.get(key);
@@ -85,7 +83,24 @@ class RedisService {
       this.memoryStates.delete(key);
       return null;
     }
-    return JSON.parse(entry.value) as CachedRouteState;
+    return JSON.parse(entry.value) as T;
+  }
+
+  async setJson<T>(key: string, value: T, ttlSeconds: number): Promise<void> {
+    const payload = JSON.stringify(value);
+    if (await this.ensureConnected()) {
+      await this.client!.set(key, payload, 'EX', ttlSeconds);
+      return;
+    }
+
+    this.memoryStates.set(key, {
+      value: payload,
+      expiresAt: Date.now() + ttlSeconds * 1000
+    });
+  }
+
+  async getBusState(routeId: string, directionId: 0 | 1): Promise<CachedRouteState | null> {
+    return this.getJson<CachedRouteState>(this.stateKey(routeId, directionId));
   }
 
   async setBusState(
@@ -93,18 +108,7 @@ class RedisService {
     directionId: 0 | 1,
     state: CachedRouteState
   ): Promise<void> {
-    const key = this.stateKey(routeId, directionId);
-    const payload = JSON.stringify(state);
-
-    if (await this.ensureConnected()) {
-      await this.client!.set(key, payload, 'EX', STATE_TTL_SECONDS);
-      return;
-    }
-
-    this.memoryStates.set(key, {
-      value: payload,
-      expiresAt: Date.now() + STATE_TTL_SECONDS * 1000
-    });
+    await this.setJson(this.stateKey(routeId, directionId), state, STATE_TTL_SECONDS);
   }
 
   async touchActiveRoute(routeId: string, directionId: 0 | 1): Promise<void> {
