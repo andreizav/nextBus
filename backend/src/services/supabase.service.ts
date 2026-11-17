@@ -123,13 +123,18 @@ const NEARBY_COFFEE_OFFERS: NearbyOffer[] = [
 
 class SupabaseService {
   private client: SupabaseClient | null = null;
+  private initialized = false;
 
-  constructor() {
-    const url = process.env.SUPABASE_URL;
-    const key = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_KEY;
-    if (url && key && url.startsWith('http')) {
-      this.client = createClient(url, key);
+  private getClient(): SupabaseClient | null {
+    if (!this.initialized) {
+      this.initialized = true;
+      const url = process.env.SUPABASE_URL;
+      const key = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_KEY;
+      if (url && key && url.startsWith('http')) {
+        this.client = createClient(url, key);
+      }
     }
+    return this.client;
   }
 
   async findNearestStopForLine(
@@ -139,9 +144,10 @@ class SupabaseService {
     preferredDirection?: 0 | 1,
     destinationHint?: string
   ): Promise<NearestStopRpcRow> {
-    if (this.client && preferredDirection === undefined) {
+    const client = this.getClient();
+    if (client && preferredDirection === undefined) {
       try {
-        const { data, error } = await this.client.rpc('find_nearest_stop_for_line', {
+        const { data, error } = await client.rpc('find_nearest_stop_for_line', {
           line_num: lineNum,
           user_lat: userLat,
           user_lon: userLon

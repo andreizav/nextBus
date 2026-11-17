@@ -12,11 +12,15 @@ export interface ActiveRouteRef {
 
 class RedisService {
   private client: Redis | null = null;
+  private initialized = false;
   private memoryStates = new Map<string, { value: string; expiresAt: number }>();
   private memoryActiveRoutes = new Map<string, number>();
   private useMemoryFallback = false;
 
-  constructor() {
+  private initClient(): void {
+    if (this.initialized) return;
+    this.initialized = true;
+
     const redisUrl = process.env.REDIS_URL;
     if (!redisUrl) {
       this.useMemoryFallback = true;
@@ -52,6 +56,7 @@ class RedisService {
   }
 
   private async ensureConnected(): Promise<boolean> {
+    this.initClient();
     if (this.useMemoryFallback || !this.client) {
       return false;
     }

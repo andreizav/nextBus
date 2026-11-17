@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <title>Privacy Policy — nextBus</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+      }
+      body {
+        font-family: system-ui, -apple-system, sans-serif;
+        max-inline-size: 72ch;
+        margin-inline: auto;
+        padding-block: 2rem;
+        padding-inline: 1.25rem;
+        line-height: 1.6;
+      }
+      h1, h2 { line-height: 1.25; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Privacy Policy — nextBus</h1>
+      <p><strong>Effective Date:</strong> November 17, 2026</p>
+
+      <h2>1. Data We Process</h2>
+      <p>
+        nextBus provides real-time public transit arrival estimates in Israel via Google Connected Apps
+        and the Model Context Protocol (MCP). When you request bus status, your query transmits your
+        requested line number and approximate GPS coordinates solely to locate the nearest public transit stop.
+      </p>
+
+      <h2>2. Ephemeral Caching &amp; No Personal Tracking</h2>
+      <p>
+        GPS coordinates passed in <code>get_live_bus_status</code> are used only during the active request
+        for geospatial lookup against PostGIS stop tables and are never persisted to user profiles,
+        sold, or shared for advertising. Live bus telemetry is cached transiently in Redis for up to 60 seconds.
+      </p>
+
+      <h2>3. Third-Party Data Sources</h2>
+      <p>
+        Real-time vehicle telemetry is sourced asynchronously from the Open Bus Stride API (Hasadna / MOT Israel)
+        by background workers.
+      </p>
+
+      <h2>4. Contact</h2>
+      <p>For privacy inquiries regarding the nextBus service, contact the project maintainer via the verified service domain.</p>
+    </main>
+  </body>
+</html>

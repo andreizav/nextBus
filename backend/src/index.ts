@@ -1,5 +1,5 @@
+import './config/env.js';
 import cors from 'cors';
-import dotenv from 'dotenv';
 import express, { type Request, type Response } from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -10,7 +10,6 @@ import { redisService } from './services/redis.service.js';
 import { pollingWorker } from './workers/polling.worker.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
 const app = express();
 const port = Number(process.env.PORT ?? 3000);
