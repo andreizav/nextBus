@@ -184,20 +184,16 @@ const DEFAULT_FALLBACK_STATE: LiveBusStatusResponse = {
           [lang]="lang()"
           (switchDirection)="onDirectionSwitch($event)"
         />
-      }
-
-      @defer (when viewMode() === 'interactive') {
-        <nb-interactive-map-view
-          [state]="busState()"
-          [lang]="lang()"
-          (switchDirection)="onDirectionSwitch($event)"
-        />
-      } @placeholder {
-        @if (viewMode() === 'interactive') {
+      } @else {
+        @defer {
+          <nb-interactive-map-view
+            [state]="busState()"
+            [lang]="lang()"
+            (switchDirection)="onDirectionSwitch($event)"
+          />
+        } @loading (minimum 120ms) {
           <div class="defer-status">{{ labels().loadingMap }}</div>
         }
-      } @loading (minimum 120ms) {
-        <div class="defer-status">{{ labels().loadingMap }}</div>
       }
     </main>
   `,
