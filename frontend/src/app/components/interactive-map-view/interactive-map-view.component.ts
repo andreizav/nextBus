@@ -10,28 +10,19 @@ import {
   effect,
   input,
   output,
-  signal,
   viewChild
 } from '@angular/core';
 import * as L from 'leaflet';
 import type {
-  EntryContext,
   LiveBusStatusResponse,
   RecommendedBusOption,
   WidgetLang
 } from '../../models/bus.models';
-import { SearchBarComponent } from '../search-bar/search-bar.component';
-
-const RANK_COLORS: Record<number, string> = {
-  1: '#10b981', // Rank 1: Fastest (Emerald Green)
-  2: '#38bdf8', // Rank 2: Cyan
-  3: '#818cf8'  // Rank 3: Indigo
-};
 
 @Component({
   selector: 'nb-interactive-map-view',
   standalone: true,
-  imports: [CommonModule, SearchBarComponent],
+  imports: [CommonModule],
   changeDetection: ChangeDetectionStrategy.OnPush,
   encapsulation: ViewEncapsulation.None,
   styleUrls: ['../../../../node_modules/leaflet/dist/leaflet.css'],
@@ -39,24 +30,20 @@ const RANK_COLORS: Record<number, string> = {
     <section
       class="interactive-card nb-card"
       [attr.dir]="lang() === 'he' ? 'rtl' : 'ltr'"
-      aria-label="Interactive transit map, Top-3 A-to-B buses, and nearby cafes"
+      aria-label="Interactive transit map, fastest A-to-B route, and nearby cafes"
     >
-      @if (entryContext() === 'standalone') {
-        <nb-search-bar
-          [lang]="lang()"
-          [isSearching]="isSearching()"
-          (searchSubmitted)="searchDestination.emit($event)"
-        />
-      }
-
       <header class="interactive-header">
         <div class="interactive-route">
           <div
             class="route-badge-sm"
-            [style.background]="activeRankColor()"
-            aria-label="Selected route number"
+            [class.is-transfer]="bestOption()?.is_transfer"
+            aria-label="Fastest route number"
           >
-            {{ activeDisplayRoute().short_name }}
+            @if (bestOption()?.is_transfer && bestOption()?.second_leg; as sec) {
+              <span>{{ activeDisplayRoute().short_name }}→{{ sec.route.short_name }}</span>
+            } @else {
+              <span>{{ activeDisplayRoute().short_name }}</span>
+            }
           </div>
           <div class="route-info">
             <span class="interactive-pill">
@@ -107,7 +94,7 @@ const RANK_COLORS: Record<number, string> = {
             >
               🎯
             </button>
-            @if (recommendedOptions().length === 0) {
+            @if (!bestOption()) {
               <button
                 type="button"
                 class="ctrl-btn nb-btn"
@@ -137,215 +124,197 @@ const RANK_COLORS: Record<number, string> = {
         </div>
       </div>
 
-      @if (recommendedOptions().length > 0) {
-        <div class="top3-section" role="region" aria-label="Top 3 recommended buses">
+      @if (bestOption(); as best) {
+        <div class="best-route-section" role="region" aria-label="Fastest route itinerary">
           <div class="top3-header">
             <h3 class="offers-title">
-              <span aria-hidden="true">🏆</span>
-              {{ labels().top3Title }} ({{ recommendedOptions().length }})
+              <span aria-hidden="true">⚡</span>
+              {{ labels().fastestTitle }}
             </h3>
             @if (state().destination; as dest) {
               <span class="dest-addr">{{ dest.formatted_address }}</span>
             }
           </div>
 
-          <div class="top3-carousel">
-            @for (
-              opt of recommendedOptions();
-              track opt.route.route_id + '-' + opt.route.direction_id + '-' + (opt.second_leg?.route?.route_id ?? 'direct');
-              let idx = $index
-            ) {
-              <button
-                type="button"
-                class="top3-card"
-                [class.is-selected]="selectedOptionIndex() === idx"
-                [class.is-fastest]="opt.rank === 1"
-                (click)="selectOption(idx)"
+          <div class="single-best-card">
+            <div class="top3-card-head">
+              <span
+                class="line-pill"
+                [style.background]="best.is_transfer ? '#f59e0b' : '#10b981'"
               >
-                <div class="top3-card-head">
-                  <span
-                    class="line-pill"
-                    [style.background]="rankColor(opt.rank)"
-                  >
-                    @if (opt.is_transfer && opt.second_leg) {
-                      🚌 {{ opt.route.short_name }} ➔ 🚌 {{ opt.second_leg.route.short_name }}
-                    } @else {
-                      {{ lang() === 'he' ? 'קו ' + opt.route.short_name : labels().lineWord + ' ' + opt.route.short_name }}
-                    }
-                  </span>
-                  <div class="head-badges">
-                    @if (opt.is_transfer) {
-                      <span class="transfer-badge">⇄ {{ labels().transferBadge }}</span>
-                    }
-                    @if (opt.rank === 1) {
-                      <span class="fastest-badge">{{ labels().fastest }}</span>
-                    } @else {
-                      <span class="rank-badge">#{{ opt.rank }}</span>
-                    }
-                  </div>
-                </div>
+                @if (best.is_transfer && best.second_leg) {
+                  🚌 {{ best.route.short_name }} ➔ 🚌 {{ best.second_leg.route.short_name }}
+                } @else {
+                  {{ lang() === 'he' ? 'קו ' + best.route.short_name : labels().lineWord + ' ' + best.route.short_name }}
+                }
+              </span>
+              <div class="head-badges">
+                @if (best.is_transfer) {
+                  <span class="transfer-badge">⇄ {{ labels().transferBadge }}</span>
+                }
+                <span class="fastest-badge">{{ labels().fastest }}</span>
+              </div>
+            </div>
 
-                <div class="top3-boarding">
-                  @if (opt.is_transfer && opt.transfer_info && opt.second_leg) {
-                    <span>
-                      {{ labels().firstBus }} №{{ opt.route.short_name }}:
-                      <strong>{{ opt.eta_to_boarding_min }} {{ labels().min }}</strong>
-                    </span>
-                    <div class="transfer-summary">
-                      🔄 {{ labels().exitAt }} <strong>{{ opt.transfer_info.arrive_at_hub_time }}</strong>
-                      {{ labels().atStop }} «{{ lang() === 'he' ? opt.transfer_info.alight_stop.stop_name_he : opt.transfer_info.alight_stop.stop_name }}»
-                      (#{{ opt.transfer_info.alight_stop.stop_code }})
-                      → <strong>№{{ opt.second_leg.route.short_name }}</strong> {{ labels().boardAt }} <strong>{{ opt.transfer_info.next_bus_board_time }}</strong>
-                    </div>
-                  } @else {
-                    {{ labels().arrivesIn }}
-                    <strong>{{ opt.eta_to_boarding_min }} {{ labels().min }}</strong>
-                    <span class="stop-inline">
-                      ({{ lang() === 'he' ? opt.origin_stop.stop_name_he : opt.origin_stop.stop_name }})
-                    </span>
-                  }
-                </div>
-
-                <div class="top3-total">
-                  <span>{{ labels().arriveAt }} <strong>{{ opt.estimated_arrival_time }}</strong></span>
-                  <span class="total-mins">({{ labels().total }} {{ opt.total_arrival_min }} {{ labels().min }})</span>
-                </div>
-              </button>
-            }
-          </div>
-
-          @if (selectedOption(); as selected) {
-            <div class="selected-timeline-box">
-              @if (selected.is_transfer && selected.transfer_info && selected.second_leg) {
-                <div class="transfer-itinerary">
-                  <div class="itinerary-step">
-                    <div class="timeline-head">
-                      <strong>
-                        🚌 1. {{ labels().routeWord }} {{ selected.route.short_name }}:
-                        {{ lang() === 'he' ? selected.origin_stop.stop_name_he : selected.origin_stop.stop_name }}
-                        →
-                        {{ lang() === 'he' ? selected.transfer_info.alight_stop.stop_name_he : selected.transfer_info.alight_stop.stop_name }}
-                      </strong>
-                      <span>{{ labels().arrivesIn }} {{ selected.eta_to_boarding_min }} {{ labels().min }}</span>
-                    </div>
-                    <ul class="mini-stop-list">
-                      @for (stop of selected.timeline_stops; track stop.stop_id) {
-                        <li
-                          class="mini-stop"
-                          [class.is-bus]="stop.stop_sequence === selected.bus.current_stop_sequence"
-                          [class.is-origin]="stop.stop_sequence === selected.origin_stop.stop_sequence"
-                          [class.is-xfer]="stop.stop_sequence === selected.transfer_info.alight_stop.stop_sequence"
-                        >
-                          <span class="mini-dot">
-                            @if (stop.stop_sequence === selected.bus.current_stop_sequence) {
-                              🚌
-                            } @else if (stop.stop_sequence === selected.origin_stop.stop_sequence) {
-                              📍
-                            } @else if (stop.stop_sequence === selected.transfer_info.alight_stop.stop_sequence) {
-                              🔄
-                            } @else {
-                              •
-                            }
-                          </span>
-                          <span class="mini-name">
-                            {{ lang() === 'he' ? stop.stop_name_he : stop.stop_name }}
-                          </span>
-                          <span class="mini-code">#{{ stop.stop_code }}</span>
-                        </li>
-                      }
-                    </ul>
-                  </div>
-
-                  <div class="transfer-hub-banner" role="note" aria-label="Transfer instructions">
-                    <div class="hub-title">
-                      <span>🔄 {{ labels().transferHereTitle }}</span>
-                      <span class="hub-meta">
-                        @if (selected.transfer_info.walk_meters > 0) {
-                          🚶 {{ selected.transfer_info.walk_meters }} m •
-                        }
-                        ⏱️ {{ labels().waitWord }} {{ selected.transfer_info.wait_minutes }} {{ labels().min }}
-                      </span>
-                    </div>
-                    <p class="hub-instruction">{{ transferInstruction(selected.transfer_info) }}</p>
-                  </div>
-
-                  <div class="itinerary-step">
-                    <div class="timeline-head">
-                      <strong>
-                        🚌 2. {{ labels().routeWord }} {{ selected.second_leg.route.short_name }} ({{ selected.transfer_info.next_bus_board_time }}):
-                        {{ lang() === 'he' ? selected.second_leg.board_stop.stop_name_he : selected.second_leg.board_stop.stop_name }}
-                        →
-                        {{ lang() === 'he' ? selected.dest_stop.stop_name_he : selected.dest_stop.stop_name }}
-                      </strong>
-                      <span>{{ selected.second_leg.stops_between }} {{ labels().stopsWord }} • ~{{ selected.second_leg.ride_duration_min }} {{ labels().min }} • 🏁 {{ selected.estimated_arrival_time }}</span>
-                    </div>
-                    <ul class="mini-stop-list">
-                      @for (stop of selected.second_leg.timeline_stops; track stop.stop_id) {
-                        <li
-                          class="mini-stop"
-                          [class.is-bus]="stop.stop_sequence === selected.second_leg.bus.current_stop_sequence"
-                          [class.is-xfer]="stop.stop_sequence === selected.second_leg.board_stop.stop_sequence"
-                          [class.is-dest]="stop.stop_sequence === selected.dest_stop.stop_sequence"
-                        >
-                          <span class="mini-dot">
-                            @if (stop.stop_sequence === selected.second_leg.bus.current_stop_sequence) {
-                              🚌
-                            } @else if (stop.stop_sequence === selected.second_leg.board_stop.stop_sequence) {
-                              🔄
-                            } @else if (stop.stop_sequence === selected.dest_stop.stop_sequence) {
-                              🏁
-                            } @else {
-                              •
-                            }
-                          </span>
-                          <span class="mini-name">
-                            {{ lang() === 'he' ? stop.stop_name_he : stop.stop_name }}
-                          </span>
-                          <span class="mini-code">#{{ stop.stop_code }}</span>
-                        </li>
-                      }
-                    </ul>
-                  </div>
+            <div class="top3-boarding">
+              @if (best.is_transfer && best.transfer_info && best.second_leg) {
+                <span>
+                  {{ labels().firstBus }} <strong>№{{ best.route.short_name }}</strong>
+                  ({{ lang() === 'he' ? best.origin_stop.stop_name_he : best.origin_stop.stop_name }}, #{{ best.origin_stop.stop_code }}) —
+                  <strong>{{ best.eta_to_boarding_min }} {{ labels().min }}</strong>
+                </span>
+                <div class="transfer-summary">
+                  🔄 {{ labels().exitAt }} <strong>{{ best.transfer_info.arrive_at_hub_time }}</strong>
+                  {{ labels().atStop }} «{{ lang() === 'he' ? best.transfer_info.alight_stop.stop_name_he : best.transfer_info.alight_stop.stop_name }}»
+                  (#{{ best.transfer_info.alight_stop.stop_code }})
+                  → {{ labels().boardNewBus }} <strong>🚌 №{{ best.second_leg.route.short_name }}</strong> {{ labels().boardAt }} <strong>{{ best.transfer_info.next_bus_board_time }}</strong>
                 </div>
               } @else {
-                <div class="timeline-head">
-                  <strong>
-                    {{ labels().routeWord }} {{ selected.route.short_name }}:
-                    {{ lang() === 'he' ? selected.origin_stop.stop_name_he : selected.origin_stop.stop_name }}
-                    →
-                    {{ lang() === 'he' ? selected.dest_stop.stop_name_he : selected.dest_stop.stop_name }}
-                  </strong>
-                  <span>{{ selected.stops_between }} {{ labels().stopsWord }} • ~{{ selected.ride_duration_min }} {{ labels().min }}</span>
-                </div>
-                <ul class="mini-stop-list">
-                  @for (stop of selected.timeline_stops; track stop.stop_id) {
-                    <li
-                      class="mini-stop"
-                      [class.is-bus]="stop.stop_sequence === selected.bus.current_stop_sequence"
-                      [class.is-origin]="stop.stop_sequence === selected.origin_stop.stop_sequence"
-                      [class.is-dest]="stop.stop_sequence === selected.dest_stop.stop_sequence"
-                    >
-                      <span class="mini-dot">
-                        @if (stop.stop_sequence === selected.bus.current_stop_sequence) {
-                          🚌
-                        } @else if (stop.stop_sequence === selected.origin_stop.stop_sequence) {
-                          📍
-                        } @else if (stop.stop_sequence === selected.dest_stop.stop_sequence) {
-                          🏁
-                        } @else {
-                          •
-                        }
-                      </span>
-                      <span class="mini-name">
-                        {{ lang() === 'he' ? stop.stop_name_he : stop.stop_name }}
-                      </span>
-                      <span class="mini-code">#{{ stop.stop_code }}</span>
-                    </li>
-                  }
-                </ul>
+                {{ labels().arrivesIn }}
+                <strong>{{ best.eta_to_boarding_min }} {{ labels().min }}</strong>
+                ({{ lang() === 'he' ? best.origin_stop.stop_name_he : best.origin_stop.stop_name }}, #{{ best.origin_stop.stop_code }})
               }
             </div>
-          }
+
+            <div class="top3-total">
+              <span>{{ labels().arriveAt }} <strong>{{ best.estimated_arrival_time }}</strong></span>
+              <span class="total-mins">({{ labels().total }} {{ best.total_arrival_min }} {{ labels().min }})</span>
+            </div>
+          </div>
+
+          <div class="selected-timeline-box">
+            @if (best.is_transfer && best.transfer_info && best.second_leg) {
+              <div class="transfer-itinerary">
+                <div class="itinerary-step">
+                  <div class="timeline-head">
+                    <strong>
+                      🚌 1. {{ labels().routeWord }} {{ best.route.short_name }}:
+                      {{ lang() === 'he' ? best.origin_stop.stop_name_he : best.origin_stop.stop_name }}
+                      →
+                      {{ lang() === 'he' ? best.transfer_info.alight_stop.stop_name_he : best.transfer_info.alight_stop.stop_name }}
+                    </strong>
+                    <span>{{ labels().arrivesIn }} {{ best.eta_to_boarding_min }} {{ labels().min }}</span>
+                  </div>
+                  <ul class="mini-stop-list">
+                    @for (stop of best.timeline_stops; track stop.stop_id + '-' + stop.stop_sequence) {
+                      <li
+                        class="mini-stop"
+                        [class.is-bus]="stop.stop_sequence === best.bus.current_stop_sequence"
+                        [class.is-origin]="stop.stop_sequence === best.origin_stop.stop_sequence"
+                        [class.is-xfer]="stop.stop_sequence === best.transfer_info.alight_stop.stop_sequence"
+                      >
+                        <span class="mini-dot">
+                          @if (stop.stop_sequence === best.bus.current_stop_sequence) {
+                            🚌
+                          } @else if (stop.stop_sequence === best.origin_stop.stop_sequence) {
+                            📍
+                          } @else if (stop.stop_sequence === best.transfer_info.alight_stop.stop_sequence) {
+                            🔄
+                          } @else {
+                            •
+                          }
+                        </span>
+                        <span class="mini-name">
+                          {{ lang() === 'he' ? stop.stop_name_he : stop.stop_name }}
+                        </span>
+                        <span class="mini-bus-tag">№{{ best.route.short_name }}</span>
+                        <span class="mini-code">#{{ stop.stop_code }}</span>
+                      </li>
+                    }
+                  </ul>
+                </div>
+
+                <div class="transfer-hub-banner" role="note" aria-label="Transfer instructions">
+                  <div class="hub-title">
+                    <span>🔄 {{ labels().transferHereTitle }}</span>
+                    <span class="hub-meta">
+                      @if (best.transfer_info.walk_meters > 0) {
+                        🚶 {{ best.transfer_info.walk_meters }} m •
+                      }
+                      ⏱️ {{ labels().waitWord }} {{ best.transfer_info.wait_minutes }} {{ labels().min }}
+                    </span>
+                  </div>
+                  <p class="hub-instruction">{{ transferInstruction(best.transfer_info) }}</p>
+                </div>
+
+                <div class="itinerary-step">
+                  <div class="timeline-head">
+                    <strong>
+                      🚌 2. {{ labels().routeWord }} {{ best.second_leg.route.short_name }} ({{ best.transfer_info.next_bus_board_time }}):
+                      {{ lang() === 'he' ? best.second_leg.board_stop.stop_name_he : best.second_leg.board_stop.stop_name }}
+                      →
+                      {{ lang() === 'he' ? best.dest_stop.stop_name_he : best.dest_stop.stop_name }}
+                    </strong>
+                    <span>{{ best.second_leg.stops_between }} {{ labels().stopsWord }} • ~{{ best.second_leg.ride_duration_min }} {{ labels().min }} • 🏁 {{ best.estimated_arrival_time }}</span>
+                  </div>
+                  <ul class="mini-stop-list">
+                    @for (stop of best.second_leg.timeline_stops; track 'leg2-' + stop.stop_id + '-' + stop.stop_sequence) {
+                      <li
+                        class="mini-stop"
+                        [class.is-bus]="stop.stop_sequence === best.second_leg.bus.current_stop_sequence"
+                        [class.is-xfer]="stop.stop_sequence === best.second_leg.board_stop.stop_sequence"
+                        [class.is-dest]="stop.stop_sequence === best.dest_stop.stop_sequence"
+                      >
+                        <span class="mini-dot">
+                          @if (stop.stop_sequence === best.second_leg.bus.current_stop_sequence) {
+                            🚌
+                          } @else if (stop.stop_sequence === best.second_leg.board_stop.stop_sequence) {
+                            🔄
+                          } @else if (stop.stop_sequence === best.dest_stop.stop_sequence) {
+                            🏁
+                          } @else {
+                            •
+                          }
+                        </span>
+                        <span class="mini-name">
+                          {{ lang() === 'he' ? stop.stop_name_he : stop.stop_name }}
+                        </span>
+                        <span class="mini-bus-tag is-leg2">№{{ best.second_leg.route.short_name }}</span>
+                        <span class="mini-code">#{{ stop.stop_code }}</span>
+                      </li>
+                    }
+                  </ul>
+                </div>
+              </div>
+            } @else {
+              <div class="timeline-head">
+                <strong>
+                  {{ labels().routeWord }} {{ best.route.short_name }}:
+                  {{ lang() === 'he' ? best.origin_stop.stop_name_he : best.origin_stop.stop_name }}
+                  →
+                  {{ lang() === 'he' ? best.dest_stop.stop_name_he : best.dest_stop.stop_name }}
+                </strong>
+                <span>{{ best.stops_between }} {{ labels().stopsWord }} • ~{{ best.ride_duration_min }} {{ labels().min }}</span>
+              </div>
+              <ul class="mini-stop-list">
+                @for (stop of best.timeline_stops; track stop.stop_id + '-' + stop.stop_sequence) {
+                  <li
+                    class="mini-stop"
+                    [class.is-bus]="stop.stop_sequence === best.bus.current_stop_sequence"
+                    [class.is-origin]="stop.stop_sequence === best.origin_stop.stop_sequence"
+                    [class.is-dest]="stop.stop_sequence === best.dest_stop.stop_sequence"
+                  >
+                    <span class="mini-dot">
+                      @if (stop.stop_sequence === best.bus.current_stop_sequence) {
+                        🚌
+                      } @else if (stop.stop_sequence === best.origin_stop.stop_sequence) {
+                        📍
+                      } @else if (stop.stop_sequence === best.dest_stop.stop_sequence) {
+                        🏁
+                      } @else {
+                        •
+                      }
+                    </span>
+                    <span class="mini-name">
+                      {{ lang() === 'he' ? stop.stop_name_he : stop.stop_name }}
+                    </span>
+                    <span class="mini-bus-tag">№{{ best.route.short_name }}</span>
+                    <span class="mini-code">#{{ stop.stop_code }}</span>
+                  </li>
+                }
+              </ul>
+            }
+          </div>
         </div>
       }
 
@@ -399,6 +368,8 @@ const RANK_COLORS: Record<number, string> = {
         padding-inline: 1.15rem;
         display: grid;
         gap: 0.95rem;
+        inline-size: 100%;
+        min-inline-size: 0;
       }
 
       .interactive-header {
@@ -420,14 +391,20 @@ const RANK_COLORS: Record<number, string> = {
       .route-badge-sm {
         display: grid;
         place-items: center;
-        inline-size: 3rem;
+        min-inline-size: 3rem;
+        padding-inline: 0.45rem;
         block-size: 3rem;
         flex-shrink: 0;
         border-radius: 0.75rem;
-        background: #38bdf8;
+        background: #10b981;
         color: #041322;
         font-size: 1.25rem;
         font-weight: 800;
+      }
+
+      .route-badge-sm.is-transfer {
+        background: #f59e0b;
+        font-size: 1rem;
       }
 
       .route-info {
@@ -512,6 +489,8 @@ const RANK_COLORS: Record<number, string> = {
         border-radius: 0.875rem;
         border: 1px solid #2b3c5d;
         background: #071524;
+        inline-size: 100%;
+        min-inline-size: 0;
       }
 
       .leaflet-host {
@@ -520,7 +499,6 @@ const RANK_COLORS: Record<number, string> = {
         z-index: 1;
       }
 
-      /* Smooth 15s marker glides */
       .leaflet-marker-icon.nb-smooth-marker {
         transition: transform 1.2s ease-out;
       }
@@ -567,7 +545,7 @@ const RANK_COLORS: Record<number, string> = {
       }
 
       .nb-pin-bus-pill.is-primary {
-        transform: scale(1.1);
+        transform: scale(1.08);
         box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.45), 0 4px 12px rgba(0, 0, 0, 0.6);
       }
 
@@ -589,7 +567,7 @@ const RANK_COLORS: Record<number, string> = {
         color: #e2e8f0;
       }
 
-      .top3-section {
+      .best-route-section {
         display: grid;
         gap: 0.7rem;
       }
@@ -607,34 +585,15 @@ const RANK_COLORS: Record<number, string> = {
         color: #94a3b8;
       }
 
-      .top3-carousel {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-        gap: 0.65rem;
-      }
-
-      .top3-card {
-        text-align: start;
-        background: #121d33;
+      .single-best-card {
+        background: #14223a;
         color: #f8fafc;
-        border: 1.5px solid #2b3c5d;
+        border: 1.5px solid #34d399;
         border-radius: 0.85rem;
-        padding-block: 0.75rem;
-        padding-inline: 0.85rem;
+        padding-block: 0.8rem;
+        padding-inline: 0.9rem;
         display: grid;
-        gap: 0.4rem;
-        cursor: pointer;
-        transition: border-color 0.2s ease, transform 0.15s ease;
-      }
-
-      .top3-card:hover {
-        border-color: #38bdf8;
-      }
-
-      .top3-card.is-selected {
-        background: #162642;
-        border-color: #34d399;
-        box-shadow: 0 0 0 1px #34d399;
+        gap: 0.45rem;
       }
 
       .top3-card-head {
@@ -646,11 +605,11 @@ const RANK_COLORS: Record<number, string> = {
 
       .line-pill {
         color: #041322;
-        font-size: 0.85rem;
+        font-size: 0.88rem;
         font-weight: 800;
         border-radius: 0.45rem;
-        padding-block: 0.2rem;
-        padding-inline: 0.55rem;
+        padding-block: 0.22rem;
+        padding-inline: 0.6rem;
       }
 
       .head-badges {
@@ -660,26 +619,68 @@ const RANK_COLORS: Record<number, string> = {
       }
 
       .transfer-badge {
-        font-size: 0.68rem;
+        font-size: 0.7rem;
         font-weight: 700;
         color: #fcd34d;
         background: rgba(245, 158, 11, 0.16);
         border: 1px solid #f59e0b;
         border-radius: 999px;
         padding-block: 0.1rem;
-        padding-inline: 0.45rem;
+        padding-inline: 0.48rem;
+      }
+
+      .fastest-badge {
+        font-size: 0.7rem;
+        font-weight: 700;
+        color: #34d399;
+        background: rgba(16, 185, 129, 0.15);
+        border: 1px solid #10b981;
+        border-radius: 999px;
+        padding-block: 0.12rem;
+        padding-inline: 0.5rem;
+      }
+
+      .top3-boarding {
+        font-size: 0.84rem;
+        color: #e2e8f0;
       }
 
       .transfer-summary {
-        margin-block-start: 0.3rem;
-        font-size: 0.74rem;
-        line-height: 1.35;
+        margin-block-start: 0.35rem;
+        font-size: 0.78rem;
+        line-height: 1.4;
         color: #fde68a;
         background: rgba(245, 158, 11, 0.1);
-        border: 1px solid rgba(245, 158, 11, 0.35);
+        border: 1px solid rgba(245, 158, 11, 0.38);
         border-radius: 0.45rem;
-        padding-block: 0.28rem;
-        padding-inline: 0.45rem;
+        padding-block: 0.35rem;
+        padding-inline: 0.55rem;
+      }
+
+      .top3-total {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 0.4rem;
+        font-size: 0.82rem;
+        color: #7dd3fc;
+        border-block-start: 1px solid #24344f;
+        padding-block-start: 0.4rem;
+      }
+
+      .total-mins {
+        color: #34d399;
+        font-weight: 700;
+      }
+
+      .selected-timeline-box {
+        background: #0e182b;
+        border: 1px solid #24344f;
+        border-radius: 0.75rem;
+        padding-block: 0.7rem;
+        padding-inline: 0.85rem;
+        display: grid;
+        gap: 0.55rem;
       }
 
       .transfer-itinerary {
@@ -725,65 +726,6 @@ const RANK_COLORS: Record<number, string> = {
         color: #f8fafc;
       }
 
-      .mini-stop.is-xfer {
-        border-color: #f59e0b;
-        color: #fde68a;
-      }
-
-      .fastest-badge {
-        font-size: 0.7rem;
-        font-weight: 700;
-        color: #34d399;
-        background: rgba(16, 185, 129, 0.15);
-        border: 1px solid #10b981;
-        border-radius: 999px;
-        padding-block: 0.12rem;
-        padding-inline: 0.5rem;
-      }
-
-      .rank-badge {
-        font-size: 0.72rem;
-        font-weight: 700;
-        color: #94a3b8;
-      }
-
-      .top3-boarding {
-        font-size: 0.8rem;
-        color: #e2e8f0;
-      }
-
-      .stop-inline {
-        display: block;
-        font-size: 0.74rem;
-        color: #94a3b8;
-      }
-
-      .top3-total {
-        display: flex;
-        justify-content: space-between;
-        align-items: baseline;
-        gap: 0.4rem;
-        font-size: 0.8rem;
-        color: #7dd3fc;
-        border-block-start: 1px solid #24344f;
-        padding-block-start: 0.35rem;
-      }
-
-      .total-mins {
-        color: #34d399;
-        font-weight: 700;
-      }
-
-      .selected-timeline-box {
-        background: #0e182b;
-        border: 1px solid #24344f;
-        border-radius: 0.75rem;
-        padding-block: 0.65rem;
-        padding-inline: 0.85rem;
-        display: grid;
-        gap: 0.5rem;
-      }
-
       .timeline-head {
         display: flex;
         flex-wrap: wrap;
@@ -811,8 +753,8 @@ const RANK_COLORS: Record<number, string> = {
         background: #131e33;
         border: 1px solid #24344f;
         border-radius: 0.45rem;
-        padding-block: 0.2rem;
-        padding-inline: 0.45rem;
+        padding-block: 0.22rem;
+        padding-inline: 0.48rem;
       }
 
       .mini-stop.is-bus {
@@ -825,9 +767,28 @@ const RANK_COLORS: Record<number, string> = {
         color: #fde68a;
       }
 
+      .mini-stop.is-xfer {
+        border-color: #f59e0b;
+        color: #fde68a;
+      }
+
       .mini-stop.is-dest {
         border-color: #ef4444;
         color: #fca5a5;
+      }
+
+      .mini-bus-tag {
+        background: #1e3254;
+        color: #7dd3fc;
+        border-radius: 0.28rem;
+        padding-inline: 0.3rem;
+        font-size: 0.68rem;
+        font-weight: 700;
+      }
+
+      .mini-bus-tag.is-leg2 {
+        background: #33260f;
+        color: #fcd34d;
       }
 
       .mini-code {
@@ -910,13 +871,8 @@ const RANK_COLORS: Record<number, string> = {
 export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
   readonly state = input.required<LiveBusStatusResponse>();
   readonly lang = input<WidgetLang>('ru');
-  readonly entryContext = input<EntryContext>('standalone');
-  readonly isSearching = input<boolean>(false);
 
   readonly switchDirection = output<0 | 1>();
-  readonly searchDestination = output<string>();
-
-  readonly selectedOptionIndex = signal<number>(0);
 
   private readonly mapEl = viewChild<ElementRef<HTMLDivElement>>('mapContainer');
 
@@ -926,50 +882,39 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
   private busMarkers = new Map<string, { marker: L.Marker; iconSig: string }>();
   private lastFitSignature = '';
 
-  readonly recommendedOptions = computed<RecommendedBusOption[]>(
-    () => this.state().recommended_options ?? []
+  readonly bestOption = computed<RecommendedBusOption | null>(
+    () => this.state().recommended_options?.[0] ?? null
   );
 
-  readonly selectedOption = computed<RecommendedBusOption | null>(() => {
-    const opts = this.recommendedOptions();
-    if (opts.length === 0) return null;
-    const idx = Math.min(this.selectedOptionIndex(), opts.length - 1);
-    return opts[idx] ?? null;
-  });
-
   readonly activeDisplayRoute = computed(
-    () => this.selectedOption()?.route ?? this.state().route
+    () => this.bestOption()?.route ?? this.state().route
   );
 
   readonly activeOriginStop = computed(
-    () => this.selectedOption()?.origin_stop ?? this.state().user_stop
+    () => this.bestOption()?.origin_stop ?? this.state().user_stop
   );
 
   readonly activeBus = computed(
-    () => this.selectedOption()?.bus ?? this.state().nearest_bus
+    () => this.bestOption()?.bus ?? this.state().nearest_bus
   );
-
-  readonly activeRankColor = computed(() => {
-    const selected = this.selectedOption();
-    return selected ? this.rankColor(selected.rank) : '#38bdf8';
-  });
 
   readonly labels = computed(() => {
     switch (this.lang()) {
       case 'he':
         return {
-          badge: 'מפה ותכנון מסלול • @defer',
+          badge: 'מפה והמסלול המהיר ביותר • @defer',
           routeLabel: 'קו',
-          tripTo: 'מסלולים ליעד:',
+          tripTo: 'מסלול ליעד:',
           busNowAt: 'האוטובוס כעת',
           nearestStop: 'תחנת עלייה',
           recenter: 'מרכז מסלול',
-          top3Title: '3 האוטובוסים המהירים ביותר',
+          fastestTitle: 'המסלול המהיר ביותר',
           fastest: 'הכי מהיר',
           transferBadge: 'החלפה',
           firstBus: 'אוטובוס ראשון',
           exitAt: 'לרדת ב-',
           atStop: 'בתחנה',
+          boardNewBus: 'לאוטובוס החדש',
           boardAt: 'ב-',
           transferHereTitle: 'החלפת אוטובוס (איפה ומתי לרדת)',
           waitWord: 'המתנה',
@@ -986,18 +931,19 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
         };
       case 'en':
         return {
-          badge: 'Map & Top-3 Transit • @defer',
+          badge: 'Map & Fastest Route • @defer',
           routeLabel: 'Line',
-          tripTo: 'Fastest buses to',
+          tripTo: 'Fastest route to',
           busNowAt: 'Bus now at',
           nearestStop: 'Boarding stop',
           recenter: 'Center route',
-          top3Title: 'Top-3 Fastest Buses',
+          fastestTitle: 'Fastest Route',
           fastest: 'Fastest',
           transferBadge: 'Transfer',
           firstBus: '1st Bus',
           exitAt: 'Exit at',
           atStop: 'at',
+          boardNewBus: 'new bus',
           boardAt: 'at',
           transferHereTitle: 'Transfer Point (Where & When to Change)',
           waitWord: 'Wait',
@@ -1014,18 +960,19 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
         };
       default:
         return {
-          badge: 'Карта и Топ-3 маршрута • @defer',
+          badge: 'Карта и самый быстрый маршрут • @defer',
           routeLabel: 'Маршрут',
           tripTo: 'Куда едем:',
           busNowAt: 'Автобус сейчас',
           nearestStop: 'Остановка посадки',
           recenter: 'Центрировать маршрут',
-          top3Title: 'Топ-3 самых быстрых маршрута',
+          fastestTitle: 'Самый быстрый маршрут',
           fastest: 'Самый быстрый',
           transferBadge: 'Пересадка',
           firstBus: '1-й авт.',
           exitAt: 'Выйти в',
           atStop: 'на ост.',
+          boardNewBus: 'новый авт.',
           boardAt: 'в',
           transferHereTitle: 'Где и когда сделать пересадку',
           waitWord: 'ожидание',
@@ -1067,9 +1014,8 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
     effect(() => {
       const currentState = this.state();
       const currentLang = this.lang();
-      const selectedIdx = this.selectedOptionIndex();
       if (this.map && this.markersLayer) {
-        this.renderMapLayers(currentState, currentLang, selectedIdx);
+        this.renderMapLayers(currentState, currentLang);
       }
     });
   }
@@ -1095,7 +1041,7 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
 
     this.markersLayer = L.layerGroup().addTo(this.map);
     this.busLayer = L.layerGroup().addTo(this.map);
-    this.renderMapLayers(initial, this.lang(), this.selectedOptionIndex());
+    this.renderMapLayers(initial, this.lang());
   }
 
   ngOnDestroy(): void {
@@ -1106,14 +1052,6 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
       this.markersLayer = null;
       this.busLayer = null;
     }
-  }
-
-  rankColor(rank: number): string {
-    return RANK_COLORS[rank] ?? '#38bdf8';
-  }
-
-  selectOption(index: number): void {
-    this.selectedOptionIndex.set(index);
   }
 
   transferInstruction(
@@ -1127,28 +1065,23 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
   recenterMap(): void {
     if (!this.map) return;
     this.lastFitSignature = '';
-    this.renderMapLayers(this.state(), this.lang(), this.selectedOptionIndex());
+    this.renderMapLayers(this.state(), this.lang());
   }
 
-  private renderMapLayers(
-    data: LiveBusStatusResponse,
-    lang: WidgetLang,
-    selectedIdx: number
-  ): void {
+  private renderMapLayers(data: LiveBusStatusResponse, lang: WidgetLang): void {
     if (!this.map || !this.markersLayer) return;
     this.markersLayer.clearLayers();
 
     const boundsPoints: L.LatLngExpression[] = [];
-    const opts = data.recommended_options ?? [];
-    const activeOpt = opts[Math.min(selectedIdx, Math.max(0, opts.length - 1))] ?? null;
+    const activeOpt = data.recommended_options?.[0] ?? null;
 
-    // 1. Draw polyline & stop markers for active trip (Leg 1 + Transfer + Leg 2 if transfer)
+    // 1. Draw polyline & stop markers for fastest trip (Leg 1 + Leg 2 if transfer)
     const activeTimeline = activeOpt?.timeline_stops ?? data.timeline_stops;
     const originStopSeq = activeOpt?.origin_stop.stop_sequence ?? data.user_stop.stop_sequence;
     const destStopSeq = activeOpt?.is_transfer
       ? activeOpt.transfer_info?.alight_stop.stop_sequence
       : activeOpt?.dest_stop.stop_sequence;
-    const activeColor = activeOpt ? this.rankColor(activeOpt.rank) : '#38bdf8';
+    const activeColor = '#10b981';
 
     if (activeTimeline.length > 0) {
       const polyCoords: L.LatLngExpression[] = activeTimeline.map((s) => [s.lat, s.lon]);
@@ -1173,13 +1106,13 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
           fillOpacity: 1
         })
           .bindPopup(
-            `<strong>${lang === 'he' ? stop.stop_name_he : stop.stop_name}</strong><br/>Stop #${stop.stop_code}`
+            `<strong>${lang === 'he' ? stop.stop_name_he : stop.stop_name}</strong><br/>Line ${activeOpt?.route.short_name ?? data.route.short_name} • Stop #${stop.stop_code}`
           )
           .addTo(this.markersLayer);
       }
     }
 
-    // 1b. If transfer route, draw Leg 2 polyline, Transfer Hub marker (🔄), and walking connector
+    // 1b. If transfer route, draw Leg 2 dashed polyline, Transfer Hub marker (🔄), and walking connector
     if (activeOpt?.is_transfer && activeOpt.transfer_info && activeOpt.second_leg) {
       const xfer = activeOpt.transfer_info;
       const leg2Stops = activeOpt.second_leg.timeline_stops;
@@ -1202,7 +1135,7 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
             fillOpacity: 1
           })
             .bindPopup(
-              `<strong>${lang === 'he' ? stop.stop_name_he : stop.stop_name}</strong><br/>Stop #${stop.stop_code}`
+              `<strong>${lang === 'he' ? stop.stop_name_he : stop.stop_name}</strong><br/>Line ${activeOpt.second_leg.route.short_name} • Stop #${stop.stop_code}`
             )
             .addTo(this.markersLayer);
         }
@@ -1253,7 +1186,7 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
         .addTo(this.markersLayer);
     }
 
-    // 3. Destination Marker (Point B) when searching A -> B
+    // 3. Destination Marker (Point B)
     if (data.destination) {
       const destPos: L.LatLngExpression = [data.destination.lat, data.destination.lon];
       boundsPoints.push(destPos);
@@ -1268,7 +1201,7 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
         .addTo(this.markersLayer);
     }
 
-    // 4. Live Bus Markers (Up to 3 for A -> B, or single bus) on dedicated smooth busLayer
+    // 4. Live Bus Marker(s) for single fastest route (Leg 1 + Leg 2 if transfer)
     const activeBusKeys = new Set<string>();
     const busEntries: Array<{
       key: string;
@@ -1280,33 +1213,30 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
       popupHtml: string;
     }> = [];
 
-    if (opts.length > 0) {
-      for (const [idx, opt] of opts.entries()) {
-        const isPrimary = idx === selectedIdx;
+    if (activeOpt) {
+      busEntries.push({
+        key: `${activeOpt.route.route_id}:${activeOpt.bus.vehicle_id}`,
+        lat: activeOpt.bus.lat,
+        lon: activeOpt.bus.lon,
+        shortName: activeOpt.route.short_name,
+        color: '#10b981',
+        isPrimary: true,
+        popupHtml:
+          `<strong>Bus ${activeOpt.route.short_name}</strong><br/>` +
+          `ETA: ${activeOpt.eta_to_boarding_min} min • Arrive ${activeOpt.estimated_arrival_time}`
+      });
+      if (activeOpt.is_transfer && activeOpt.second_leg) {
         busEntries.push({
-          key: `${opt.route.route_id}:${opt.bus.vehicle_id}`,
-          lat: opt.bus.lat,
-          lon: opt.bus.lon,
-          shortName: opt.route.short_name,
-          color: this.rankColor(opt.rank),
-          isPrimary,
+          key: `leg2:${activeOpt.second_leg.route.route_id}:${activeOpt.second_leg.bus.vehicle_id}`,
+          lat: activeOpt.second_leg.bus.lat,
+          lon: activeOpt.second_leg.bus.lon,
+          shortName: `${activeOpt.second_leg.route.short_name} (2)`,
+          color: '#f59e0b',
+          isPrimary: true,
           popupHtml:
-            `<strong>${opt.route.short_name}</strong> (#${opt.rank})<br/>` +
-            `ETA: ${opt.eta_to_boarding_min} min • Arrive ${opt.estimated_arrival_time}`
+            `<strong>2nd Bus ${activeOpt.second_leg.route.short_name}</strong><br/>` +
+            `Board at ${activeOpt.transfer_info?.next_bus_board_time ?? ''}`
         });
-        if (isPrimary && opt.is_transfer && opt.second_leg) {
-          busEntries.push({
-            key: `leg2:${opt.second_leg.route.route_id}:${opt.second_leg.bus.vehicle_id}`,
-            lat: opt.second_leg.bus.lat,
-            lon: opt.second_leg.bus.lon,
-            shortName: `${opt.second_leg.route.short_name} (2)`,
-            color: '#f59e0b',
-            isPrimary: true,
-            popupHtml:
-              `<strong>2nd Bus ${opt.second_leg.route.short_name}</strong><br/>` +
-              `Board at ${opt.transfer_info?.next_bus_board_time ?? ''}`
-          });
-        }
       }
     } else if (data.nearest_bus) {
       busEntries.push({
@@ -1358,7 +1288,7 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
     }
 
     const fitSignature = data.destination
-      ? `${data.destination.lat.toFixed(4)},${data.destination.lon.toFixed(4)}:${opts.length}`
+      ? `${data.destination.lat.toFixed(4)},${data.destination.lon.toFixed(4)}:${activeOpt?.route.route_id ?? ''}`
       : `${data.route.route_id}:${data.route.direction_id}`;
 
     if (this.lastFitSignature !== fitSignature && boundsPoints.length >= 2) {

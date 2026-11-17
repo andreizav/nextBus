@@ -247,7 +247,7 @@ export class SearchBarComponent {
       case 'he':
         return {
           placeholder: 'לאן נוסעים? למשל: מרפאה בחורב, חיפה...',
-          find: 'חפש קווים',
+          find: 'חפש מסלול',
           searching: 'מחפש...',
           clear: 'נקה',
           startVoice: 'חיפוש קולי',
@@ -259,7 +259,7 @@ export class SearchBarComponent {
       case 'en':
         return {
           placeholder: 'Where to? e.g. Clinic on Horev, Haifa...',
-          find: 'Find Top-3',
+          find: 'Find Route',
           searching: 'Searching...',
           clear: 'Clear',
           startVoice: 'Voice search',
@@ -271,7 +271,7 @@ export class SearchBarComponent {
       default:
         return {
           placeholder: 'Куда едем? Например: поликлиника на Хорев...',
-          find: 'Найти Топ-3',
+          find: 'Найти маршрут',
           searching: 'Поиск...',
           clear: 'Очистить',
           startVoice: 'Голосовой поиск',

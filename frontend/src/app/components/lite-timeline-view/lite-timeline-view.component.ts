@@ -11,26 +11,45 @@ import type { LiveBusStatusResponse, WidgetLang } from '../../models/bus.models'
     <section
       class="lite-card nb-card"
       [attr.dir]="lang() === 'he' ? 'rtl' : 'ltr'"
-      aria-label="Live bus arrival status"
+      aria-label="Live bus arrival status without map"
     >
       <header class="lite-header">
         <div class="route-identity">
-          <div class="route-badge" aria-label="Route number">
-            {{ state().route.short_name }}
+          <div
+            class="route-badge"
+            [class.is-transfer]="activeOption()?.is_transfer"
+            aria-label="Route number"
+          >
+            @if (activeOption()?.is_transfer && activeOption()?.second_leg; as sec) {
+              <span>{{ state().route.short_name }}→{{ sec.route.short_name }}</span>
+            } @else {
+              <span>{{ state().route.short_name }}</span>
+            }
           </div>
+
           <div class="route-meta">
             <span class="route-tag">
               <span aria-hidden="true">⚡</span>
               {{ labels().liteBadge }}
             </span>
             <h2 class="stop-heading">
-              @if (lang() === 'he') {
-                {{ state().user_stop.stop_name_he }}
+              @if (state().destination; as dest) {
+                {{ labels().tripTo }} {{ dest.place_name }}
               } @else {
-                {{ state().user_stop.stop_name }}
+                {{ lang() === 'he' ? state().user_stop.stop_name_he : state().user_stop.stop_name }}
               }
             </h2>
-            <p class="stop-code-meta">#{{ state().user_stop.stop_code }}</p>
+            <p class="stop-code-meta">
+              @if (activeOption(); as opt) {
+                {{ labels().boardAtStop }}
+                «{{ lang() === 'he' ? state().user_stop.stop_name_he : state().user_stop.stop_name }}»
+                (#{{ state().user_stop.stop_code }})
+                • 🏁 {{ labels().arriveAt }} <strong>{{ opt.estimated_arrival_time }}</strong>
+                ({{ labels().total }} {{ opt.total_arrival_min }} {{ labels().min }})
+              } @else {
+                #{{ state().user_stop.stop_code }}
+              }
+            </p>
           </div>
         </div>
 
@@ -40,23 +59,75 @@ import type { LiveBusStatusResponse, WidgetLang } from '../../models/bus.models'
         </div>
       </header>
 
-      <div class="direction-bar">
-        <span class="direction-label">
-          <span aria-hidden="true">⇄</span>
-          {{ currentDirectionLabel() }}
-        </span>
-        <button
-          type="button"
-          class="switch-btn nb-btn"
-          (click)="onSwitchDirection()"
-        >
-          {{ labels().switchDir }}
-        </button>
-      </div>
+      @if (!state().destination) {
+        <div class="direction-bar">
+          <span class="direction-label">
+            <span aria-hidden="true">⇄</span>
+            {{ currentDirectionLabel() }}
+          </span>
+          <button
+            type="button"
+            class="switch-btn nb-btn"
+            (click)="onSwitchDirection()"
+          >
+            {{ labels().switchDir }}
+          </button>
+        </div>
+      }
+
+      @if (activeOption(); as opt) {
+        @if (opt.is_transfer && opt.transfer_info && opt.second_leg) {
+          <div class="transfer-alert-box" role="region" aria-label="Bus transfer instructions">
+            <div class="transfer-alert-title">
+              <span>🔄 {{ labels().transferGuideTitle }}</span>
+              <span class="transfer-wait-pill">
+                @if (opt.transfer_info.walk_meters > 0) {
+                  🚶 {{ opt.transfer_info.walk_meters }} m •
+                }
+                ⏱️ {{ labels().waitWord }} {{ opt.transfer_info.wait_minutes }} {{ labels().min }}
+              </span>
+            </div>
+
+            <div class="transfer-steps-grid">
+              <div class="xfer-step">
+                <span class="xfer-badge bus1">🚌 №{{ opt.route.short_name }}</span>
+                <span>
+                  {{ labels().step1Board }}
+                  «{{ lang() === 'he' ? opt.origin_stop.stop_name_he : opt.origin_stop.stop_name }}»
+                  (#{{ opt.origin_stop.stop_code }}) — {{ etaText() }}
+                </span>
+              </div>
+              <div class="xfer-step is-highlight">
+                <span class="xfer-badge hub">🔄 {{ opt.transfer_info.arrive_at_hub_time }}</span>
+                <span>
+                  {{ labels().step2Exit }}
+                  <strong>«{{ lang() === 'he' ? opt.transfer_info.alight_stop.stop_name_he : opt.transfer_info.alight_stop.stop_name }}» (#{{ opt.transfer_info.alight_stop.stop_code }})</strong>
+                  → {{ labels().step2BoardNew }}
+                  <strong class="new-bus-pill">🚌 №{{ opt.second_leg.route.short_name }}</strong>
+                  {{ labels().atTime }} <strong>{{ opt.transfer_info.next_bus_board_time }}</strong>
+                  @if (opt.transfer_info.board_stop.stop_code !== opt.transfer_info.alight_stop.stop_code) {
+                    ({{ labels().atStop }} «{{ lang() === 'he' ? opt.transfer_info.board_stop.stop_name_he : opt.transfer_info.board_stop.stop_name }}» #{{ opt.transfer_info.board_stop.stop_code }})
+                  }
+                </span>
+              </div>
+              <div class="xfer-step">
+                <span class="xfer-badge dest">🏁 {{ opt.estimated_arrival_time }}</span>
+                <span>
+                  {{ labels().step3Dest }}
+                  «{{ lang() === 'he' ? opt.dest_stop.stop_name_he : opt.dest_stop.stop_name }}»
+                  (#{{ opt.dest_stop.stop_code }})
+                </span>
+              </div>
+            </div>
+          </div>
+        }
+      }
 
       <div class="bus-status-banner" role="region" aria-label="Current bus location">
         <div class="status-metric">
-          <span class="metric-label">{{ labels().busNowAt }}</span>
+          <span class="metric-label">
+            {{ labels().busNowAt }} (🚌 №{{ state().route.short_name }})
+          </span>
           @if (currentBusStop(); as busStop) {
             <strong class="metric-stop" [attr.dir]="lang() === 'he' ? 'rtl' : 'auto'">
               <span aria-hidden="true">🚌</span>
@@ -94,42 +165,140 @@ import type { LiveBusStatusResponse, WidgetLang } from '../../models/bus.models'
           </div>
         </div>
 
-        <ul class="stop-list">
-          @for (stop of state().timeline_stops; track stop.stop_id) {
-            <li
-              class="stop-row"
-              [class.is-passed]="stop.status === 'passed'"
-              [class.is-user]="stop.stop_sequence === state().user_stop.stop_sequence"
-              [class.is-bus]="
-                state().nearest_bus &&
-                stop.stop_sequence === state().nearest_bus?.current_stop_sequence
-              "
-            >
-              <span class="stop-marker" aria-hidden="true">
-                @if (stop.stop_sequence === state().user_stop.stop_sequence) {
-                  ★
-                } @else if (
+        <div class="timeline-stages">
+          <ul class="stop-list">
+            @for (stop of state().timeline_stops; track stop.stop_id + '-' + stop.stop_sequence) {
+              <li
+                class="stop-row"
+                [class.is-passed]="stop.status === 'passed'"
+                [class.is-user]="stop.stop_sequence === state().user_stop.stop_sequence"
+                [class.is-bus]="
                   state().nearest_bus &&
                   stop.stop_sequence === state().nearest_bus?.current_stop_sequence
-                ) {
-                  ●
-                } @else {
-                  ○
-                }
-              </span>
-              <div class="stop-names">
-                <span class="stop-primary" dir="auto">
-                  @if (lang() === 'he') {
-                    {{ stop.stop_name_he }}
+                "
+                [class.is-xfer-exit]="
+                  activeOption()?.is_transfer &&
+                  stop.stop_sequence === activeOption()?.transfer_info?.alight_stop?.stop_sequence
+                "
+              >
+                <span class="stop-marker" aria-hidden="true">
+                  @if (
+                    activeOption()?.is_transfer &&
+                    stop.stop_sequence === activeOption()?.transfer_info?.alight_stop?.stop_sequence
+                  ) {
+                    🔄
+                  } @else if (stop.stop_sequence === state().user_stop.stop_sequence) {
+                    📍
+                  } @else if (
+                    state().nearest_bus &&
+                    stop.stop_sequence === state().nearest_bus?.current_stop_sequence
+                  ) {
+                    ●
                   } @else {
-                    {{ stop.stop_name }}
+                    ○
                   }
                 </span>
+
+                <div class="stop-names">
+                  <span class="stop-primary" dir="auto">
+                    @if (lang() === 'he') {
+                      {{ stop.stop_name_he }}
+                    } @else {
+                      {{ stop.stop_name }}
+                    }
+                  </span>
+                  @if (stop.stop_sequence === state().user_stop.stop_sequence) {
+                    <span class="stop-role-note is-board">
+                      {{ labels().roleBoard }} №{{ state().route.short_name }}
+                    </span>
+                  } @else if (
+                    state().nearest_bus &&
+                    stop.stop_sequence === state().nearest_bus?.current_stop_sequence
+                  ) {
+                    <span class="stop-role-note is-live">
+                      {{ labels().roleBusHere }} №{{ state().route.short_name }}
+                    </span>
+                  } @else if (
+                    activeOption()?.is_transfer &&
+                    activeOption()?.second_leg &&
+                    stop.stop_sequence === activeOption()?.transfer_info?.alight_stop?.stop_sequence
+                  ) {
+                    <span class="stop-role-note is-xfer">
+                      {{ labels().roleExitTransfer }} №{{ state().route.short_name }} → №{{ activeOption()!.second_leg!.route.short_name }}
+                    </span>
+                  }
+                </div>
+
+                <div class="stop-badges">
+                  <span class="stop-bus-chip">🚌 №{{ state().route.short_name }}</span>
+                  <span class="stop-code">#{{ stop.stop_code }}</span>
+                </div>
+              </li>
+            }
+          </ul>
+
+          @if (activeOption(); as opt) {
+            @if (opt.is_transfer && opt.transfer_info && opt.second_leg) {
+              <div class="transfer-divider">
+                <span>
+                  🔄 {{ labels().step2Exit }} №{{ opt.route.short_name }} ({{ opt.transfer_info.arrive_at_hub_time }}) →
+                  <strong>🚌 №{{ opt.second_leg.route.short_name }} ({{ opt.transfer_info.next_bus_board_time }})</strong>
+                </span>
               </div>
-              <span class="stop-code">#{{ stop.stop_code }}</span>
-            </li>
+
+              <ul class="stop-list">
+                @for (stop of opt.second_leg.timeline_stops; track 'leg2-' + stop.stop_id + '-' + stop.stop_sequence) {
+                  <li
+                    class="stop-row"
+                    [class.is-xfer-board]="stop.stop_sequence === opt.second_leg.board_stop.stop_sequence"
+                    [class.is-bus]="stop.stop_sequence === opt.second_leg.bus.current_stop_sequence"
+                    [class.is-dest-end]="stop.stop_sequence === opt.dest_stop.stop_sequence"
+                  >
+                    <span class="stop-marker" aria-hidden="true">
+                      @if (stop.stop_sequence === opt.second_leg.board_stop.stop_sequence) {
+                        🔄
+                      } @else if (stop.stop_sequence === opt.dest_stop.stop_sequence) {
+                        🏁
+                      } @else if (stop.stop_sequence === opt.second_leg.bus.current_stop_sequence) {
+                        ●
+                      } @else {
+                        ○
+                      }
+                    </span>
+
+                    <div class="stop-names">
+                      <span class="stop-primary" dir="auto">
+                        @if (lang() === 'he') {
+                          {{ stop.stop_name_he }}
+                        } @else {
+                          {{ stop.stop_name }}
+                        }
+                      </span>
+                      @if (stop.stop_sequence === opt.second_leg.board_stop.stop_sequence) {
+                        <span class="stop-role-note is-xfer">
+                          {{ labels().roleBoardNew }} №{{ opt.second_leg.route.short_name }} ({{ opt.transfer_info.next_bus_board_time }})
+                        </span>
+                      } @else if (stop.stop_sequence === opt.second_leg.bus.current_stop_sequence) {
+                        <span class="stop-role-note is-live">
+                          {{ labels().roleBusHere }} №{{ opt.second_leg.route.short_name }}
+                        </span>
+                      } @else if (stop.stop_sequence === opt.dest_stop.stop_sequence) {
+                        <span class="stop-role-note is-final">
+                          {{ labels().roleFinalExit }} ({{ opt.estimated_arrival_time }})
+                        </span>
+                      }
+                    </div>
+
+                    <div class="stop-badges">
+                      <span class="stop-bus-chip is-leg2">🚌 №{{ opt.second_leg.route.short_name }}</span>
+                      <span class="stop-code">#{{ stop.stop_code }}</span>
+                    </div>
+                  </li>
+                }
+              </ul>
+            }
           }
-        </ul>
+        </div>
       </div>
     </section>
   `,
@@ -146,6 +315,8 @@ import type { LiveBusStatusResponse, WidgetLang } from '../../models/bus.models'
         padding-inline: 1.25rem;
         display: grid;
         gap: 1rem;
+        inline-size: 100%;
+        min-inline-size: 0;
       }
 
       .lite-header {
@@ -167,15 +338,21 @@ import type { LiveBusStatusResponse, WidgetLang } from '../../models/bus.models'
       .route-badge {
         display: grid;
         place-items: center;
-        inline-size: 3.75rem;
+        min-inline-size: 3.75rem;
+        padding-inline: 0.5rem;
         block-size: 3.75rem;
         flex-shrink: 0;
         border-radius: 0.875rem;
         background: #38bdf8;
         color: #041322;
-        font-size: 1.75rem;
+        font-size: 1.55rem;
         font-weight: 800;
         letter-spacing: -0.02em;
+      }
+
+      .route-badge.is-transfer {
+        background: #f59e0b;
+        font-size: 1.15rem;
       }
 
       .route-meta {
@@ -201,9 +378,9 @@ import type { LiveBusStatusResponse, WidgetLang } from '../../models/bus.models'
       }
 
       .stop-code-meta {
-        margin: 0.15rem 0 0;
+        margin: 0.2rem 0 0;
         font-size: 0.8rem;
-        color: #94a3b8;
+        color: #cbd5e1;
       }
 
       .eta-box {
@@ -261,6 +438,94 @@ import type { LiveBusStatusResponse, WidgetLang } from '../../models/bus.models'
 
       .switch-btn:hover {
         background: #273751;
+      }
+
+      .transfer-alert-box {
+        background: #1d180c;
+        border: 1.5px solid #f59e0b;
+        border-radius: 0.875rem;
+        padding-block: 0.8rem;
+        padding-inline: 0.95rem;
+        display: grid;
+        gap: 0.55rem;
+      }
+
+      .transfer-alert-title {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        align-items: center;
+        gap: 0.5rem;
+        font-size: 0.85rem;
+        font-weight: 800;
+        color: #fcd34d;
+      }
+
+      .transfer-wait-pill {
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: #fde68a;
+        background: rgba(245, 158, 11, 0.14);
+        border: 1px solid rgba(245, 158, 11, 0.4);
+        border-radius: 999px;
+        padding-block: 0.15rem;
+        padding-inline: 0.55rem;
+      }
+
+      .transfer-steps-grid {
+        display: grid;
+        gap: 0.42rem;
+      }
+
+      .xfer-step {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 0.45rem;
+        font-size: 0.82rem;
+        color: #e2e8f0;
+        line-height: 1.4;
+      }
+
+      .xfer-step.is-highlight {
+        background: rgba(245, 158, 11, 0.12);
+        border-radius: 0.5rem;
+        padding-block: 0.35rem;
+        padding-inline: 0.5rem;
+        color: #fef3c7;
+      }
+
+      .xfer-badge {
+        display: inline-block;
+        font-size: 0.75rem;
+        font-weight: 800;
+        border-radius: 0.375rem;
+        padding-block: 0.1rem;
+        padding-inline: 0.4rem;
+        flex-shrink: 0;
+      }
+
+      .xfer-badge.bus1 {
+        background: #10b981;
+        color: #041322;
+      }
+
+      .xfer-badge.hub {
+        background: #f59e0b;
+        color: #041322;
+      }
+
+      .xfer-badge.dest {
+        background: #ef4444;
+        color: #ffffff;
+      }
+
+      .new-bus-pill {
+        color: #041322;
+        background: #f59e0b;
+        border-radius: 0.35rem;
+        padding-block: 0.05rem;
+        padding-inline: 0.35rem;
       }
 
       .bus-status-banner {
@@ -361,12 +626,17 @@ import type { LiveBusStatusResponse, WidgetLang } from '../../models/bus.models'
         transition: top 1.5s linear;
       }
 
+      .timeline-stages {
+        flex: 1 1 auto;
+        min-inline-size: 0;
+        display: grid;
+        gap: 0.75rem;
+      }
+
       .stop-list {
         list-style: none;
         margin: 0;
         padding: 0;
-        flex: 1 1 auto;
-        min-inline-size: 0;
         display: grid;
         gap: 0.625rem;
       }
@@ -395,8 +665,19 @@ import type { LiveBusStatusResponse, WidgetLang } from '../../models/bus.models'
         font-weight: 700;
       }
 
+      .stop-row.is-xfer-exit,
+      .stop-row.is-xfer-board {
+        color: #fcd34d;
+        font-weight: 700;
+      }
+
+      .stop-row.is-dest-end {
+        color: #f87171;
+        font-weight: 700;
+      }
+
       .stop-marker {
-        inline-size: 1rem;
+        inline-size: 1.15rem;
         flex-shrink: 0;
         text-align: center;
       }
@@ -405,6 +686,7 @@ import type { LiveBusStatusResponse, WidgetLang } from '../../models/bus.models'
         flex: 1 1 auto;
         min-inline-size: 0;
         display: grid;
+        gap: 0.1rem;
       }
 
       .stop-primary {
@@ -413,10 +695,65 @@ import type { LiveBusStatusResponse, WidgetLang } from '../../models/bus.models'
         white-space: nowrap;
       }
 
+      .stop-role-note {
+        font-size: 0.72rem;
+        font-weight: 600;
+      }
+
+      .stop-role-note.is-board {
+        color: #fbbf24;
+      }
+
+      .stop-role-note.is-live {
+        color: #38bdf8;
+      }
+
+      .stop-role-note.is-xfer {
+        color: #fcd34d;
+      }
+
+      .stop-role-note.is-final {
+        color: #f87171;
+      }
+
+      .stop-badges {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        flex-shrink: 0;
+      }
+
+      .stop-bus-chip {
+        background: #172844;
+        color: #7dd3fc;
+        border: 1px solid #2b456f;
+        border-radius: 0.375rem;
+        padding-block: 0.1rem;
+        padding-inline: 0.4rem;
+        font-size: 0.72rem;
+        font-weight: 700;
+      }
+
+      .stop-bus-chip.is-leg2 {
+        background: #2b210e;
+        color: #fcd34d;
+        border-color: #b45309;
+      }
+
       .stop-code {
         font-size: 0.75rem;
         color: #94a3b8;
         flex-shrink: 0;
+      }
+
+      .transfer-divider {
+        background: #261f0e;
+        border: 1px dashed #f59e0b;
+        border-radius: 0.5rem;
+        padding-block: 0.45rem;
+        padding-inline: 0.65rem;
+        font-size: 0.78rem;
+        color: #fde68a;
       }
     `
   ]
@@ -426,12 +763,32 @@ export class LiteTimelineViewComponent {
   readonly lang = input<WidgetLang>('ru');
   readonly switchDirection = output<0 | 1>();
 
+  readonly activeOption = computed(() => this.state().recommended_options?.[0] ?? null);
+
   readonly labels = computed(() => {
     switch (this.lang()) {
       case 'he':
         return {
           liteBadge: 'מצב Lite • ללא מפה',
+          tripTo: 'מסלול ליעד:',
+          boardAtStop: 'עלייה בתחנה',
+          arriveAt: 'הגעה ב-',
+          total: 'סה״כ',
+          min: 'דק׳',
           switchDir: 'החלף כיוון',
+          transferGuideTitle: 'הוראות החלפת אוטובוס (מאיפה ומתי)',
+          waitWord: 'המתנה',
+          step1Board: 'עולה בתחנה',
+          step2Exit: 'יורד בתחנת',
+          step2BoardNew: 'עולה לאוטובוס החדש',
+          atTime: 'בשעה',
+          atStop: 'בתחנה',
+          step3Dest: 'יורד ביעד:',
+          roleBoard: 'עלייה לקו',
+          roleBusHere: 'כאן כעת קו',
+          roleExitTransfer: 'ירידה מקו',
+          roleBoardNew: 'עלייה לקו החדש',
+          roleFinalExit: 'ירידה ביעד',
           busNowAt: 'האוטובוס נמצא כעת בתחנה',
           stopOrder: 'תחנה מס׳',
           stopsRemaining: 'תחנות ממך',
@@ -440,7 +797,25 @@ export class LiteTimelineViewComponent {
       case 'en':
         return {
           liteBadge: 'Lite Mode • Map-Free ETA',
+          tripTo: 'Route to',
+          boardAtStop: 'Board at',
+          arriveAt: 'Arrive',
+          total: 'total',
+          min: 'min',
           switchDir: 'Switch Direction',
+          transferGuideTitle: 'Transfer Instructions (Where & New Bus #)',
+          waitWord: 'Wait',
+          step1Board: 'Board at',
+          step2Exit: 'Exit at',
+          step2BoardNew: 'board new bus',
+          atTime: 'at',
+          atStop: 'at stop',
+          step3Dest: 'Arrive at destination:',
+          roleBoard: 'Board Line',
+          roleBusHere: 'Now here: Line',
+          roleExitTransfer: 'Exit Line',
+          roleBoardNew: 'Board new Line',
+          roleFinalExit: 'Final destination',
           busNowAt: 'Bus is currently at stop',
           stopOrder: 'Stop seq',
           stopsRemaining: 'stops away',
@@ -449,7 +824,25 @@ export class LiteTimelineViewComponent {
       default:
         return {
           liteBadge: 'Режим Lite • Без карты',
+          tripTo: 'Маршрут до:',
+          boardAtStop: 'Посадка на ост.',
+          arriveAt: 'Прибытие в',
+          total: 'всего',
+          min: 'мин',
           switchDir: 'Сменить направление',
+          transferGuideTitle: 'Где выйти и на какой автобус пересесть',
+          waitWord: 'ожидание',
+          step1Board: 'Садитесь на ост.',
+          step2Exit: 'Выйти на ост.',
+          step2BoardNew: 'пересесть на новый автобус',
+          atTime: 'в',
+          atStop: 'на ост.',
+          step3Dest: 'Выйти на конечной:',
+          roleBoard: 'Посадка на авт.',
+          roleBusHere: 'Сейчас здесь авт.',
+          roleExitTransfer: 'Выход из авт.',
+          roleBoardNew: 'Посадка на новый авт.',
+          roleFinalExit: 'Выход на конечной',
           busNowAt: 'Автобус сейчас на остановке',
           stopOrder: 'Остановка №',
           stopsRemaining: 'остановок до вас',

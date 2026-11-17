@@ -218,6 +218,46 @@ export function selectTop3MixedOptions(
   }));
 }
 
+/**
+ * Picks strictly the single fastest route option (either fastest direct or fastest non-redundant
+ * 1-transfer connection), excluding redundant transfers that touch an already-direct route.
+ */
+export function selectBestSingleOption(
+  directOptions: RecommendedBusOption[],
+  transferOptions: RecommendedBusOption[]
+): RecommendedBusOption | null {
+  const byTotalTime = (a: RecommendedBusOption, b: RecommendedBusOption) => {
+    if (a.total_arrival_min !== b.total_arrival_min) {
+      return a.total_arrival_min - b.total_arrival_min;
+    }
+    if ((a.is_transfer ? 1 : 0) !== (b.is_transfer ? 1 : 0)) {
+      return a.is_transfer ? 1 : -1;
+    }
+    return a.eta_to_boarding_min - b.eta_to_boarding_min;
+  };
+
+  const directRouteIds = new Set(directOptions.map((o) => o.route.route_id));
+  const validTransfers = transferOptions.filter(
+    (t) =>
+      !directRouteIds.has(t.route.route_id) &&
+      (!t.second_leg || !directRouteIds.has(t.second_leg.route.route_id))
+  );
+
+  const sortedDirect = [...directOptions].sort(byTotalTime);
+  const sortedTransfer = [...validTransfers].sort(byTotalTime);
+
+  const bestDirect = sortedDirect[0] ?? null;
+  const bestTransfer = sortedTransfer[0] ?? null;
+
+  if (!bestDirect && !bestTransfer) return null;
+  if (!bestDirect) return { ...bestTransfer!, rank: 1 };
+  if (!bestTransfer) return { ...bestDirect, rank: 1 };
+
+  const winner =
+    bestTransfer.total_arrival_min < bestDirect.total_arrival_min ? bestTransfer : bestDirect;
+  return { ...winner, rank: 1 };
+}
+
 function synthesizeNextApproach(
   allStops: RouteStopCoord[],
   boardingStopSequence: number,
@@ -659,16 +699,21 @@ export async function planBestBusesToDestination(
     });
   }
 
-  const top3 = selectTop3MixedOptions(directCandidates, transferCandidates, 3);
-  const primary = top3[0];
+  const best = selectBestSingleOption(directCandidates, transferCandidates);
+  const recommendedOptions = best ? [best] : [];
+  const primary = best;
   const nearbyOffers = await fetchRealNearbyCafes(userLocation.lat, userLocation.lon);
 
   const focusPoints: Array<{ lat: number; lon: number }> = [
     userLocation,
-    { lat: destination.lat, lon: destination.lon },
-    ...top3.map((opt) => ({ lat: opt.bus.lat, lon: opt.bus.lon })),
-    ...top3.map((opt) => ({ lat: opt.origin_stop.lat, lon: opt.origin_stop.lon }))
+    { lat: destination.lat, lon: destination.lon }
   ];
+  if (primary) {
+    focusPoints.push(
+      { lat: primary.bus.lat, lon: primary.bus.lon },
+      { lat: primary.origin_stop.lat, lon: primary.origin_stop.lon }
+    );
+  }
   if (primary?.transfer_info) {
     focusPoints.push({
       lat: primary.transfer_info.alight_stop.lat,
@@ -693,7 +738,7 @@ export async function planBestBusesToDestination(
     cache_hit: anyCacheHit,
     user_location: userLocation,
     destination,
-    recommended_options: top3,
+    recommended_options: recommendedOptions,
     route: primary?.route ?? {
       route_id: 'stride-10024',
       short_name: '24',

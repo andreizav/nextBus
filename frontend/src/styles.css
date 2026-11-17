@@ -18,6 +18,11 @@
   box-sizing: border-box;
 }
 
+html {
+  scrollbar-gutter: stable;
+  overflow-y: scroll;
+}
+
 body {
   margin: 0;
   padding-block: 1.5rem;
@@ -26,8 +31,20 @@ body {
   background-color: var(--nb-bg-page);
   color: var(--nb-text-primary);
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  display: grid;
-  place-items: start center;
+}
+
+nb-next-bus-widget,
+nb-lite-timeline-view,
+nb-interactive-map-view,
+nb-search-bar {
+  display: block;
+  inline-size: 100%;
+  min-inline-size: 0;
+}
+
+nb-next-bus-widget {
+  max-inline-size: 760px;
+  margin-inline: auto;
 }
 
 img,

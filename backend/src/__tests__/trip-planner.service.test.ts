@@ -6,6 +6,7 @@ import {
   filterValidDirectionMatches,
   filterValidTransferMatches,
   rankTopBusOptions,
+  selectBestSingleOption,
   selectTop3MixedOptions
 } from '../services/trip-planner.service.js';
 import type {
@@ -278,6 +279,33 @@ describe('Trip Planner A -> B matching and Top-3 ranking', () => {
       expect(picked).toHaveLength(3);
       expect(picked[2].is_transfer).toBe(true);
       expect(picked[2].route.short_name).toBe('49');
+    });
+  });
+
+  describe('selectBestSingleOption', () => {
+    it('picks the single fastest direct route and discards redundant mid-corridor transfers', () => {
+      const directs = [
+        makeOption('24', 3, 9),
+        makeOption('11', 2, 7)
+      ];
+      // Even if marked faster on paper, transfer starting with direct Line 11 is redundant
+      const redundantTransfer: RecommendedBusOption = {
+        ...makeOption('11', 1, 5),
+        is_transfer: true
+      };
+      const picked = selectBestSingleOption(directs, [redundantTransfer]);
+      expect(picked?.route.short_name).toBe('11');
+      expect(picked?.is_transfer).toBeUndefined();
+      expect(picked?.rank).toBe(1);
+    });
+
+    it('picks the single fastest 1-transfer route when no direct route exists', () => {
+      const tSlow: RecommendedBusOption = { ...makeOption('123', 4, 24), is_transfer: true };
+      const tFast: RecommendedBusOption = { ...makeOption('24', 2, 16), is_transfer: true };
+      const picked = selectBestSingleOption([], [tSlow, tFast]);
+      expect(picked?.route.short_name).toBe('24');
+      expect(picked?.is_transfer).toBe(true);
+      expect(picked?.rank).toBe(1);
     });
   });
 });

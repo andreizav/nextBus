@@ -18,6 +18,7 @@ import type {
 } from '../../models/bus.models';
 import { InteractiveMapViewComponent } from '../interactive-map-view/interactive-map-view.component';
 import { LiteTimelineViewComponent } from '../lite-timeline-view/lite-timeline-view.component';
+import { SearchBarComponent } from '../search-bar/search-bar.component';
 
 const POLL_INTERVAL_MS = 15_000;
 
@@ -90,7 +91,12 @@ const DEFAULT_FALLBACK_STATE: LiveBusStatusResponse = {
 @Component({
   selector: 'nb-next-bus-widget',
   standalone: true,
-  imports: [CommonModule, LiteTimelineViewComponent, InteractiveMapViewComponent],
+  imports: [
+    CommonModule,
+    LiteTimelineViewComponent,
+    InteractiveMapViewComponent,
+    SearchBarComponent
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <main
@@ -179,6 +185,14 @@ const DEFAULT_FALLBACK_STATE: LiveBusStatusResponse = {
         }
       </div>
 
+      @if (entryContext() === 'standalone') {
+        <nb-search-bar
+          [lang]="lang()"
+          [isSearching]="isSearching()"
+          (searchSubmitted)="onSearchDestination($event)"
+        />
+      }
+
       @if (viewMode() === 'lite') {
         <nb-lite-timeline-view
           [state]="busState()"
@@ -190,10 +204,7 @@ const DEFAULT_FALLBACK_STATE: LiveBusStatusResponse = {
           <nb-interactive-map-view
             [state]="busState()"
             [lang]="lang()"
-            [entryContext]="entryContext()"
-            [isSearching]="isSearching()"
             (switchDirection)="onDirectionSwitch($event)"
-            (searchDestination)="onSearchDestination($event)"
           />
         } @loading (minimum 120ms) {
           <div class="defer-status">{{ labels().loadingMap }}</div>
@@ -208,7 +219,10 @@ const DEFAULT_FALLBACK_STATE: LiveBusStatusResponse = {
         background: #070d18;
         color: #f8fafc;
         accent-color: #38bdf8;
-        inline-size: min(100%, 760px);
+        inline-size: 100%;
+        max-inline-size: 760px;
+        margin-inline: auto;
+        min-inline-size: 0;
         border: 1px solid #2b3c5d;
         border-radius: 1.25rem;
         padding-block: 1rem;
@@ -547,7 +561,6 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
 
       const data = (await response.json()) as LiveBusStatusResponse;
       this.busState.set(data);
-      this.modeOverride.set('interactive');
     } catch {
       // Keep current state on temporary failure
     } finally {
