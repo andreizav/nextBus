@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import pg from 'pg';
 import { haversineDistanceMeters } from './eta.service.js';
 import type { NearbyOffer, StopTimelineItem } from '../types/bus.types.js';
 
@@ -123,6 +124,7 @@ const NEARBY_COFFEE_OFFERS: NearbyOffer[] = [
 
 class SupabaseService {
   private client: SupabaseClient | null = null;
+  private pgPool: pg.Pool | null = null;
   private initialized = false;
 
   private getClient(): SupabaseClient | null {
@@ -132,6 +134,10 @@ class SupabaseService {
       const key = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_KEY;
       if (url && key && url.startsWith('http')) {
         this.client = createClient(url, key);
+      }
+      const dbUrl = process.env.DATABASE_URL;
+      if (dbUrl) {
+        this.pgPool = new pg.Pool({ connectionString: dbUrl });
       }
     }
     return this.client;
@@ -172,6 +178,34 @@ class SupabaseService {
         }
       } catch (err) {
         console.warn('[Supabase] RPC fallback triggered:', (err as Error).message);
+      }
+    }
+
+    if (this.pgPool && preferredDirection === undefined) {
+      try {
+        const res = await this.pgPool.query(
+          `SELECT * FROM find_nearest_stop_for_line($1, $2, $3)`,
+          [lineNum, userLat, userLon]
+        );
+        if (res.rows.length > 0) {
+          const row = res.rows[0];
+          return {
+            route_id: String(row.route_id),
+            direction_id: Number(row.direction_id) === 1 ? 1 : 0,
+            stop_id: String(row.stop_id),
+            stop_sequence: Number(row.stop_sequence),
+            stop_code: String(row.stop_code ?? row.stop_id),
+            stop_name: String(row.stop_name),
+            stop_name_he: String(row.stop_name_he ?? row.stop_name),
+            stop_lat: Number(row.stop_lat),
+            stop_lon: Number(row.stop_lon),
+            route_short_name: String(row.route_short_name ?? lineNum),
+            route_long_name: String(row.route_long_name ?? `Line ${lineNum}`),
+            distance_meters: Math.round(Number(row.distance_meters ?? 0))
+          };
+        }
+      } catch (err) {
+        console.warn('[PostgreSQL] Direct RPC query error:', (err as Error).message);
       }
     }
 
