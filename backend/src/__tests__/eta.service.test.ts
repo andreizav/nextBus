@@ -71,14 +71,14 @@ describe('ETA and Hybrid Rendering calculations', () => {
       expect(projection.yPercent).toBeCloseTo(50, 1);
     });
 
-    it('clamps coordinates outside bbox safely inside [4, 96]', () => {
+    it('clamps coordinates outside bbox safely inside [2, 98]', () => {
       const topLeft = projectCoordinatesToBbox(33.0, 34.0, bbox);
-      expect(topLeft.xPercent).toBe(4);
-      expect(topLeft.yPercent).toBe(4);
+      expect(topLeft.xPercent).toBe(2);
+      expect(topLeft.yPercent).toBe(2);
 
       const bottomRight = projectCoordinatesToBbox(32.0, 35.5, bbox);
-      expect(bottomRight.xPercent).toBe(96);
-      expect(bottomRight.yPercent).toBe(96);
+      expect(bottomRight.xPercent).toBe(98);
+      expect(bottomRight.yPercent).toBe(98);
     });
   });
 
@@ -113,6 +113,11 @@ describe('ETA and Hybrid Rendering calculations', () => {
     it('prefers the closest approaching vehicle at or before the user stop', () => {
       const picked = selectNearestApproachingVehicle(vehicles, 5, 32.7804, 34.9658);
       expect(picked?.vehicle_id).toBe('bus-near');
+    });
+
+    it('returns null when all buses have already passed the user stop', () => {
+      const onlyPassed = vehicles.filter((v) => v.current_stop_sequence > 5);
+      expect(selectNearestApproachingVehicle(onlyPassed, 5, 32.7804, 34.9658)).toBeNull();
     });
 
     it('returns null when no vehicles are active', () => {

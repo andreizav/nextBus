@@ -72,12 +72,13 @@ const DEFAULT_FALLBACK_STATE: LiveBusStatusResponse = {
   },
   timeline_stops: [],
   lite_map: {
-    static_image_url: '/assets/haifa-route-49-static.svg',
+    static_image_url:
+      '/api/static-map?minLat=32.76&maxLat=32.796&minLon=34.95&maxLon=34.99&route_id=stride-10049&direction_id=0',
     bbox: {
-      minLat: 32.755,
-      maxLat: 32.798,
-      minLon: 34.955,
-      maxLon: 34.98
+      minLat: 32.76,
+      maxLat: 32.796,
+      minLon: 34.95,
+      maxLon: 34.99
     },
     bus_projection: { xPercent: 52, yPercent: 45 },
     user_projection: { xPercent: 45, yPercent: 32 }

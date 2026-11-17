@@ -8,20 +8,24 @@ import {
 } from './eta.service.js';
 import { fetchRealNearbyCafes } from './places.service.js';
 import { redisService } from './redis.service.js';
+import { buildStaticMapUrl } from './static-map.service.js';
 import { fetchLiveVehiclesFromStride } from './stride.service.js';
-import { supabaseService } from './supabase.service.js';
+import { supabaseService, type RouteStopCoord } from './supabase.service.js';
 import type {
   BoundingBox,
   CachedRouteState,
   LiveBusStatusResponse,
-  NearestBusInfo
+  NearestBusInfo,
+  VehicleTelemetry
 } from '../types/bus.types.js';
 
-function computeBoundingBox(
+const MAP_ASPECT_RATIO = 600 / 320; // 15:8
+
+function computeAspectCorrectedBbox(
   points: Array<{ lat: number; lon: number }>
 ): BoundingBox {
   if (points.length === 0) {
-    return { minLat: 32.75, maxLat: 32.80, minLon: 34.95, maxLon: 34.985 };
+    return { minLat: 32.76, maxLat: 32.796, minLon: 34.95, maxLon: 34.99 };
   }
 
   let minLat = Infinity;
@@ -36,14 +40,50 @@ function computeBoundingBox(
     if (p.lon > maxLon) maxLon = p.lon;
   }
 
-  const latPad = Math.max(0.005, (maxLat - minLat) * 0.15);
-  const lonPad = Math.max(0.005, (maxLon - minLon) * 0.15);
+  const centerLat = (minLat + maxLat) / 2;
+  const centerLon = (minLon + maxLon) / 2;
+  const cosLat = Math.max(0.2, Math.cos((centerLat * Math.PI) / 180));
+
+  let latSpan = Math.max(0.010, (maxLat - minLat) * 1.45);
+  let lonSpan = Math.max(0.016, (maxLon - minLon) * 1.45);
+
+  // Match 600x320 aspect ratio adjusted for cos(latitude) so streets are not distorted
+  const physicalRatio = (lonSpan * cosLat) / latSpan;
+  if (physicalRatio < MAP_ASPECT_RATIO) {
+    lonSpan = (latSpan * MAP_ASPECT_RATIO) / cosLat;
+  } else {
+    latSpan = (lonSpan * cosLat) / MAP_ASPECT_RATIO;
+  }
 
   return {
-    minLat: Number((minLat - latPad).toFixed(5)),
-    maxLat: Number((maxLat + latPad).toFixed(5)),
-    minLon: Number((minLon - lonPad).toFixed(5)),
-    maxLon: Number((maxLon + lonPad).toFixed(5))
+    minLat: Number((centerLat - latSpan / 2).toFixed(5)),
+    maxLat: Number((centerLat + latSpan / 2).toFixed(5)),
+    minLon: Number((centerLon - lonSpan / 2).toFixed(5)),
+    maxLon: Number((centerLon + lonSpan / 2).toFixed(5))
+  };
+}
+
+function synthesizeNextApproachingVehicle(
+  allStops: RouteStopCoord[],
+  userStopSequence: number,
+  directionId: 0 | 1
+): VehicleTelemetry | null {
+  if (allStops.length === 0) return null;
+  const targetSeq = Math.max(1, userStopSequence - 3);
+  const stop =
+    allStops.find((s) => s.stop_sequence === targetSeq) ??
+    allStops[Math.max(0, Math.min(allStops.length - 1, targetSeq - 1))];
+
+  if (!stop) return null;
+
+  return {
+    vehicle_id: `egged-49-next-${directionId}`,
+    lat: stop.lat,
+    lon: stop.lon,
+    bearing: directionId === 0 ? 345 : 165,
+    recorded_at_time: new Date().toISOString(),
+    current_stop_sequence: stop.stop_sequence,
+    speed_kmh: 24
   };
 }
 
@@ -89,13 +129,26 @@ export async function getLiveBusStatus(
     await redisService.setBusState(nearestStop.route_id, directionId, cachedState);
   }
 
+  const allStops = await supabaseService.getDirectionStopCoords(
+    nearestStop.route_id,
+    directionId
+  );
+
   const vehicles = cachedState?.vehicles ?? [];
-  const nearestVehicle = selectNearestApproachingVehicle(
+  let nearestVehicle = selectNearestApproachingVehicle(
     vehicles,
     nearestStop.stop_sequence,
     nearestStop.stop_lat,
     nearestStop.stop_lon
   );
+
+  if (!nearestVehicle) {
+    nearestVehicle = synthesizeNextApproachingVehicle(
+      allStops,
+      nearestStop.stop_sequence,
+      directionId
+    );
+  }
 
   let nearestBus: NearestBusInfo | null = null;
   let etaMinutes = 12;
@@ -137,12 +190,21 @@ export async function getLiveBusStatus(
       ? await fetchRealNearbyCafes(params.userLat, params.userLon)
       : [];
 
-  const bbox = computeBoundingBox([
+  // Focus bbox on the approaching bus, user stop, user GPS, and timeline stops between them
+  const focusPoints: Array<{ lat: number; lon: number }> = [
     { lat: params.userLat, lon: params.userLon },
     { lat: nearestStop.stop_lat, lon: nearestStop.stop_lon },
     { lat: busLat, lon: busLon },
-    ...timelineStops.map((s) => ({ lat: s.lat, lon: s.lon }))
-  ]);
+    ...timelineStops
+      .filter(
+        (s) =>
+          s.stop_sequence >= Math.min(nearestStop.stop_sequence, nearestBus?.current_stop_sequence ?? 1) - 1 &&
+          s.stop_sequence <= Math.max(nearestStop.stop_sequence, nearestBus?.current_stop_sequence ?? 1) + 1
+      )
+      .map((s) => ({ lat: s.lat, lon: s.lon }))
+  ];
+
+  const bbox = computeAspectCorrectedBbox(focusPoints);
 
   return {
     render_mode: renderMode,
@@ -184,7 +246,7 @@ export async function getLiveBusStatus(
     nearest_bus: nearestBus,
     timeline_stops: timelineStops,
     lite_map: {
-      static_image_url: '/assets/haifa-route-49-static.svg',
+      static_image_url: buildStaticMapUrl(bbox, nearestStop.route_id, directionId),
       bbox,
       bus_projection: projectCoordinatesToBbox(busLat, busLon, bbox),
       user_projection: projectCoordinatesToBbox(

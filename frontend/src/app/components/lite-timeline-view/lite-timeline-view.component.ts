@@ -16,8 +16,8 @@ function projectCoord(lat: number, lon: number, bbox: BoundingBox): MapProjectio
   const rawX = ((lon - bbox.minLon) / lonSpan) * 100;
   const rawY = ((bbox.maxLat - lat) / latSpan) * 100;
   return {
-    xPercent: Math.min(95, Math.max(5, Number(rawX.toFixed(2)))),
-    yPercent: Math.min(95, Math.max(5, Number(rawY.toFixed(2))))
+    xPercent: Math.min(98, Math.max(2, Number(rawX.toFixed(2)))),
+    yPercent: Math.min(98, Math.max(2, Number(rawY.toFixed(2))))
   };
 }
 
@@ -84,7 +84,7 @@ function projectCoord(lat: number, lon: number, bbox: BoundingBox): MapProjectio
             ></div>
             <div
               class="timeline-bus-dot"
-              [style.transform]="'translateY(' + busOffsetPx() + 'px)'"
+              [style.top.%]="busProgressPercent()"
               aria-hidden="true"
             >
               🚌
@@ -133,35 +133,69 @@ function projectCoord(lat: number, lon: number, bbox: BoundingBox): MapProjectio
         </div>
 
         <figure class="static-map-frame">
-          <img
-            class="static-map-img"
-            [src]="state().lite_map.static_image_url"
-            alt="Static route corridor preview"
-            width="600"
-            height="320"
-            loading="eager"
-          />
-          <div
-            class="projected-marker user-marker"
-            [style.left.%]="userProjection().xPercent"
-            [style.top.%]="userProjection().yPercent"
-            [title]="state().user_stop.stop_name"
-          >
-            <span aria-hidden="true">📍</span>
-          </div>
-          @if (state().nearest_bus) {
+          <div class="static-map-canvas">
+            <img
+              class="static-map-img"
+              [src]="state().lite_map.static_image_url"
+              alt="Street map showing Route 49 corridor, stop location, and live bus position"
+              width="600"
+              height="320"
+              loading="eager"
+            />
+
+            @if (gpsProjection(); as gps) {
+              <div
+                class="projected-pin gps-pin"
+                [style.left.%]="gps.xPercent"
+                [style.top.%]="gps.yPercent"
+                [title]="labels().legendUser"
+              >
+                <span class="pin-circle gps-circle" aria-hidden="true">📍</span>
+              </div>
+            }
+
             <div
-              class="projected-marker bus-marker"
-              [style.left.%]="busProjection().xPercent"
-              [style.top.%]="busProjection().yPercent"
-              [title]="'Bus ' + state().route.short_name"
+              class="projected-pin stop-pin"
+              [style.left.%]="userProjection().xPercent"
+              [style.top.%]="userProjection().yPercent"
+              [title]="state().user_stop.stop_name"
             >
-              <span aria-hidden="true">🚌</span>
+              <span class="pin-circle stop-circle" aria-hidden="true">🚏</span>
+              <span class="pin-badge stop-badge">#{{ state().user_stop.stop_code }}</span>
             </div>
-          }
-          <figcaption class="map-caption">
-            <span>{{ labels().staticMapCaption }}</span>
-            <span>{{ busProjection().xPercent }}%, {{ busProjection().yPercent }}%</span>
+
+            @if (state().nearest_bus; as bus) {
+              <div
+                class="projected-pin bus-pin"
+                [style.left.%]="busProjection().xPercent"
+                [style.top.%]="busProjection().yPercent"
+                [title]="'Bus ' + state().route.short_name + ' (' + bus.vehicle_id + ')'"
+              >
+                <span class="pin-circle bus-circle" aria-hidden="true">🚌</span>
+                <span class="pin-badge bus-badge">
+                  {{ state().route.short_name }} • {{ etaText() }}
+                </span>
+              </div>
+            }
+          </div>
+
+          <figcaption class="map-legend">
+            <span class="legend-item">
+              <span class="legend-swatch bus-swatch" aria-hidden="true"></span>
+              {{ labels().legendBus }}
+            </span>
+            <span class="legend-item">
+              <span class="legend-swatch stop-swatch" aria-hidden="true"></span>
+              {{ labels().legendStop }}
+            </span>
+            <span class="legend-item">
+              <span class="legend-swatch gps-swatch" aria-hidden="true"></span>
+              {{ labels().legendUser }}
+            </span>
+            <span class="legend-item">
+              <span class="legend-line" aria-hidden="true"></span>
+              {{ labels().legendRoute }}
+            </span>
           </figcaption>
         </figure>
       </div>
@@ -336,9 +370,9 @@ function projectCoord(lat: number, lon: number, bbox: BoundingBox): MapProjectio
       .timeline-bus-dot {
         position: absolute;
         inset-inline-start: -9px;
-        inset-block-start: 0;
+        transform: translateY(-50%);
         font-size: 0.95rem;
-        transition: transform 1.5s linear;
+        transition: top 1.5s linear;
       }
 
       .stop-list {
@@ -405,12 +439,17 @@ function projectCoord(lat: number, lon: number, bbox: BoundingBox): MapProjectio
       }
 
       .static-map-frame {
-        position: relative;
         margin: 0;
         border-radius: 0.75rem;
         overflow: hidden;
         border: 1px solid #2b3c5d;
-        background: #071b2e;
+        background: #0d1726;
+      }
+
+      .static-map-canvas {
+        position: relative;
+        overflow: hidden;
+        background: #e2e8f0;
       }
 
       .static-map-img {
@@ -418,42 +457,125 @@ function projectCoord(lat: number, lon: number, bbox: BoundingBox): MapProjectio
         inline-size: 100%;
         block-size: auto;
         aspect-ratio: 15 / 8;
-        object-fit: cover;
+        object-fit: fill;
       }
 
-      .projected-marker {
+      .projected-pin {
         position: absolute;
         transform: translate(-50%, -50%);
-        inline-size: 1.85rem;
-        block-size: 1.85rem;
-        border-radius: 999px;
-        display: grid;
-        place-items: center;
-        font-size: 1rem;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+        pointer-events: none;
         transition: left 1.5s linear, top 1.5s linear;
       }
 
-      .user-marker {
+      .gps-pin {
+        z-index: 2;
+      }
+
+      .stop-pin {
+        z-index: 3;
+      }
+
+      .bus-pin {
+        z-index: 4;
+      }
+
+      .pin-circle {
+        inline-size: 1.75rem;
+        block-size: 1.75rem;
+        border-radius: 999px;
+        display: grid;
+        place-items: center;
+        font-size: 0.9rem;
+        border: 2px solid #ffffff;
+        box-shadow: 0 2px 8px rgba(15, 23, 42, 0.55);
+      }
+
+      .gps-circle {
+        inline-size: 1.5rem;
+        block-size: 1.5rem;
+        background: #34d399;
+        color: #041322;
+      }
+
+      .stop-circle {
         background: #fbbf24;
         color: #0b1220;
-        border: 2px solid #f8fafc;
       }
 
-      .bus-marker {
-        background: #38bdf8;
-        color: #041322;
-        border: 2px solid #f8fafc;
-        box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.25);
+      .bus-circle {
+        background: #0284c7;
+        color: #ffffff;
+        box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.45), 0 3px 10px rgba(0, 0, 0, 0.55);
       }
 
-      .map-caption {
+      .pin-badge {
+        font-size: 0.7rem;
+        font-weight: 800;
+        padding-block: 0.12rem;
+        padding-inline: 0.4rem;
+        border-radius: 999px;
+        white-space: nowrap;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+      }
+
+      .stop-badge {
+        background: rgba(11, 18, 32, 0.92);
+        color: #fde68a;
+        border: 1px solid #fbbf24;
+      }
+
+      .bus-badge {
+        background: rgba(11, 18, 32, 0.94);
+        color: #7dd3fc;
+        border: 1px solid #38bdf8;
+      }
+
+      .map-legend {
         display: flex;
+        flex-wrap: wrap;
         justify-content: space-between;
-        padding-block: 0.45rem;
+        gap: 0.5rem 0.75rem;
+        padding-block: 0.55rem;
         padding-inline: 0.75rem;
-        font-size: 0.75rem;
+        font-size: 0.73rem;
         color: #cbd5e1;
         background: #0d1726;
+        border-block-start: 1px solid #24344f;
+      }
+
+      .legend-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+      }
+
+      .legend-swatch {
+        inline-size: 0.65rem;
+        block-size: 0.65rem;
+        border-radius: 999px;
+        border: 1px solid #ffffff;
+      }
+
+      .bus-swatch {
+        background: #0284c7;
+      }
+
+      .stop-swatch {
+        background: #fbbf24;
+      }
+
+      .gps-swatch {
+        background: #34d399;
+      }
+
+      .legend-line {
+        inline-size: 0.95rem;
+        block-size: 3px;
+        border-radius: 999px;
+        background: #0284c7;
       }
     `
   ]
@@ -469,19 +591,28 @@ export class LiteTimelineViewComponent {
         return {
           liteBadge: 'מצב Lite • ללא SDK כבד',
           switchDir: 'החלף כיוון',
-          staticMapCaption: 'מפה סטטית (BBox Projection)'
+          legendBus: 'אוטובוס',
+          legendStop: 'התחנה שלך',
+          legendUser: 'המיקום שלך',
+          legendRoute: 'מסלול הקו'
         };
       case 'en':
         return {
           liteBadge: 'Lite Mode • Zero Heavy SDK',
           switchDir: 'Switch Direction',
-          staticMapCaption: 'Static Map (BBox Projection)'
+          legendBus: 'Bus',
+          legendStop: 'Your Stop',
+          legendUser: 'You',
+          legendRoute: 'Route Path'
         };
       default:
         return {
           liteBadge: 'Режим Lite • Без тяжелых SDK',
           switchDir: 'Сменить направление',
-          staticMapCaption: 'Статичная карта (BBox Projection)'
+          legendBus: 'Автобус',
+          legendStop: 'Остановка',
+          legendUser: 'Вы',
+          legendRoute: 'Маршрут'
         };
     }
   });
@@ -524,16 +655,24 @@ export class LiteTimelineViewComponent {
     return projectCoord(stop.lat, stop.lon, this.state().lite_map.bbox);
   });
 
-  readonly progressScale = computed(() => {
-    const total = Math.max(1, this.state().timeline_stops.length - 1);
-    const current = Math.max(0, (this.state().nearest_bus?.current_stop_sequence ?? 1) - 1);
-    return Math.min(1, Math.max(0.08, Number((current / total).toFixed(2))));
+  readonly gpsProjection = computed(() => {
+    const loc = this.state().user_location;
+    if (!loc) return null;
+    return projectCoord(loc.lat, loc.lon, this.state().lite_map.bbox);
   });
 
-  readonly busOffsetPx = computed(() => {
-    const total = Math.max(1, this.state().timeline_stops.length - 1);
-    const current = Math.max(0, (this.state().nearest_bus?.current_stop_sequence ?? 1) - 1);
-    return Math.round((current / total) * 195);
+  readonly busProgressPercent = computed(() => {
+    const stops = this.state().timeline_stops;
+    const busSeq = this.state().nearest_bus?.current_stop_sequence;
+    if (!stops.length || busSeq === undefined) return 15;
+    const idx = stops.findIndex((s) => s.stop_sequence >= busSeq);
+    const resolvedIdx = idx === -1 ? stops.length - 1 : idx;
+    const pct = (resolvedIdx / Math.max(1, stops.length - 1)) * 100;
+    return Math.min(96, Math.max(4, Math.round(pct)));
+  });
+
+  readonly progressScale = computed(() => {
+    return Math.max(0.08, Number((this.busProgressPercent() / 100).toFixed(2)));
   });
 
   onSwitchDirection(): void {

@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url';
 import { handleMcpPostRequest } from './mcp/server.js';
 import { getLiveBusStatus } from './services/bus-status.service.js';
 import { redisService } from './services/redis.service.js';
+import { generateStaticStreetMapSvg } from './services/static-map.service.js';
+import { supabaseService } from './services/supabase.service.js';
 import { pollingWorker } from './workers/polling.worker.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -95,6 +97,40 @@ app.get('/api/live-status', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('[REST] /api/live-status error:', error);
     res.status(500).json({ error: 'Failed to retrieve live bus status' });
+  }
+});
+
+// 4b. Static street map SVG endpoint for Lite Mode (real street tiles + route path)
+app.get('/api/static-map', async (req: Request, res: Response) => {
+  try {
+    const minLat = Number(req.query.minLat ?? 32.76);
+    const maxLat = Number(req.query.maxLat ?? 32.796);
+    const minLon = Number(req.query.minLon ?? 34.95);
+    const maxLon = Number(req.query.maxLon ?? 34.99);
+    const routeId = String(req.query.route_id ?? 'stride-10049');
+    const directionId: 0 | 1 = req.query.direction_id === '1' ? 1 : 0;
+
+    if (
+      [minLat, maxLat, minLon, maxLon].some((n) => Number.isNaN(n)) ||
+      maxLat <= minLat ||
+      maxLon <= minLon
+    ) {
+      res.status(400).send('Invalid bounding box parameters');
+      return;
+    }
+
+    const stops = await supabaseService.getDirectionStopCoords(routeId, directionId);
+    const svg = await generateStaticStreetMapSvg(
+      { minLat, maxLat, minLon, maxLon },
+      stops
+    );
+
+    res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
+    res.setHeader('Cache-Control', 'public, max-age=60');
+    res.send(svg);
+  } catch (error) {
+    console.error('[REST] /api/static-map error:', error);
+    res.status(500).send('Failed to generate static map');
   }
 });
 

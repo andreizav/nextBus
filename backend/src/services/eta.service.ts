@@ -71,7 +71,7 @@ export function resolveRenderMode(
 }
 
 /**
- * Projects WGS84 coordinates onto percentage offsets [0..100] within a static bounding box.
+ * Projects WGS84 coordinates onto percentage offsets [2..98] within a static bounding box.
  */
 export function projectCoordinatesToBbox(
   lat: number,
@@ -89,13 +89,14 @@ export function projectCoordinatesToBbox(
   const rawY = ((bbox.maxLat - lat) / latSpan) * 100;
 
   return {
-    xPercent: Number(Math.min(96, Math.max(4, rawX)).toFixed(2)),
-    yPercent: Number(Math.min(96, Math.max(4, rawY)).toFixed(2))
+    xPercent: Number(Math.min(98, Math.max(2, rawX)).toFixed(2)),
+    yPercent: Number(Math.min(98, Math.max(2, rawY)).toFixed(2))
   };
 }
 
 /**
- * Selects the closest approaching bus at or before userStopSequence (or fallback closest).
+ * Selects the closest approaching bus at or before userStopSequence.
+ * Returns null if no live vehicle is approaching (e.g. all buses already passed userStopSequence).
  */
 export function selectNearestApproachingVehicle(
   vehicles: VehicleTelemetry[],
@@ -103,16 +104,14 @@ export function selectNearestApproachingVehicle(
   userStopLat: number,
   userStopLon: number
 ): VehicleTelemetry | null {
-  if (vehicles.length === 0) {
+  const approaching = vehicles.filter((v) => v.current_stop_sequence <= userStopSequence);
+  if (approaching.length === 0) {
     return null;
   }
 
-  const approaching = vehicles.filter((v) => v.current_stop_sequence <= userStopSequence);
-  const candidates = approaching.length > 0 ? approaching : vehicles;
-
-  return candidates.reduce((best, current) => {
-    const bestStopDiff = Math.abs(userStopSequence - best.current_stop_sequence);
-    const currStopDiff = Math.abs(userStopSequence - current.current_stop_sequence);
+  return approaching.reduce((best, current) => {
+    const bestStopDiff = userStopSequence - best.current_stop_sequence;
+    const currStopDiff = userStopSequence - current.current_stop_sequence;
 
     if (currStopDiff !== bestStopDiff) {
       return currStopDiff < bestStopDiff ? current : best;
