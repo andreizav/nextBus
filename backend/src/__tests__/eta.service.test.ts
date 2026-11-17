@@ -1,0 +1,122 @@
+import { describe, expect, it } from 'vitest';
+import {
+  calculateEtaMinutes,
+  calculateStopsAway,
+  projectCoordinatesToBbox,
+  resolveRenderMode,
+  selectNearestApproachingVehicle
+} from '../services/eta.service.js';
+import type { BoundingBox, VehicleTelemetry } from '../types/bus.types.js';
+
+describe('ETA and Hybrid Rendering calculations', () => {
+  describe('calculateStopsAway', () => {
+    it('returns the exact stop sequence difference when bus is approaching', () => {
+      expect(calculateStopsAway(5, 3)).toBe(2);
+      expect(calculateStopsAway(7, 2)).toBe(5);
+    });
+
+    it('clamps to 0 when the bus is at or past the user stop', () => {
+      expect(calculateStopsAway(5, 5)).toBe(0);
+      expect(calculateStopsAway(3, 6)).toBe(0);
+    });
+  });
+
+  describe('calculateEtaMinutes', () => {
+    it('returns 0 when bus is 0 stops away and within 80m', () => {
+      expect(calculateEtaMinutes(0, 40)).toBe(0);
+    });
+
+    it('estimates realistic minutes from stopsAway when distance is omitted', () => {
+      expect(calculateEtaMinutes(2)).toBe(4);
+      expect(calculateEtaMinutes(5)).toBe(10);
+    });
+
+    it('uses distance and speed plus dwell time when provided', () => {
+      // 1.6 km at 24 km/h = 4 min travel + (3 - 1) * 0.6 min dwell = 5.2 -> 5 min
+      expect(calculateEtaMinutes(3, 1600, 24)).toBe(5);
+    });
+  });
+
+  describe('resolveRenderMode', () => {
+    it('selects "lite" when ETA <= 8 minutes and includeNearbyPlaces is false', () => {
+      expect(resolveRenderMode(1, false)).toBe('lite');
+      expect(resolveRenderMode(4, false)).toBe('lite');
+      expect(resolveRenderMode(8, false)).toBe('lite');
+      expect(resolveRenderMode(8)).toBe('lite');
+    });
+
+    it('selects "interactive" when ETA > 8 minutes', () => {
+      expect(resolveRenderMode(9, false)).toBe('interactive');
+      expect(resolveRenderMode(15, false)).toBe('interactive');
+    });
+
+    it('selects "interactive" whenever includeNearbyPlaces is true, regardless of ETA', () => {
+      expect(resolveRenderMode(2, true)).toBe('interactive');
+      expect(resolveRenderMode(8, true)).toBe('interactive');
+      expect(resolveRenderMode(12, true)).toBe('interactive');
+    });
+  });
+
+  describe('projectCoordinatesToBbox', () => {
+    const bbox: BoundingBox = {
+      minLat: 32.755,
+      maxLat: 32.798,
+      minLon: 34.955,
+      maxLon: 34.980
+    };
+
+    it('projects midpoint to ~50% on both axes', () => {
+      const projection = projectCoordinatesToBbox(32.7765, 34.9675, bbox);
+      expect(projection.xPercent).toBeCloseTo(50, 1);
+      expect(projection.yPercent).toBeCloseTo(50, 1);
+    });
+
+    it('clamps coordinates outside bbox safely inside [4, 96]', () => {
+      const topLeft = projectCoordinatesToBbox(33.0, 34.0, bbox);
+      expect(topLeft.xPercent).toBe(4);
+      expect(topLeft.yPercent).toBe(4);
+
+      const bottomRight = projectCoordinatesToBbox(32.0, 35.5, bbox);
+      expect(bottomRight.xPercent).toBe(96);
+      expect(bottomRight.yPercent).toBe(96);
+    });
+  });
+
+  describe('selectNearestApproachingVehicle', () => {
+    const vehicles: VehicleTelemetry[] = [
+      {
+        vehicle_id: 'bus-far',
+        lat: 32.759,
+        lon: 34.972,
+        bearing: 0,
+        recorded_at_time: '2026-11-17T16:00:00Z',
+        current_stop_sequence: 1
+      },
+      {
+        vehicle_id: 'bus-near',
+        lat: 32.771,
+        lon: 34.971,
+        bearing: 0,
+        recorded_at_time: '2026-11-17T16:00:00Z',
+        current_stop_sequence: 4
+      },
+      {
+        vehicle_id: 'bus-passed',
+        lat: 32.787,
+        lon: 34.962,
+        bearing: 0,
+        recorded_at_time: '2026-11-17T16:00:00Z',
+        current_stop_sequence: 6
+      }
+    ];
+
+    it('prefers the closest approaching vehicle at or before the user stop', () => {
+      const picked = selectNearestApproachingVehicle(vehicles, 5, 32.7804, 34.9658);
+      expect(picked?.vehicle_id).toBe('bus-near');
+    });
+
+    it('returns null when no vehicles are active', () => {
+      expect(selectNearestApproachingVehicle([], 5, 32.7804, 34.9658)).toBeNull();
+    });
+  });
+});
