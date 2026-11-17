@@ -1,4 +1,35 @@
 export type RenderMode = 'lite' | 'interactive';
+export type EntryContext = 'mcp' | 'standalone';
+
+export interface GeocodedDestination {
+  lat: number;
+  lon: number;
+  place_name: string;
+  formatted_address: string;
+  source?: 'cache' | 'google_places' | 'google_geocoding' | 'osm_nominatim' | 'gazetteer' | 'mcp';
+}
+
+export interface DirectRouteMatch {
+  route_id: string;
+  route_short_name: string;
+  route_long_name: string;
+  direction_id: 0 | 1;
+  origin_stop_id: string;
+  origin_stop_code: string;
+  origin_stop_name: string;
+  origin_stop_name_he: string;
+  origin_stop_sequence: number;
+  origin_lat: number;
+  origin_lon: number;
+  dest_stop_id: string;
+  dest_stop_code: string;
+  dest_stop_name: string;
+  dest_stop_name_he: string;
+  dest_stop_sequence: number;
+  dest_lat: number;
+  dest_lon: number;
+  stops_between: number;
+}
 
 export interface RouteDirectionOption {
   direction_id: 0 | 1;
@@ -97,11 +128,28 @@ export interface CachedRouteState {
   source: 'stride' | 'fallback';
 }
 
+export interface RecommendedBusOption {
+  rank: 1 | 2 | 3;
+  route: RouteInfo;
+  origin_stop: UserStopInfo;
+  dest_stop: UserStopInfo;
+  bus: NearestBusInfo;
+  eta_to_boarding_min: number;
+  stops_between: number;
+  ride_duration_min: number;
+  total_arrival_min: number;
+  estimated_arrival_time: string;
+  timeline_stops: StopTimelineItem[];
+}
+
 export interface LiveBusStatusResponse {
+  entry_context?: EntryContext;
   render_mode: RenderMode;
   updated_at: string;
   cache_hit: boolean;
   user_location?: { lat: number; lon: number };
+  destination?: GeocodedDestination;
+  recommended_options?: RecommendedBusOption[];
   route: RouteInfo;
   user_stop: UserStopInfo;
   nearest_bus: NearestBusInfo | null;

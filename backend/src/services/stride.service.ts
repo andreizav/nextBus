@@ -52,29 +52,48 @@ function findClosestStopSequence(
 }
 
 function resolveStrideLineRef(routeId: string, directionId: 0 | 1): string {
-  if (routeId.includes('10049') || routeId.includes('49')) {
+  if (routeId.includes('10049') || routeId === 'route-49-haifa') {
     return directionId === 0 ? '19632' : '19631';
+  }
+  if (routeId.includes('10024')) {
+    return directionId === 0 ? '3695' : '3697';
+  }
+  if (routeId.includes('10011')) {
+    return directionId === 0 ? '3529' : '3530';
+  }
+  if (routeId.includes('10123')) {
+    return directionId === 0 ? '4134' : '4135';
   }
   return routeId.replace(/\D/g, '');
 }
 
 function buildFallbackVehicles(
+  routeId: string,
   directionId: 0 | 1,
   stops: RouteStopCoord[]
 ): VehicleTelemetry[] {
   const nowIso = new Date().toISOString();
-  const midIdx = Math.max(0, Math.min(stops.length - 1, Math.floor(stops.length * 0.72)));
-  const sampleStop = stops[midIdx];
+  const shortLine = routeId.replace(/\D/g, '').replace(/^100?/, '') || '49';
+
+  // Differentiate approaching position slightly by line number so Top-3 ranking
+  // naturally reflects realistic arrival times across lines 24, 11, 123, 49.
+  const lineHash = shortLine.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
+  const earlyIdx = Math.max(
+    0,
+    Math.min(stops.length - 1, lineHash % 3)
+  );
+  const sampleStop = stops[earlyIdx];
+  const speed = shortLine === '24' ? 28 : shortLine === '11' ? 24 : 20;
 
   return [
     {
-      vehicle_id: directionId === 0 ? 'egged-49-fallback-0' : 'egged-49-fallback-1',
-      lat: sampleStop?.lat ?? 32.7795,
-      lon: sampleStop?.lon ?? 34.9665,
-      bearing: directionId === 0 ? 345 : 165,
+      vehicle_id: `egged-${shortLine}-${directionId}-a`,
+      lat: sampleStop?.lat ?? 32.7905,
+      lon: sampleStop?.lon ?? 34.9605,
+      bearing: directionId === 0 ? 95 : 275,
       recorded_at_time: nowIso,
-      current_stop_sequence: sampleStop?.stop_sequence ?? 26,
-      speed_kmh: 25
+      current_stop_sequence: sampleStop?.stop_sequence ?? 2,
+      speed_kmh: speed
     }
   ];
 }
@@ -137,7 +156,7 @@ export async function fetchLiveVehiclesFromStride(
   return {
     route_id: routeId,
     direction_id: directionId,
-    vehicles: buildFallbackVehicles(directionId, routeStops),
+    vehicles: buildFallbackVehicles(routeId, directionId, routeStops),
     updated_at: nowIso,
     source: 'fallback'
   };

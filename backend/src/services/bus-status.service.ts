@@ -1,6 +1,7 @@
 import {
   calculateEtaMinutes,
   calculateStopsAway,
+  computeAspectCorrectedBbox,
   haversineDistanceMeters,
   projectCoordinatesToBbox,
   resolveRenderMode,
@@ -12,56 +13,11 @@ import { buildStaticMapUrl } from './static-map.service.js';
 import { fetchLiveVehiclesFromStride } from './stride.service.js';
 import { supabaseService, type RouteStopCoord } from './supabase.service.js';
 import type {
-  BoundingBox,
   CachedRouteState,
   LiveBusStatusResponse,
   NearestBusInfo,
   VehicleTelemetry
 } from '../types/bus.types.js';
-
-const MAP_ASPECT_RATIO = 600 / 320; // 15:8
-
-function computeAspectCorrectedBbox(
-  points: Array<{ lat: number; lon: number }>
-): BoundingBox {
-  if (points.length === 0) {
-    return { minLat: 32.76, maxLat: 32.796, minLon: 34.95, maxLon: 34.99 };
-  }
-
-  let minLat = Infinity;
-  let maxLat = -Infinity;
-  let minLon = Infinity;
-  let maxLon = -Infinity;
-
-  for (const p of points) {
-    if (p.lat < minLat) minLat = p.lat;
-    if (p.lat > maxLat) maxLat = p.lat;
-    if (p.lon < minLon) minLon = p.lon;
-    if (p.lon > maxLon) maxLon = p.lon;
-  }
-
-  const centerLat = (minLat + maxLat) / 2;
-  const centerLon = (minLon + maxLon) / 2;
-  const cosLat = Math.max(0.2, Math.cos((centerLat * Math.PI) / 180));
-
-  let latSpan = Math.max(0.010, (maxLat - minLat) * 1.45);
-  let lonSpan = Math.max(0.016, (maxLon - minLon) * 1.45);
-
-  // Match 600x320 aspect ratio adjusted for cos(latitude) so streets are not distorted
-  const physicalRatio = (lonSpan * cosLat) / latSpan;
-  if (physicalRatio < MAP_ASPECT_RATIO) {
-    lonSpan = (latSpan * MAP_ASPECT_RATIO) / cosLat;
-  } else {
-    latSpan = (lonSpan * cosLat) / MAP_ASPECT_RATIO;
-  }
-
-  return {
-    minLat: Number((centerLat - latSpan / 2).toFixed(5)),
-    maxLat: Number((centerLat + latSpan / 2).toFixed(5)),
-    minLon: Number((centerLon - lonSpan / 2).toFixed(5)),
-    maxLon: Number((centerLon + lonSpan / 2).toFixed(5))
-  };
-}
 
 function synthesizeNextApproachingVehicle(
   allStops: RouteStopCoord[],

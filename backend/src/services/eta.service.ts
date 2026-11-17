@@ -122,3 +122,50 @@ export function selectNearestApproachingVehicle(
     return currDist < bestDist ? current : best;
   });
 }
+
+const DEFAULT_MAP_ASPECT_RATIO = 600 / 320; // 15:8
+
+/**
+ * Computes an aspect-ratio corrected WGS84 bounding box around a set of points.
+ */
+export function computeAspectCorrectedBbox(
+  points: Array<{ lat: number; lon: number }>,
+  aspectRatio: number = DEFAULT_MAP_ASPECT_RATIO
+): BoundingBox {
+  if (points.length === 0) {
+    return { minLat: 32.76, maxLat: 32.796, minLon: 34.95, maxLon: 34.99 };
+  }
+
+  let minLat = Infinity;
+  let maxLat = -Infinity;
+  let minLon = Infinity;
+  let maxLon = -Infinity;
+
+  for (const p of points) {
+    if (p.lat < minLat) minLat = p.lat;
+    if (p.lat > maxLat) maxLat = p.lat;
+    if (p.lon < minLon) minLon = p.lon;
+    if (p.lon > maxLon) maxLon = p.lon;
+  }
+
+  const centerLat = (minLat + maxLat) / 2;
+  const centerLon = (minLon + maxLon) / 2;
+  const cosLat = Math.max(0.2, Math.cos((centerLat * Math.PI) / 180));
+
+  let latSpan = Math.max(0.010, (maxLat - minLat) * 1.45);
+  let lonSpan = Math.max(0.016, (maxLon - minLon) * 1.45);
+
+  const physicalRatio = (lonSpan * cosLat) / latSpan;
+  if (physicalRatio < aspectRatio) {
+    lonSpan = (latSpan * aspectRatio) / cosLat;
+  } else {
+    latSpan = (lonSpan * cosLat) / aspectRatio;
+  }
+
+  return {
+    minLat: Number((centerLat - latSpan / 2).toFixed(5)),
+    maxLat: Number((centerLat + latSpan / 2).toFixed(5)),
+    minLon: Number((centerLon - lonSpan / 2).toFixed(5)),
+    maxLon: Number((centerLon + lonSpan / 2).toFixed(5))
+  };
+}
