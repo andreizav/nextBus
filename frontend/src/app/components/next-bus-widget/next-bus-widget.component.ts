@@ -11,6 +11,7 @@ import {
   signal
 } from '@angular/core';
 import type {
+  EntryContext,
   LiveBusStatusResponse,
   RenderMode,
   WidgetLang
@@ -189,7 +190,10 @@ const DEFAULT_FALLBACK_STATE: LiveBusStatusResponse = {
           <nb-interactive-map-view
             [state]="busState()"
             [lang]="lang()"
+            [entryContext]="entryContext()"
+            [isSearching]="isSearching()"
             (switchDirection)="onDirectionSwitch($event)"
+            (searchDestination)="onSearchDestination($event)"
           />
         } @loading (minimum 120ms) {
           <div class="defer-status">{{ labels().loadingMap }}</div>
@@ -330,6 +334,8 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
   readonly initialState = input<LiveBusStatusResponse | null>(null);
 
   readonly busState = signal<LiveBusStatusResponse>(DEFAULT_FALLBACK_STATE);
+  readonly entryContext = signal<EntryContext>('standalone');
+  readonly isSearching = signal<boolean>(false);
   readonly selectedDirection = signal<0 | 1>(0);
   readonly hasExplicitDirection = signal(false);
   readonly lang = signal<WidgetLang>('ru');
@@ -396,13 +402,38 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
   };
 
   ngOnInit(): void {
-    const injected = this.initialState() ?? window.__NEXTBUS_STATE__ ?? null;
-    if (injected) {
-      this.busState.set(injected);
-      this.selectedDirection.set(injected.route.direction_id);
+    const params = new URLSearchParams(window.location.search);
+    const injected =
+      this.initialState() ??
+      window.mcpInitialState ??
+      window.__NEXTBUS_STATE__ ??
+      null;
+
+    const isMcp =
+      Boolean(this.initialState()) ||
+      Boolean(window.mcpInitialState) ||
+      injected?.entry_context === 'mcp' ||
+      params.get('entry_context') === 'mcp';
+
+    if (isMcp) {
+      this.entryContext.set('mcp');
+      if (injected) {
+        this.busState.set(injected);
+        this.selectedDirection.set(injected.route.direction_id);
+        this.modeOverride.set(injected.render_mode);
+      } else {
+        this.modeOverride.set('interactive');
+      }
+    } else {
+      this.entryContext.set('standalone');
+      if (injected) {
+        this.busState.set(injected);
+        this.selectedDirection.set(injected.route.direction_id);
+      }
+      // Standalone web/mobile defaults to interactive map + search bar unless ?mode=lite
+      this.modeOverride.set('interactive');
     }
 
-    const params = new URLSearchParams(window.location.search);
     const modeParam = params.get('mode');
     if (modeParam === 'lite' || modeParam === 'interactive') {
       this.modeOverride.set(modeParam);
@@ -497,13 +528,75 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
     void this.fetchLatestStatus();
   }
 
+  async onSearchDestination(query: string): Promise<void> {
+    const cleaned = query.trim();
+    if (!cleaned) return;
+
+    this.isSearching.set(true);
+    try {
+      const coords = this.userCoords() ?? DEFAULT_COORDS;
+      const response = await fetch('/api/search-routes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: cleaned,
+          user_location: { lat: coords.lat, lon: coords.lon }
+        })
+      });
+      if (!response.ok) return;
+
+      const data = (await response.json()) as LiveBusStatusResponse;
+      this.busState.set(data);
+      this.modeOverride.set('interactive');
+    } catch {
+      // Keep current state on temporary failure
+    } finally {
+      this.isSearching.set(false);
+    }
+  }
+
   private async fetchLatestStatus(): Promise<void> {
     try {
       const params = new URLSearchParams(window.location.search);
-      const line = params.get('line') ?? this.busState().route.short_name ?? '49';
       const coords = this.userCoords() ?? DEFAULT_COORDS;
-      const includeNearby = this.viewMode() === 'interactive';
+      const current = this.busState();
 
+      const urlDestLat = params.get('dest_lat');
+      const urlDestLon = params.get('dest_lon');
+      const urlDestLabel = params.get('dest_label');
+
+      const destLat =
+        current.destination?.lat ??
+        (urlDestLat && !Number.isNaN(Number(urlDestLat)) ? Number(urlDestLat) : undefined);
+      const destLon =
+        current.destination?.lon ??
+        (urlDestLon && !Number.isNaN(Number(urlDestLon)) ? Number(urlDestLon) : undefined);
+
+      if (destLat !== undefined && destLon !== undefined) {
+        const destLabel = current.destination?.place_name ?? urlDestLabel ?? 'Destination';
+        const routeIds = (current.recommended_options ?? [])
+          .map((opt) => opt.route.route_id)
+          .join(',');
+        const routeIdsParam = routeIds ? `&route_ids=${encodeURIComponent(routeIds)}` : '';
+        const bootstrapParam = !current.destination ? '&bootstrap=true' : '';
+
+        const tripUrl = `/api/live-status?lat=${encodeURIComponent(
+          coords.lat
+        )}&lon=${encodeURIComponent(coords.lon)}&dest_lat=${encodeURIComponent(
+          destLat
+        )}&dest_lon=${encodeURIComponent(destLon)}&dest_label=${encodeURIComponent(
+          destLabel
+        )}&entry_context=${encodeURIComponent(this.entryContext())}${routeIdsParam}${bootstrapParam}`;
+
+        const response = await fetch(tripUrl);
+        if (!response.ok) return;
+        const data = (await response.json()) as LiveBusStatusResponse;
+        this.busState.set(data);
+        return;
+      }
+
+      const line = params.get('line') ?? current.route.short_name ?? '49';
+      const includeNearby = this.viewMode() === 'interactive';
       const dirParam = this.hasExplicitDirection()
         ? `&direction_id=${this.selectedDirection()}`
         : '';
@@ -512,7 +605,9 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
         line
       )}&lat=${encodeURIComponent(coords.lat)}&lon=${encodeURIComponent(
         coords.lon
-      )}${dirParam}&include_nearby_places=${includeNearby}`;
+      )}${dirParam}&include_nearby_places=${includeNearby}&entry_context=${encodeURIComponent(
+        this.entryContext()
+      )}`;
 
       const response = await fetch(url);
       if (!response.ok) return;
