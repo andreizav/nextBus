@@ -254,7 +254,7 @@ export class SearchBarComponent {
           stopVoice: 'עצור הקלטה',
           listening: 'מקשיב...',
           quickLabel: 'יעדים מהירים',
-          chips: ['מרכז חורב', 'טכניון', 'גרנד קניון', 'מרכז הכרמל']
+          chips: ['מרכז חורב', 'אוניברסיטת חיפה', 'בית חולים רמב"ם', 'טכניון']
         };
       case 'en':
         return {
@@ -266,7 +266,7 @@ export class SearchBarComponent {
           stopVoice: 'Stop recording',
           listening: 'Listening...',
           quickLabel: 'Quick destinations',
-          chips: ['Horev Clinic Haifa', 'Technion', 'Grand Canyon Haifa', 'Carmel Center']
+          chips: ['Horev Clinic Haifa', 'University of Haifa', 'Rambam Hospital', 'Technion']
         };
       default:
         return {
@@ -278,7 +278,7 @@ export class SearchBarComponent {
           stopVoice: 'Остановить запись',
           listening: 'Слушаю...',
           quickLabel: 'Быстро',
-          chips: ['Хорев Хайфа', 'Поликлиника на Хорев', 'Технион Хайфа', 'Гранд Каньон']
+          chips: ['Хорев Хайфа', 'Университет Хайфы', 'Больница Рамбам', 'Технион Хайфа']
         };
     }
   });

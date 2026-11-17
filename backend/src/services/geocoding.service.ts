@@ -42,6 +42,27 @@ interface HaifaLandmark {
 
 const HAIFA_GAZETTEER: HaifaLandmark[] = [
   {
+    patterns: [/университет|university|אוניברסיט/i],
+    lat: 32.7620,
+    lon: 35.0185,
+    place_name: 'Университет Хайфы (אוניברסיטת חיפה)',
+    formatted_address: 'Abba Hushi Ave 199, Haifa, Israel'
+  },
+  {
+    patterns: [/рамбам|rambam|רמב"?ם|бат[- ]?галим|bat[- ]?galim|בת[- ]?גלים/i],
+    lat: 32.8325,
+    lon: 34.9862,
+    place_name: 'Больница Рамбам / Бат-Галим (רמב"ם)',
+    formatted_address: 'HaAliya HaShniya St 8, Haifa, Israel'
+  },
+  {
+    patterns: [/адар|hadar|הדר|герцль|herzl/i],
+    lat: 32.8115,
+    lon: 34.9965,
+    place_name: 'Район Адар / Герцль (הדר, חיפה)',
+    formatted_address: 'Herzl St, Haifa, Israel'
+  },
+  {
     patterns: [/хорев|horev|חורב|поликлиник|מרפאה|клалит|כללית/i],
     lat: 32.7832,
     lon: 34.9859,
@@ -63,18 +84,18 @@ const HAIFA_GAZETTEER: HaifaLandmark[] = [
     formatted_address: 'Derech Simcha Golan 54, Haifa, Israel'
   },
   {
-    patterns: [/мерказ\s*кармель|центр\s*кармель|carmel\s*center|מרכז\s*הכרמל|кармель/i],
-    lat: 32.8018,
-    lon: 34.9855,
-    place_name: 'Мерказ ха-Кармель (מרכז הכרמל)',
-    formatted_address: 'HaNassi Blvd 120, Haifa, Israel'
-  },
-  {
     patterns: [/хоф\s*(ха)?кармель|hof\s*ha?carmel|חוף\s*הכרמל|מרכזית/i],
     lat: 32.7934,
     lon: 34.9592,
     place_name: 'Хоф ха-Кармель (ת. מרכזית חוף הכרמל)',
     formatted_address: 'Sderot HaHagana, Haifa, Israel'
+  },
+  {
+    patterns: [/тират|tirat|טירת/i],
+    lat: 32.7615,
+    lon: 34.9718,
+    place_name: 'Тират-Кармель (טירת כרמל)',
+    formatted_address: 'HaHagana St, Tirat Carmel, Israel'
   },
   {
     patterns: [/матам|matam|מת''?מ|хай-?тек/i],
@@ -84,11 +105,11 @@ const HAIFA_GAZETTEER: HaifaLandmark[] = [
     formatted_address: 'ATRAM / Matam Park, Haifa, Israel'
   },
   {
-    patterns: [/тират|tirat|טירת/i],
-    lat: 32.7615,
-    lon: 34.9718,
-    place_name: 'Тират-Кармель (טירת כרמל)',
-    formatted_address: 'HaHagana St, Tirat Carmel, Israel'
+    patterns: [/мерказ\s*кармель|центр\s*кармель|carmel\s*center|מרכז\s*הכרמל|кармель/i],
+    lat: 32.8018,
+    lon: 34.9855,
+    place_name: 'Мерказ ха-Кармель (מרכז הכרמל)',
+    formatted_address: 'HaNassi Blvd 120, Haifa, Israel'
   }
 ];
 

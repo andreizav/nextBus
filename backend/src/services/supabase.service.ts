@@ -1,7 +1,11 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import pg from 'pg';
 import { haversineDistanceMeters } from './eta.service.js';
-import type { DirectRouteMatch, StopTimelineItem } from '../types/bus.types.js';
+import type {
+  DirectRouteMatch,
+  StopTimelineItem,
+  TransferRouteMatch
+} from '../types/bus.types.js';
 
 export interface NearestStopRpcRow {
   route_id: string;
@@ -292,7 +296,8 @@ class SupabaseService {
   ): Promise<DirectRouteMatch[]> {
     this.ensureInit();
 
-    const radiiToTry = [radiusMeters, Math.max(1500, radiusMeters * 2), 3000];
+    const radiiToTry = [radiusMeters, Math.max(1500, radiusMeters * 2)];
+    let dbSucceeded = false;
 
     for (const radius of radiiToTry) {
       if (this.client) {
@@ -304,8 +309,11 @@ class SupabaseService {
             dest_lon: destLon,
             radius_meters: radius
           });
-          if (!error && Array.isArray(data) && data.length > 0) {
-            return data.map((row) => this.mapDirectRouteRow(row as Record<string, unknown>));
+          if (!error && Array.isArray(data)) {
+            dbSucceeded = true;
+            if (data.length > 0) {
+              return data.map((row) => this.mapDirectRouteRow(row as Record<string, unknown>));
+            }
           }
         } catch (err) {
           console.warn('[Supabase] find_direct_routes RPC fallback:', (err as Error).message);
@@ -318,6 +326,7 @@ class SupabaseService {
             `SELECT * FROM find_direct_routes_between_points($1, $2, $3, $4, $5)`,
             [originLat, originLon, destLat, destLon, radius]
           );
+          dbSucceeded = true;
           if (res.rows.length > 0) {
             return res.rows.map((row) => this.mapDirectRouteRow(row as Record<string, unknown>));
           }
@@ -327,72 +336,106 @@ class SupabaseService {
       }
     }
 
-    // Fallback corridor matches for offline/test environments without DB
-    return [
-      {
-        route_id: 'stride-10024',
-        route_short_name: '24',
-        route_long_name: 'חוף הכרמל - מת"מ - מרכז חורב - מרכז הכרמל (חיפה)',
-        direction_id: 0,
-        origin_stop_id: 'stop-42362',
-        origin_stop_code: '42362',
-        origin_stop_name: "מת''מ/ההגנה (חיפה)",
-        origin_stop_name_he: "מת''מ/ההגנה (חיפה)",
-        origin_stop_sequence: 3,
-        origin_lat: 32.789609,
-        origin_lon: 34.962117,
-        dest_stop_id: 'stop-43013',
-        dest_stop_code: '43013',
-        dest_stop_name: 'Horev Center / Clinic (Haifa)',
-        dest_stop_name_he: 'מרכז חורב / מרפאה (חיפה)',
-        dest_stop_sequence: 7,
-        dest_lat: destLat,
-        dest_lon: destLon,
-        stops_between: 4
-      },
-      {
-        route_id: 'stride-10011',
-        route_short_name: '11',
-        route_long_name: 'חוף הכרמל - מת"מ - פרויד - חורב - טכניון (חיפה)',
-        direction_id: 0,
-        origin_stop_id: 'stop-42362',
-        origin_stop_code: '42362',
-        origin_stop_name: "מת''מ/ההגנה (חיפה)",
-        origin_stop_name_he: "מת''מ/ההגנה (חיפה)",
-        origin_stop_sequence: 3,
-        origin_lat: 32.789609,
-        origin_lon: 34.962117,
-        dest_stop_id: 'stop-43013',
-        dest_stop_code: '43013',
-        dest_stop_name: 'Horev Center / Clinic (Haifa)',
-        dest_stop_name_he: 'מרכז חורב / מרפאה (חיפה)',
-        dest_stop_sequence: 7,
-        dest_lat: destLat,
-        dest_lon: destLon,
-        stops_between: 4
-      },
-      {
-        route_id: 'stride-10123',
-        route_short_name: '123',
-        route_long_name: 'טירת כרמל - מת"מ - חורב - גרנד קניון (חיפה)',
-        direction_id: 0,
-        origin_stop_id: 'stop-42362',
-        origin_stop_code: '42362',
-        origin_stop_name: "מת''מ/ההגנה (חיפה)",
-        origin_stop_name_he: "מת''מ/ההגנה (חיפה)",
-        origin_stop_sequence: 4,
-        origin_lat: 32.789609,
-        origin_lon: 34.962117,
-        dest_stop_id: 'stop-43013',
-        dest_stop_code: '43013',
-        dest_stop_name: 'Horev Center / Clinic (Haifa)',
-        dest_stop_name_he: 'מרכז חורב / מרפאה (חיפה)',
-        dest_stop_sequence: 7,
-        dest_lat: destLat,
-        dest_lon: destLon,
-        stops_between: 3
+    // If database queried cleanly and found 0 direct routes, do not fabricate direct matches;
+    // let the transfer router compute 1-transfer connections.
+    if (dbSucceeded) {
+      return [];
+    }
+
+    return [];
+  }
+
+  private mapTransferRouteRow(row: Record<string, unknown>): TransferRouteMatch {
+    return {
+      leg1_route_id: String(row.leg1_route_id),
+      leg1_route_short_name: String(row.leg1_route_short_name),
+      leg1_route_long_name: String(row.leg1_route_long_name ?? ''),
+      leg1_direction_id: Number(row.leg1_direction_id) === 1 ? 1 : 0,
+      origin_stop_id: String(row.origin_stop_id),
+      origin_stop_code: String(row.origin_stop_code ?? row.origin_stop_id),
+      origin_stop_name: String(row.origin_stop_name),
+      origin_stop_name_he: String(row.origin_stop_name_he ?? row.origin_stop_name),
+      origin_stop_sequence: Number(row.origin_stop_sequence),
+      origin_lat: Number(row.origin_lat),
+      origin_lon: Number(row.origin_lon),
+      xfer_alight_stop_id: String(row.xfer_alight_stop_id),
+      xfer_alight_stop_code: String(row.xfer_alight_stop_code ?? row.xfer_alight_stop_id),
+      xfer_alight_stop_name: String(row.xfer_alight_stop_name),
+      xfer_alight_stop_name_he: String(row.xfer_alight_stop_name_he ?? row.xfer_alight_stop_name),
+      xfer_alight_stop_sequence: Number(row.xfer_alight_stop_sequence),
+      xfer_alight_lat: Number(row.xfer_alight_lat),
+      xfer_alight_lon: Number(row.xfer_alight_lon),
+      leg1_stops_between: Number(row.leg1_stops_between),
+      transfer_walk_meters_actual: Number(row.transfer_walk_meters_actual ?? 0),
+      leg2_route_id: String(row.leg2_route_id),
+      leg2_route_short_name: String(row.leg2_route_short_name),
+      leg2_route_long_name: String(row.leg2_route_long_name ?? ''),
+      leg2_direction_id: Number(row.leg2_direction_id) === 1 ? 1 : 0,
+      xfer_board_stop_id: String(row.xfer_board_stop_id),
+      xfer_board_stop_code: String(row.xfer_board_stop_code ?? row.xfer_board_stop_id),
+      xfer_board_stop_name: String(row.xfer_board_stop_name),
+      xfer_board_stop_name_he: String(row.xfer_board_stop_name_he ?? row.xfer_board_stop_name),
+      xfer_board_stop_sequence: Number(row.xfer_board_stop_sequence),
+      xfer_board_lat: Number(row.xfer_board_lat),
+      xfer_board_lon: Number(row.xfer_board_lon),
+      dest_stop_id: String(row.dest_stop_id),
+      dest_stop_code: String(row.dest_stop_code ?? row.dest_stop_id),
+      dest_stop_name: String(row.dest_stop_name),
+      dest_stop_name_he: String(row.dest_stop_name_he ?? row.dest_stop_name),
+      dest_stop_sequence: Number(row.dest_stop_sequence),
+      dest_lat: Number(row.dest_lat),
+      dest_lon: Number(row.dest_lon),
+      leg2_stops_between: Number(row.leg2_stops_between)
+    };
+  }
+
+  async findTransferRoutesBetweenPoints(
+    originLat: number,
+    originLon: number,
+    destLat: number,
+    destLon: number,
+    radiusMeters = 650,
+    transferWalkMeters = 260
+  ): Promise<TransferRouteMatch[]> {
+    this.ensureInit();
+
+    const radiiToTry = [radiusMeters, Math.max(1500, radiusMeters * 2), 3000];
+
+    for (const radius of radiiToTry) {
+      if (this.client) {
+        try {
+          const { data, error } = await this.client.rpc('find_transfer_routes_between_points', {
+            origin_lat: originLat,
+            origin_lon: originLon,
+            dest_lat: destLat,
+            dest_lon: destLon,
+            radius_meters: radius,
+            transfer_walk_meters: transferWalkMeters
+          });
+          if (!error && Array.isArray(data) && data.length > 0) {
+            return data.map((row) => this.mapTransferRouteRow(row as Record<string, unknown>));
+          }
+        } catch (err) {
+          console.warn('[Supabase] find_transfer_routes RPC fallback:', (err as Error).message);
+        }
       }
-    ];
+
+      if (this.pgPool) {
+        try {
+          const res = await this.pgPool.query(
+            `SELECT * FROM find_transfer_routes_between_points($1, $2, $3, $4, $5, $6)`,
+            [originLat, originLon, destLat, destLon, radius, transferWalkMeters]
+          );
+          if (res.rows.length > 0) {
+            return res.rows.map((row) => this.mapTransferRouteRow(row as Record<string, unknown>));
+          }
+        } catch (err) {
+          console.warn('[PostgreSQL] find_transfer_routes query error:', (err as Error).message);
+        }
+      }
+    }
+
+    return [];
   }
 }
 

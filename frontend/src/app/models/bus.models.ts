@@ -96,8 +96,31 @@ export interface NearbyOffer {
   maps_url?: string;
 }
 
+export interface TransferConnectionInfo {
+  alight_stop: UserStopInfo;
+  board_stop: UserStopInfo;
+  walk_meters: number;
+  wait_minutes: number;
+  arrive_at_hub_time: string;
+  next_bus_board_time: string;
+  instruction_ru: string;
+  instruction_en: string;
+  instruction_he: string;
+}
+
+export interface TransferLegDetail {
+  route: RouteInfo;
+  board_stop: UserStopInfo;
+  alight_stop: UserStopInfo;
+  bus: NearestBusInfo;
+  stops_between: number;
+  ride_duration_min: number;
+  timeline_stops: StopTimelineItem[];
+}
+
 export interface RecommendedBusOption {
   rank: 1 | 2 | 3;
+  is_transfer?: boolean;
   route: RouteInfo;
   origin_stop: UserStopInfo;
   dest_stop: UserStopInfo;
@@ -107,7 +130,10 @@ export interface RecommendedBusOption {
   ride_duration_min: number;
   total_arrival_min: number;
   estimated_arrival_time: string;
+  leg1_alight_time?: string;
   timeline_stops: StopTimelineItem[];
+  transfer_info?: TransferConnectionInfo;
+  second_leg?: TransferLegDetail;
 }
 
 export interface LiveBusStatusResponse {

@@ -128,8 +128,73 @@ export interface CachedRouteState {
   source: 'stride' | 'fallback';
 }
 
+export interface TransferRouteMatch {
+  leg1_route_id: string;
+  leg1_route_short_name: string;
+  leg1_route_long_name: string;
+  leg1_direction_id: 0 | 1;
+  origin_stop_id: string;
+  origin_stop_code: string;
+  origin_stop_name: string;
+  origin_stop_name_he: string;
+  origin_stop_sequence: number;
+  origin_lat: number;
+  origin_lon: number;
+  xfer_alight_stop_id: string;
+  xfer_alight_stop_code: string;
+  xfer_alight_stop_name: string;
+  xfer_alight_stop_name_he: string;
+  xfer_alight_stop_sequence: number;
+  xfer_alight_lat: number;
+  xfer_alight_lon: number;
+  leg1_stops_between: number;
+  transfer_walk_meters_actual: number;
+  leg2_route_id: string;
+  leg2_route_short_name: string;
+  leg2_route_long_name: string;
+  leg2_direction_id: 0 | 1;
+  xfer_board_stop_id: string;
+  xfer_board_stop_code: string;
+  xfer_board_stop_name: string;
+  xfer_board_stop_name_he: string;
+  xfer_board_stop_sequence: number;
+  xfer_board_lat: number;
+  xfer_board_lon: number;
+  dest_stop_id: string;
+  dest_stop_code: string;
+  dest_stop_name: string;
+  dest_stop_name_he: string;
+  dest_stop_sequence: number;
+  dest_lat: number;
+  dest_lon: number;
+  leg2_stops_between: number;
+}
+
+export interface TransferConnectionInfo {
+  alight_stop: UserStopInfo;
+  board_stop: UserStopInfo;
+  walk_meters: number;
+  wait_minutes: number;
+  arrive_at_hub_time: string;
+  next_bus_board_time: string;
+  instruction_ru: string;
+  instruction_en: string;
+  instruction_he: string;
+}
+
+export interface TransferLegDetail {
+  route: RouteInfo;
+  board_stop: UserStopInfo;
+  alight_stop: UserStopInfo;
+  bus: NearestBusInfo;
+  stops_between: number;
+  ride_duration_min: number;
+  timeline_stops: StopTimelineItem[];
+}
+
 export interface RecommendedBusOption {
   rank: 1 | 2 | 3;
+  is_transfer?: boolean;
   route: RouteInfo;
   origin_stop: UserStopInfo;
   dest_stop: UserStopInfo;
@@ -139,7 +204,10 @@ export interface RecommendedBusOption {
   ride_duration_min: number;
   total_arrival_min: number;
   estimated_arrival_time: string;
+  leg1_alight_time?: string;
   timeline_stops: StopTimelineItem[];
+  transfer_info?: TransferConnectionInfo;
+  second_leg?: TransferLegDetail;
 }
 
 export interface LiveBusStatusResponse {

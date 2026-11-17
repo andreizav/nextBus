@@ -51,18 +51,21 @@ function findClosestStopSequence(
   return closestSeq;
 }
 
+const LINE_REF_BY_ROUTE: Record<string, [string, string]> = {
+  'stride-10049': ['19632', '19631'],
+  'route-49-haifa': ['19632', '19631'],
+  'stride-10024': ['3695', '3697'],
+  'stride-10011': ['3529', '3530'],
+  'stride-10123': ['4134', '4135'],
+  'stride-10037': ['3705', '3706'],
+  'stride-10028': ['3721', '3722'],
+  'stride-10017': ['3683', '3684']
+};
+
 function resolveStrideLineRef(routeId: string, directionId: 0 | 1): string {
-  if (routeId.includes('10049') || routeId === 'route-49-haifa') {
-    return directionId === 0 ? '19632' : '19631';
-  }
-  if (routeId.includes('10024')) {
-    return directionId === 0 ? '3695' : '3697';
-  }
-  if (routeId.includes('10011')) {
-    return directionId === 0 ? '3529' : '3530';
-  }
-  if (routeId.includes('10123')) {
-    return directionId === 0 ? '4134' : '4135';
+  const pair = LINE_REF_BY_ROUTE[routeId];
+  if (pair) {
+    return directionId === 0 ? pair[0] : pair[1];
   }
   return routeId.replace(/\D/g, '');
 }
