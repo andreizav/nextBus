@@ -67,10 +67,15 @@ class SupabaseService {
   private pgPool: pg.Pool | null = null;
   private initialized = false;
 
+  private cleanSupabaseUrl(raw?: string): string | undefined {
+    if (!raw) return undefined;
+    return raw.trim().replace(/\/rest\/v1\/?$/, '').replace(/\/$/, '');
+  }
+
   private ensureInit(): void {
     if (this.initialized) return;
     this.initialized = true;
-    const url = process.env.SUPABASE_URL;
+    const url = this.cleanSupabaseUrl(process.env.SUPABASE_URL);
     const key = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_KEY;
     if (url && key && url.startsWith('http')) {
       this.client = createClient(url, key);
@@ -79,6 +84,59 @@ class SupabaseService {
     if (dbUrl) {
       this.pgPool = new pg.Pool({ connectionString: dbUrl });
     }
+  }
+
+  async verifyConnection(): Promise<boolean> {
+    this.ensureInit();
+    const url = this.cleanSupabaseUrl(process.env.SUPABASE_URL);
+    const key = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_KEY;
+    let supabaseOk = false;
+
+    if (url && key && url.startsWith('http')) {
+      try {
+        const response = await fetch(`${url}/rest/v1/`, {
+          headers: {
+            apikey: key,
+            Authorization: `Bearer ${key}`
+          },
+          signal: AbortSignal.timeout(5000)
+        });
+
+        if (response.ok) {
+          supabaseOk = true;
+          const schemaCheck = this.client
+            ? await this.client.from('routes').select('route_id').limit(1)
+            : null;
+          if (schemaCheck?.error && schemaCheck.error.code === 'PGRST205') {
+            console.log(
+              `[Supabase] Connected and authenticated successfully to ${url} (schema not applied yet; apply database/supabase_full_setup.sql in Supabase SQL Editor)`
+            );
+          } else {
+            console.log(`[Supabase] Connected and authenticated successfully to ${url}`);
+          }
+        } else {
+          console.error(
+            `[Supabase] Authentication failed for ${url} (HTTP ${response.status})`
+          );
+        }
+      } catch (err) {
+        console.warn('[Supabase] Connectivity check failed:', (err as Error).message);
+      }
+    } else {
+      console.warn('[Supabase] SUPABASE_URL or SUPABASE_SERVICE_KEY not configured');
+    }
+
+    if (this.pgPool) {
+      try {
+        await this.pgPool.query('SELECT 1');
+        console.log('[PostgreSQL] Local PostGIS pool connected successfully');
+        return supabaseOk || true;
+      } catch (err) {
+        console.warn('[PostgreSQL] Local PostGIS pool check failed:', (err as Error).message);
+      }
+    }
+
+    return supabaseOk;
   }
 
   async findNearestStopForLine(
@@ -186,6 +244,29 @@ class SupabaseService {
 
   async getDirectionStopCoords(routeId: string, directionId: 0 | 1): Promise<RouteStopCoord[]> {
     this.ensureInit();
+
+    if (this.client) {
+      try {
+        const { data, error } = await this.client.rpc('get_direction_stop_coords', {
+          p_route_id: routeId,
+          p_direction_id: directionId
+        });
+        if (!error && Array.isArray(data) && data.length > 0) {
+          return data.map((r: Record<string, unknown>) => ({
+            stop_id: String(r.stop_id),
+            stop_code: String(r.stop_code),
+            stop_name: String(r.stop_name),
+            stop_name_he: String(r.stop_name_he ?? r.stop_name),
+            stop_sequence: Number(r.stop_sequence),
+            lat: Number(r.lat),
+            lon: Number(r.lon)
+          }));
+        }
+      } catch (err) {
+        console.warn('[Supabase] get_direction_stop_coords RPC fallback:', (err as Error).message);
+      }
+    }
+
     if (this.pgPool) {
       try {
         const res = await this.pgPool.query(

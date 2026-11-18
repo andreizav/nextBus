@@ -83,7 +83,8 @@ async function fetchStopsForRoute(routeId: number) {
 }
 
 async function seedGtfs(): Promise<void> {
-  const supabaseUrl = process.env.SUPABASE_URL;
+  const rawUrl = process.env.SUPABASE_URL;
+  const supabaseUrl = rawUrl ? rawUrl.trim().replace(/\/rest\/v1\/?$/, '').replace(/\/$/, '') : undefined;
   const supabaseKey = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_KEY;
 
   if (!supabaseUrl || !supabaseKey) {

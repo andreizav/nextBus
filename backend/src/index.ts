@@ -252,6 +252,10 @@ if (frontendDistDir) {
 
 const server = app.listen(port, () => {
   console.log(`[nextBus] Server listening on http://localhost:${port}`);
+  void Promise.all([
+    redisService.verifyConnection(),
+    supabaseService.verifyConnection()
+  ]);
   pollingWorker.start();
 });
 

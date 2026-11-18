@@ -150,6 +150,31 @@ class RedisService {
       .filter((item): item is ActiveRouteRef => item !== null);
   }
 
+  async verifyConnection(): Promise<boolean> {
+    if (await this.ensureConnected()) {
+      try {
+        const pong = await this.client!.ping();
+        let target = 'localhost';
+        try {
+          if (process.env.REDIS_URL) {
+            target = new URL(process.env.REDIS_URL).host;
+          }
+        } catch {
+          target = 'configured-redis';
+        }
+        console.log(`[Redis] Connected successfully to ${target} — PING -> ${pong}`);
+        return true;
+      } catch (err) {
+        console.warn('[Redis] Connection verification failed, using in-memory fallback:', (err as Error).message);
+        this.useMemoryFallback = true;
+        return false;
+      }
+    }
+
+    console.warn('[Redis] Unavailable or REDIS_URL not set — using in-memory cache fallback');
+    return false;
+  }
+
   async disconnect(): Promise<void> {
     if (this.client && this.client.status !== 'end') {
       await this.client.quit().catch(() => undefined);
