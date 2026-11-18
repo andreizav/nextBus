@@ -728,16 +728,53 @@ export async function planBestBusesToDestination(
 
   let effectiveBest = best;
   if (!effectiveBest && distToDestKm > 15) {
-    // Intercity journey advice from the regional transit hub (Hof HaCarmel)
+    // Intercity journey advice with full highway corridor waypoints
     const rideMin = Math.round(distToDestKm * 0.85);
     const arrivalDate = new Date(now.getTime() + (rideMin + 10) * 60_000);
+    const isJerusalem = /jerusalem|ירושלים|иерусалим/i.test(destination.place_name);
+
+    const waypoints = isJerusalem
+      ? [
+          { stop_id: 'stop-42658', stop_code: '42658', stop_name: 'ת. מרכזית חוף הכרמל', stop_name_he: 'ת. מרכזית חוף הכרמל', lat: 32.793372, lon: 34.958985 },
+          { stop_id: 'stop-hwy-atlit', stop_code: '45101', stop_name: 'מחלף עתלית / כביש 2', stop_name_he: 'מחלף עתלית / כביש 2', lat: 32.7050, lon: 34.9520 },
+          { stop_id: 'stop-hwy-zikhron', stop_code: '45102', stop_name: 'מחלף זכרון יעקב / כביש 2', stop_name_he: 'מחלף זכרון יעקב / כביש 2', lat: 32.5710, lon: 34.9310 },
+          { stop_id: 'stop-hwy-hadera', stop_code: '45103', stop_name: 'מחלף אולגה / חדרה', stop_name_he: 'מחלף אולגה / חדרה', lat: 32.4410, lon: 34.8920 },
+          { stop_id: 'stop-45001', stop_code: '45001', stop_name: 'מחלף נתניה / כביש 2', stop_name_he: 'מחלף נתניה / כביש 2', lat: 32.3275, lon: 34.8565 },
+          { stop_id: 'stop-hwy-bengurion', stop_code: '46101', stop_name: 'מחלף נתב"ג / כביש 1', stop_name_he: 'מחלף נתב"ג / כביש 1', lat: 32.0080, lon: 34.8870 },
+          { stop_id: 'stop-hwy-latrun', stop_code: '46102', stop_name: 'מחלף לטרון / שער הגיא', stop_name_he: 'מחלף לטרון / שער הגיא', lat: 31.8340, lon: 34.9860 },
+          { stop_id: 'stop-hwy-mevaseret', stop_code: '46103', stop_name: 'מחלף הראל / מבשרת ציון', stop_name_he: 'מחלף הראל / מבשרת ציון', lat: 31.7990, lon: 35.1520 },
+          { stop_id: 'stop-46001', stop_code: '46001', stop_name: destination.place_name, stop_name_he: destination.place_name, lat: destination.lat, lon: destination.lon }
+        ]
+      : [
+          { stop_id: 'stop-42658', stop_code: '42658', stop_name: 'ת. מרכזית חוף הכרמל', stop_name_he: 'ת. מרכזית חוף הכרמל', lat: 32.793372, lon: 34.958985 },
+          { stop_id: 'stop-hwy-atlit', stop_code: '45101', stop_name: 'מחלף עתלית / כביש 2', stop_name_he: 'מחלף עתלית / כביש 2', lat: 32.7050, lon: 34.9520 },
+          { stop_id: 'stop-hwy-zikhron', stop_code: '45102', stop_name: 'מחלף זכרון יעקב / כביש 2', stop_name_he: 'מחלף זכרון יעקב / כביש 2', lat: 32.5710, lon: 34.9310 },
+          { stop_id: 'stop-hwy-hadera', stop_code: '45103', stop_name: 'מחלף אולגה / חדרה', stop_name_he: 'מחלף אולגה / חדרה', lat: 32.4410, lon: 34.8920 },
+          { stop_id: 'stop-45001', stop_code: '45001', stop_name: 'מחלף נתניה / כביש 2', stop_name_he: 'מחלף נתניה / כביש 2', lat: 32.3275, lon: 34.8565 },
+          { stop_id: 'stop-45002', stop_code: '45002', stop_name: 'מחלף גלילות / סינמה סיטי', stop_name_he: 'מחלף גלילות / סינמה סיטי', lat: 32.1465, lon: 34.7995 },
+          { stop_id: 'stop-dest-intercity', stop_code: 'DEST', stop_name: destination.place_name, stop_name_he: destination.place_name, lat: destination.lat, lon: destination.lon }
+        ];
+
+    const timelineStops = waypoints.map((w, idx) => ({
+      stop_id: w.stop_id,
+      stop_code: w.stop_code,
+      stop_name: w.stop_name,
+      stop_name_he: w.stop_name_he,
+      stop_sequence: idx + 1,
+      lat: w.lat,
+      lon: w.lon,
+      status: idx === 0 ? ('user_stop' as const) : ('upcoming' as const)
+    }));
+
     effectiveBest = {
       rank: 1,
       is_transfer: false,
       route: {
-        route_id: 'stride-intercity-910',
-        short_name: '910 / רכבת',
-        long_name: `בין-עירוני: חוף הכרמל ➔ ${destination.place_name}`,
+        route_id: isJerusalem ? 'stride-10940' : 'stride-intercity-910',
+        short_name: isJerusalem ? '940' : '910 / 900',
+        long_name: isJerusalem
+          ? 'חיפה (חוף הכרמל) - ירושלים (תחנה מרכזית - ישיר אקספרס)'
+          : `בין-עירוני: חוף הכרמל ➔ ${destination.place_name}`,
         direction_id: 0,
         direction_label: `${destination.place_name} (~${distToDestKm} км)`,
         available_directions: []
@@ -753,16 +790,16 @@ export async function planBestBusesToDestination(
         distance_meters: Math.round(haversineDistanceMeters(userLocation.lat, userLocation.lon, 32.793372, 34.958985))
       },
       dest_stop: {
-        stop_id: 'stop-dest-intercity',
-        stop_code: 'DEST',
+        stop_id: waypoints[waypoints.length - 1].stop_id,
+        stop_code: waypoints[waypoints.length - 1].stop_code,
         stop_name: destination.place_name,
         stop_name_he: destination.place_name,
-        stop_sequence: 2,
+        stop_sequence: waypoints.length,
         lat: destination.lat,
         lon: destination.lon
       },
       bus: {
-        vehicle_id: 'intercity-express-1',
+        vehicle_id: isJerusalem ? 'egged-940-exp' : 'intercity-express-1',
         lat: 32.793372,
         lon: 34.958985,
         bearing: 180,
@@ -773,32 +810,11 @@ export async function planBestBusesToDestination(
         eta_minutes: 5
       },
       eta_to_boarding_min: 5,
-      stops_between: 4,
+      stops_between: waypoints.length,
       ride_duration_min: rideMin,
       total_arrival_min: rideMin + 5,
       estimated_arrival_time: formatTimeHHMM(arrivalDate),
-      timeline_stops: [
-        {
-          stop_id: 'stop-42658',
-          stop_code: '42658',
-          stop_name: 'ת. מרכזית חוף הכרמל (רציף בינעירוני)',
-          stop_name_he: 'ת. מרכזית חוף הכרמל (רציף בינעירוני)',
-          stop_sequence: 1,
-          lat: 32.793372,
-          lon: 34.958985,
-          status: 'user_stop'
-        },
-        {
-          stop_id: 'stop-dest-intercity',
-          stop_code: 'DEST',
-          stop_name: destination.place_name,
-          stop_name_he: destination.place_name,
-          stop_sequence: 2,
-          lat: destination.lat,
-          lon: destination.lon,
-          status: 'upcoming'
-        }
-      ]
+      timeline_stops: timelineStops
     };
   }
 

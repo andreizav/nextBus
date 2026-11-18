@@ -142,7 +142,7 @@ const EMPTY_INITIAL_STATE: LiveBusStatusResponse = {
         <span class="geo-coords">
           @if (userCoords(); as coords) {
             <span aria-hidden="true">🛰️</span>
-            {{ coords.lat.toFixed(5) }}, {{ coords.lon.toFixed(5) }}
+            <strong>{{ detectedCityName() }}</strong>: {{ coords.lat.toFixed(4) }}, {{ coords.lon.toFixed(4) }}
             @if (coords.accuracy) {
               (±{{ coords.accuracy }}m)
             }
@@ -151,7 +151,7 @@ const EMPTY_INITIAL_STATE: LiveBusStatusResponse = {
             {{ labels().defaultArea }}
           }
         </span>
-        @if (busState().user_stop.distance_meters !== undefined) {
+        @if (busState().user_stop.distance_meters !== undefined && hasActiveSearch()) {
           <span class="geo-dist">
             {{ labels().toStop }}: {{ busState().user_stop.distance_meters }} m
           </span>
@@ -622,37 +622,52 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
     }
   });
 
+  readonly detectedCityName = computed(() => {
+    const c = this.userCoords();
+    if (!c) return this.labels().defaultArea;
+    if (c.lat >= 32.74 && c.lat <= 32.785 && c.lon >= 34.95 && c.lon <= 34.995) {
+      return this.lang() === 'he' ? 'טירת כרמל' : this.lang() === 'en' ? 'Tirat Carmel' : 'Тират-Кармель';
+    }
+    if (c.lat >= 32.0 && c.lat <= 32.15 && c.lon >= 34.74 && c.lon <= 34.85) {
+      return this.lang() === 'he' ? 'תל אביב' : this.lang() === 'en' ? 'Tel Aviv' : 'Тель-Авив';
+    }
+    if (c.lat >= 31.74 && c.lat <= 31.85 && c.lon >= 35.15 && c.lon <= 35.25) {
+      return this.lang() === 'he' ? 'ירושלים' : this.lang() === 'en' ? 'Jerusalem' : 'Иерусалим';
+    }
+    return this.lang() === 'he' ? 'חיפה' : this.lang() === 'en' ? 'Haifa' : 'Хайфа';
+  });
+
   readonly quickChips = computed(() => {
     switch (this.lang()) {
       case 'he':
         return [
-          { icon: '🚌', label: 'קו 49 (חיפה)', query: '49' },
+          { icon: '🚌', label: 'קו 49 (טירת כרמל)', query: '49' },
+          { icon: '🚌', label: 'קו 940 (חיפה ➔ ירושלים)', query: 'ירושלים' },
           { icon: '🚌', label: 'קו 910 (חיפה ⇄ תל אביב)', query: '910' },
           { icon: '🚌', label: 'קו 24 (חורב)', query: '24' },
-          { icon: '🚌', label: 'קו 11 (טכניון)', query: '11' },
+          { icon: '📍', label: 'ירושלים (תחנה מרכזית)', query: 'ירושלים תחנה מרכזית' },
           { icon: '📍', label: 'תל אביב (עזריאלי)', query: 'תל אביב עזריאלי' },
-          { icon: '📍', label: 'מרכז חורב, חיפה', query: 'מרכז חורב חיפה' },
-          { icon: '📍', label: 'ירושלים (תחנה מרכזית)', query: 'ירושלים תחנה מרכזית' }
+          { icon: '📍', label: 'מרכז חורב, חיפה', query: 'מרכז חורב חיפה' }
         ];
       case 'en':
         return [
-          { icon: '🚌', label: 'Line 49 (Haifa)', query: '49' },
+          { icon: '🚌', label: 'Line 49 (Tirat Carmel)', query: '49' },
+          { icon: '🚌', label: 'Line 940 (Haifa ➔ Jerusalem)', query: 'Jerusalem' },
           { icon: '🚌', label: 'Line 910 (Haifa ⇄ Tel Aviv)', query: '910' },
           { icon: '🚌', label: 'Line 24 (Horev)', query: '24' },
-          { icon: '🚌', label: 'Line 11 (Technion)', query: '11' },
+          { icon: '📍', label: 'Jerusalem Central', query: 'Jerusalem Central' },
           { icon: '📍', label: 'Tel Aviv (Azrieli)', query: 'Tel Aviv Azrieli' },
-          { icon: '📍', label: 'Horev Center, Haifa', query: 'Horev Center Haifa' },
-          { icon: '📍', label: 'Jerusalem Central', query: 'Jerusalem Central' }
+          { icon: '📍', label: 'Horev Center, Haifa', query: 'Horev Center Haifa' }
         ];
       default:
         return [
-          { icon: '🚌', label: 'Автобус 49 (Хайфа)', query: '49' },
+          { icon: '🚌', label: 'Автобус 49 (Тират-Кармель)', query: '49' },
+          { icon: '🚌', label: 'Маршрут 940 (в Иерусалим)', query: 'Иерусалим' },
           { icon: '🚌', label: 'Маршрут 910 (Хайфа ⇄ Тель-Авив)', query: '910' },
           { icon: '🚌', label: 'Автобус 24 (Хорев)', query: '24' },
-          { icon: '🚌', label: 'Автобус 11 (Технион)', query: '11' },
+          { icon: '📍', label: 'Иерусалим (Тахана Мерказит)', query: 'Иерусалим' },
           { icon: '📍', label: 'Тель-Авив (Азриэли)', query: 'Тель-Авив Азриэли' },
-          { icon: '📍', label: 'Центр Хорев, Хайфа', query: 'Центр Хорев Хайфа' },
-          { icon: '📍', label: 'Иерусалим (Тахана Мерказит)', query: 'Иерусалим' }
+          { icon: '📍', label: 'Центр Хорев, Хайфа', query: 'Центр Хорев Хайфа' }
         ];
     }
   });
@@ -799,7 +814,11 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
         });
         this.geoStatus.set('granted');
         if (this.hasActiveSearch()) {
-          void this.fetchLatestStatus();
+          if (this.activeSearchLabel()) {
+            void this.onSearchDestination(this.activeSearchLabel());
+          } else {
+            void this.fetchLatestStatus();
+          }
         }
       },
       () => {
@@ -838,7 +857,29 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
     this.activeSearchLabel.set(cleaned);
 
     try {
-      const coords = this.userCoords() ?? DEFAULT_COORDS;
+      let coords = this.userCoords();
+      if (!coords && typeof navigator !== 'undefined' && 'geolocation' in navigator) {
+        coords = await new Promise<{ lat: number; lon: number; accuracy?: number } | null>(
+          (resolve) => {
+            navigator.geolocation.getCurrentPosition(
+              (pos) => {
+                const c = {
+                  lat: pos.coords.latitude,
+                  lon: pos.coords.longitude,
+                  accuracy: Math.round(pos.coords.accuracy)
+                };
+                this.userCoords.set(c);
+                this.geoStatus.set('granted');
+                resolve(c);
+              },
+              () => resolve(null),
+              { enableHighAccuracy: true, timeout: 2000 }
+            );
+          }
+        );
+      }
+
+      const finalCoords = coords ?? this.userCoords() ?? DEFAULT_COORDS;
       const lineMatch = cleaned.match(
         /^(?:קו|линия|номер|маршрут|автобус|line|bus|#|№)?\s*(\d{1,4}[a-zа-я]?)$/i
       );
@@ -848,8 +889,8 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
         const includeNearby = this.viewMode() === 'interactive';
         const url = `/api/live-status?line_number=${encodeURIComponent(
           line
-        )}&lat=${encodeURIComponent(coords.lat)}&lon=${encodeURIComponent(
-          coords.lon
+        )}&lat=${encodeURIComponent(finalCoords.lat)}&lon=${encodeURIComponent(
+          finalCoords.lon
         )}&include_nearby_places=${includeNearby}&entry_context=${encodeURIComponent(
           this.entryContext()
         )}`;
@@ -866,7 +907,7 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             query: cleaned,
-            user_location: { lat: coords.lat, lon: coords.lon }
+            user_location: { lat: finalCoords.lat, lon: finalCoords.lon }
           })
         });
         if (response.ok) {
