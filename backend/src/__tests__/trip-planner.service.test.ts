@@ -159,6 +159,13 @@ describe('Trip Planner A -> B matching and Top-3 ranking', () => {
       expect(metrics.total_arrival_min).toBe(11);
       expect(metrics.estimated_arrival_time).toBe('19:11');
     });
+
+    it('computes realistic highway travel time for intercity trips > 15 km', () => {
+      // 85 km from Haifa to Tel Aviv
+      const metrics = calculateTripMetrics(5, 5, new Date('2026-11-17T17:00:00.000Z'), 85000);
+      expect(metrics.ride_duration_min).toBeGreaterThanOrEqual(60);
+      expect(metrics.total_arrival_min).toBe(metrics.ride_duration_min + 5);
+    });
   });
 
   describe('rankTopBusOptions', () => {

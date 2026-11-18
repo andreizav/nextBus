@@ -80,13 +80,18 @@ export function filterApproachingVehicles(
 export function calculateTripMetrics(
   etaToBoardingMin: number,
   stopsBetween: number,
-  now: Date = new Date()
+  now: Date = new Date(),
+  distanceMeters = 0
 ): {
   ride_duration_min: number;
   total_arrival_min: number;
   estimated_arrival_time: string;
 } {
-  const ride_duration_min = Math.max(1, Math.round(Math.max(1, stopsBetween) * MINUTES_PER_STOP_AVG));
+  let ride_duration_min = Math.max(1, Math.round(Math.max(1, stopsBetween) * MINUTES_PER_STOP_AVG));
+  const distKm = distanceMeters / 1000;
+  if (distKm > 15) {
+    ride_duration_min = Math.max(ride_duration_min, Math.round(distKm * 0.85));
+  }
   const total_arrival_min = Math.max(ride_duration_min, etaToBoardingMin + ride_duration_min);
   const arrivalDate = new Date(now.getTime() + total_arrival_min * 60_000);
 
@@ -108,6 +113,8 @@ export function calculateTransferTripMetrics(params: {
   leg2BusEtaMin: number;
   leg2Stops: number;
   now?: Date;
+  leg1DistanceMeters?: number;
+  leg2DistanceMeters?: number;
 }): {
   leg1_ride_min: number;
   walk_min: number;
@@ -121,7 +128,11 @@ export function calculateTransferTripMetrics(params: {
   estimated_arrival_time: string;
 } {
   const now = params.now ?? new Date();
-  const leg1_ride_min = Math.max(1, Math.round(Math.max(1, params.leg1Stops) * MINUTES_PER_STOP_AVG));
+  const leg1DistKm = (params.leg1DistanceMeters ?? 0) / 1000;
+  let leg1_ride_min = Math.max(1, Math.round(Math.max(1, params.leg1Stops) * MINUTES_PER_STOP_AVG));
+  if (leg1DistKm > 15) {
+    leg1_ride_min = Math.max(leg1_ride_min, Math.round(leg1DistKm * 0.85));
+  }
   const walk_min = Math.ceil(Math.max(0, params.transferWalkMeters) / 80);
   const arrive_at_hub_min = params.etaToBoardingMin + leg1_ride_min;
 
@@ -134,7 +145,11 @@ export function calculateTransferTripMetrics(params: {
   );
 
   const next_bus_board_min = arrive_at_hub_min + wait_minutes;
-  const leg2_ride_min = Math.max(1, Math.round(Math.max(1, params.leg2Stops) * MINUTES_PER_STOP_AVG));
+  const leg2DistKm = (params.leg2DistanceMeters ?? 0) / 1000;
+  let leg2_ride_min = Math.max(1, Math.round(Math.max(1, params.leg2Stops) * MINUTES_PER_STOP_AVG));
+  if (leg2DistKm > 15) {
+    leg2_ride_min = Math.max(leg2_ride_min, Math.round(leg2DistKm * 0.85));
+  }
   const total_arrival_min = next_bus_board_min + leg2_ride_min;
 
   return {
@@ -471,7 +486,8 @@ export async function planBestBusesToDestination(
       match.direction_id
     );
 
-    const metrics = calculateTripMetrics(etaMinutes, match.stops_between, now);
+    const distM = haversineDistanceMeters(match.origin_lat, match.origin_lon, match.dest_lat, match.dest_lon);
+    const metrics = calculateTripMetrics(etaMinutes, match.stops_between, now, distM);
     const timelineStops = await buildLegTimelineSlice(
       match.route_id,
       match.direction_id,
@@ -560,13 +576,18 @@ export async function planBestBusesToDestination(
       match.leg2_direction_id
     );
 
+    const leg1DistM = haversineDistanceMeters(match.origin_lat, match.origin_lon, match.xfer_alight_lat, match.xfer_alight_lon);
+    const leg2DistM = haversineDistanceMeters(match.xfer_board_lat, match.xfer_board_lon, match.dest_lat, match.dest_lon);
+
     const metrics = calculateTransferTripMetrics({
       etaToBoardingMin: leg1Bus.etaMinutes,
       leg1Stops: match.leg1_stops_between,
       transferWalkMeters: match.transfer_walk_meters_actual,
       leg2BusEtaMin: leg2Bus.etaMinutes,
       leg2Stops: match.leg2_stops_between,
-      now
+      now,
+      leg1DistanceMeters: leg1DistM,
+      leg2DistanceMeters: leg2DistM
     });
 
     const [leg1Timeline, leg2Timeline] = await Promise.all([
@@ -700,9 +721,109 @@ export async function planBestBusesToDestination(
   }
 
   const best = selectBestSingleOption(directCandidates, transferCandidates);
-  const recommendedOptions = best ? [best] : [];
-  const primary = best;
-  const nearbyOffers = await fetchRealNearbyCafes(userLocation.lat, userLocation.lon);
+
+  const distToDestKm = Math.round(
+    haversineDistanceMeters(userLocation.lat, userLocation.lon, destination.lat, destination.lon) / 1000
+  );
+
+  let effectiveBest = best;
+  if (!effectiveBest && distToDestKm > 15) {
+    // Intercity journey advice from the regional transit hub (Hof HaCarmel)
+    const rideMin = Math.round(distToDestKm * 0.85);
+    const arrivalDate = new Date(now.getTime() + (rideMin + 10) * 60_000);
+    effectiveBest = {
+      rank: 1,
+      is_transfer: false,
+      route: {
+        route_id: 'stride-intercity-910',
+        short_name: '910 / רכבת',
+        long_name: `בין-עירוני: חוף הכרמל ➔ ${destination.place_name}`,
+        direction_id: 0,
+        direction_label: `${destination.place_name} (~${distToDestKm} км)`,
+        available_directions: []
+      },
+      origin_stop: {
+        stop_id: 'stop-42658',
+        stop_code: '42658',
+        stop_name: 'ת. מרכזית חוף הכרמל/רציפים בינעירוני (חיפה)',
+        stop_name_he: 'ת. מרכזית חוף הכרמל/רציפים בינעירוני (חיפה)',
+        stop_sequence: 1,
+        lat: 32.793372,
+        lon: 34.958985,
+        distance_meters: Math.round(haversineDistanceMeters(userLocation.lat, userLocation.lon, 32.793372, 34.958985))
+      },
+      dest_stop: {
+        stop_id: 'stop-dest-intercity',
+        stop_code: 'DEST',
+        stop_name: destination.place_name,
+        stop_name_he: destination.place_name,
+        stop_sequence: 2,
+        lat: destination.lat,
+        lon: destination.lon
+      },
+      bus: {
+        vehicle_id: 'intercity-express-1',
+        lat: 32.793372,
+        lon: 34.958985,
+        bearing: 180,
+        recorded_at_time: now.toISOString(),
+        current_stop_sequence: 1,
+        speed_kmh: 75,
+        stops_away: 1,
+        eta_minutes: 5
+      },
+      eta_to_boarding_min: 5,
+      stops_between: 4,
+      ride_duration_min: rideMin,
+      total_arrival_min: rideMin + 5,
+      estimated_arrival_time: formatTimeHHMM(arrivalDate),
+      timeline_stops: [
+        {
+          stop_id: 'stop-42658',
+          stop_code: '42658',
+          stop_name: 'ת. מרכזית חוף הכרמל (רציף בינעירוני)',
+          stop_name_he: 'ת. מרכזית חוף הכרמל (רציף בינעירוני)',
+          stop_sequence: 1,
+          lat: 32.793372,
+          lon: 34.958985,
+          status: 'user_stop'
+        },
+        {
+          stop_id: 'stop-dest-intercity',
+          stop_code: 'DEST',
+          stop_name: destination.place_name,
+          stop_name_he: destination.place_name,
+          stop_sequence: 2,
+          lat: destination.lat,
+          lon: destination.lon,
+          status: 'upcoming'
+        }
+      ]
+    };
+  }
+
+  const recommendedOptions = effectiveBest ? [effectiveBest] : [];
+  const primary = effectiveBest;
+
+  // Only fetch nearby cafes if there is a long wait (> 10 minutes) at a waiting or transfer point!
+  let nearbyOffers: Awaited<ReturnType<typeof fetchRealNearbyCafes>> = [];
+  if (primary) {
+    if (primary.is_transfer && primary.transfer_info) {
+      if (primary.transfer_info.wait_minutes > 10) {
+        // Long wait at transfer hub: show cafes around the transfer point
+        nearbyOffers = await fetchRealNearbyCafes(
+          primary.transfer_info.alight_stop.lat,
+          primary.transfer_info.alight_stop.lon
+        );
+      }
+    } else if (primary.eta_to_boarding_min > 10) {
+      // Long wait before first bus: show cafes around the origin boarding stop
+      nearbyOffers = await fetchRealNearbyCafes(
+        primary.origin_stop.lat,
+        primary.origin_stop.lon
+      );
+    }
+  }
 
   const focusPoints: Array<{ lat: number; lon: number }> = [
     userLocation,
@@ -740,19 +861,19 @@ export async function planBestBusesToDestination(
     destination,
     recommended_options: recommendedOptions,
     route: primary?.route ?? {
-      route_id: 'stride-10024',
-      short_name: '24',
-      long_name: 'Haifa Direct',
+      route_id: 'stride-intercity-default',
+      short_name: distToDestKm > 15 ? 'רכבת / 910' : 'תחבורה עירונית',
+      long_name: destination.place_name,
       direction_id: 0,
       direction_label: `${destination.place_name}`,
       available_directions: []
     },
     user_stop: primary?.origin_stop ?? {
-      stop_id: 'stop-42362',
-      stop_code: '42362',
-      stop_name: "מת''מ/ההגנה (חיפה)",
-      stop_name_he: "מת''מ/ההגנה (חיפה)",
-      stop_sequence: 3,
+      stop_id: 'stop-42658',
+      stop_code: '42658',
+      stop_name: 'ת. מרכזית חוף הכרמל (חיפה)',
+      stop_name_he: 'ת. מרכזית חוף הכרמל (חיפה)',
+      stop_sequence: 1,
       lat: userLocation.lat,
       lon: userLocation.lon
     },

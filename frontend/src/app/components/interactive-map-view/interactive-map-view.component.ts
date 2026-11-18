@@ -316,16 +316,27 @@ import type {
             }
           </div>
         </div>
+      } @else if (state().destination; as dest) {
+        <div class="intercity-notice-section" role="region" aria-label="Intercity transit note">
+          <div class="top3-header">
+            <h3 class="offers-title">
+              <span aria-hidden="true">🚆</span>
+              {{ labels().intercityTitle }}
+            </h3>
+            <span class="dest-addr">{{ dest.formatted_address }}</span>
+          </div>
+          <div class="single-best-card">
+            <p class="intercity-advice-text">{{ labels().intercityAdvice }}</p>
+          </div>
+        </div>
       }
 
-      <div class="offers-section">
-        <h3 class="offers-title">
-          <span aria-hidden="true">☕</span>
-          {{ labels().offersTitle }} ({{ state().nearby_offers.length }})
-        </h3>
-        @if (state().nearby_offers.length === 0) {
-          <p class="offers-empty">{{ labels().noOffers }}</p>
-        } @else {
+      @if (state().nearby_offers.length > 0) {
+        <div class="offers-section">
+          <h3 class="offers-title">
+            <span aria-hidden="true">☕</span>
+            {{ labels().offersTitle }} ({{ state().nearby_offers.length }})
+          </h3>
           <div class="offers-grid">
             @for (offer of state().nearby_offers; track offer.id) {
               <article class="offer-card nb-offer-card">
@@ -351,8 +362,8 @@ import type {
               </article>
             }
           </div>
-        }
-      </div>
+        </div>
+      }
     </section>
   `,
   styles: [
@@ -673,6 +684,18 @@ import type {
         font-weight: 700;
       }
 
+      .intercity-notice-section {
+        display: grid;
+        gap: 0.65rem;
+      }
+
+      .intercity-advice-text {
+        font-size: 0.88rem;
+        line-height: 1.5;
+        color: #fde68a;
+        margin: 0;
+      }
+
       .selected-timeline-box {
         background: #0e182b;
         border: 1px solid #24344f;
@@ -927,7 +950,9 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
           offersTitle: 'בתי קפה אמיתיים בסביבה',
           noOffers: 'לא נמצאו בתי קפה בקרבת מקום.',
           min: 'דק׳',
-          openMaps: 'פתח במפות'
+          openMaps: 'פתח במפות',
+          intercityTitle: 'נסיעה בין-עירונית / אזור מרוחק',
+          intercityAdvice: 'היעד המבוקש נמצא מחוץ לאזור התחבורה העירונית המקומית. מומלץ לנסוע לקו אקספרס 910/900 או לרכבת ישראל מתחנת מרכזית חוף הכרמל (מת״מ).'
         };
       case 'en':
         return {
@@ -956,7 +981,9 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
           offersTitle: 'Real Cafes Nearby (OpenStreetMap)',
           noOffers: 'No nearby cafes found.',
           min: 'min',
-          openMaps: 'Open in Maps'
+          openMaps: 'Open in Maps',
+          intercityTitle: 'Intercity Trip / Destination Outside Area',
+          intercityAdvice: 'Destination is outside the local city transit network. We recommend taking Express Line 910/900 or Israel Railways from Hof HaCarmel Central Station.'
         };
       default:
         return {
@@ -985,7 +1012,9 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
           offersTitle: 'Настоящие кафе рядом (OpenStreetMap)',
           noOffers: 'Кафе поблизости не найдены.',
           min: 'мин',
-          openMaps: 'Открыть на карте'
+          openMaps: 'Открыть на карте',
+          intercityTitle: 'Междугородний маршрут / Другой регион',
+          intercityAdvice: 'Пункт назначения находится за пределами местной городской сети. Рекомендуем сесть на междугородний экспресс №910/900 или поезд со станции Хоф ха-Кармель (МАТАМ).'
         };
     }
   });

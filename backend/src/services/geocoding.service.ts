@@ -30,9 +30,11 @@ interface NominatimItem {
   lon: string;
   display_name: string;
   name?: string;
+  type?: string;
+  addresstype?: string;
 }
 
-interface HaifaLandmark {
+interface IsraelLandmark {
   patterns: RegExp[];
   lat: number;
   lon: number;
@@ -40,7 +42,77 @@ interface HaifaLandmark {
   formatted_address: string;
 }
 
-const HAIFA_GAZETTEER: HaifaLandmark[] = [
+const ISRAEL_GAZETTEER: IsraelLandmark[] = [
+  // --- Tel Aviv & Gush Dan Corridor ---
+  {
+    patterns: [/азриэли|azrieli|עזריאלי|шарона|sarona|שרונה/i],
+    lat: 32.0747,
+    lon: 34.7920,
+    place_name: 'Тель-Авив — Центр Азриэли (עזריאלי, תל אביב)',
+    formatted_address: 'Derech Menachem Begin 132, Tel Aviv-Yafo, Israel'
+  },
+  {
+    patterns: [/савидор|savidor|סבידור|арлозоров|arlozorov|ארלוזורוב|ракевет\s*мерказ/i],
+    lat: 32.0837,
+    lon: 34.7978,
+    place_name: 'Тель-Авив — Ракевет Мерказ Савидор (רכבת מרכז סבידור)',
+    formatted_address: 'Al Parashat Drakhim 1, Tel Aviv-Yafo, Israel'
+  },
+  {
+    patterns: [/дизенгоф|dizengof|dizengoff|דיזנגוף/i],
+    lat: 32.0754,
+    lon: 34.7749,
+    place_name: 'Тель-Авив — Дизенгоф Центר (דיזנגוף סנטר)',
+    formatted_address: 'Dizengoff St 50, Tel Aviv-Yafo, Israel'
+  },
+  {
+    patterns: [/центральн\w*\s*автостанц\w*\s*тель|тах?ана\s*мерказит\s*תל|תחנה\s*מרכזית\s*תל\s*אביב|хагана|ההגנה/i],
+    lat: 32.0558,
+    lon: 34.7788,
+    place_name: 'Тель-Авив — Центральная автостанция (ת. מרכזית תל אביב)',
+    formatted_address: 'Levinsky St 108, Tel Aviv-Yafo, Israel'
+  },
+  {
+    patterns: [/тель[- ]?авив|tel[- ]?aviv|תל[- ]?אביב|\btlv\b/i],
+    lat: 32.0747,
+    lon: 34.7920,
+    place_name: 'Тель-Авив (תל אביב-יפו)',
+    formatted_address: 'Tel Aviv-Yafo, Israel'
+  },
+
+  // --- Jerusalem Corridor ---
+  {
+    patterns: [/иерусалим|jerusalem|ירושלים|נבון|стена\s*плача|כותל/i],
+    lat: 31.7890,
+    lon: 35.2030,
+    place_name: 'Иерусалим — Центральный вокзал (ירושלים מרכז)',
+    formatted_address: 'Jaffa St 208, Jerusalem, Israel'
+  },
+
+  // --- Coastal & Central Hubs ---
+  {
+    patterns: [/нетания|netanya|נתניה/i],
+    lat: 32.3275,
+    lon: 34.8565,
+    place_name: 'Нетания (נתניה)',
+    formatted_address: 'Herzl St, Netanya, Israel'
+  },
+  {
+    patterns: [/герцлия|herzliya|הרצליה/i],
+    lat: 32.1633,
+    lon: 34.8215,
+    place_name: 'Герцлия (הרצליה)',
+    formatted_address: 'Ben Gurion St, Herzliya, Israel'
+  },
+  {
+    patterns: [/бен[- ]?гурион|ben[- ]?gurion|נתב"?ג|аэропорт\s*израиль/i],
+    lat: 32.0005,
+    lon: 34.8705,
+    place_name: 'Аэропорт Бен-Гурион (נמל התעופה בן גוריון)',
+    formatted_address: 'Terminal 3, Ben Gurion Airport, Israel'
+  },
+
+  // --- Haifa & Tirat Carmel Landmarks ---
   {
     patterns: [/университет|university|אוניברסיט/i],
     lat: 32.7620,
@@ -84,7 +156,7 @@ const HAIFA_GAZETTEER: HaifaLandmark[] = [
     formatted_address: 'Derech Simcha Golan 54, Haifa, Israel'
   },
   {
-    patterns: [/хоф\s*(ха)?кармель|hof\s*ha?carmel|חוף\s*הכרמל|מרכזית/i],
+    patterns: [/хоф\s*(ха)?кармель|hof\s*ha?carmel|חוף\s*הכרמל/i],
     lat: 32.7934,
     lon: 34.9592,
     place_name: 'Хоф ха-Кармель (ת. מרכזית חוף הכרמל)',
@@ -194,30 +266,33 @@ async function queryNominatim(
   query: string,
   userLocation: { lat: number; lon: number }
 ): Promise<GeocodedDestination | null> {
-  const minLon = (userLocation.lon - 0.25).toFixed(4);
-  const maxLon = (userLocation.lon + 0.25).toFixed(4);
-  const minLat = (userLocation.lat - 0.2).toFixed(4);
-  const maxLat = (userLocation.lat + 0.2).toFixed(4);
-
+  // 1. Search nationwide across Israel
   const url =
-    `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=il` +
-    `&viewbox=${minLon},${maxLat},${maxLon},${minLat}&q=${encodeURIComponent(query)}`;
+    `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&countrycodes=il` +
+    `&q=${encodeURIComponent(query)}`;
 
   const items = await fetchJsonWithTimeout<NominatimItem[]>(url, {
     'User-Agent': 'nextBus-Transit-App/1.0'
   });
-  const first = items?.[0];
-  if (!first) return null;
+  if (!items || items.length === 0) return null;
 
-  const lat = Number(first.lat);
-  const lon = Number(first.lon);
+  // Prioritize city / administrative / mall / station / amenity over obscure residential roads
+  const preferred =
+    items.find((item) =>
+      ['city', 'town', 'suburb', 'administrative', 'mall', 'station', 'bus_station', 'amenity'].includes(
+        item.addresstype || item.type || ''
+      )
+    ) ?? items[0];
+
+  const lat = Number(preferred.lat);
+  const lon = Number(preferred.lon);
   if (Number.isNaN(lat) || Number.isNaN(lon)) return null;
 
   return {
     lat,
     lon,
-    place_name: first.name || query,
-    formatted_address: first.display_name || query,
+    place_name: preferred.name || query,
+    formatted_address: preferred.display_name || query,
     source: 'osm_nominatim'
   };
 }
@@ -225,7 +300,7 @@ async function queryNominatim(
 /**
  * Resolves free-form destination text (Russian / Hebrew / English) into coordinates
  * via Google Places / Geocoding API (when GOOGLE_MAPS_API_KEY is configured),
- * falling back to Haifa gazetteer / OpenStreetMap Nominatim, with 24h Redis caching.
+ * falling back to Israel-wide gazetteer / OpenStreetMap Nominatim, with 24h Redis caching.
  */
 export async function resolveDestinationText(
   query: string,
@@ -252,7 +327,7 @@ export async function resolveDestinationText(
   }
 
   if (!resolved) {
-    const landmark = HAIFA_GAZETTEER.find((item) =>
+    const landmark = ISRAEL_GAZETTEER.find((item) =>
       item.patterns.some((pattern) => pattern.test(trimmed))
     );
     if (landmark) {
@@ -271,12 +346,11 @@ export async function resolveDestinationText(
   }
 
   if (!resolved) {
-    // Default safe Haifa Horev fallback if offline/unresolved so UX never breaks on unknown text
     resolved = {
-      lat: 32.7832,
-      lon: 34.9859,
+      lat: userLocation.lat,
+      lon: userLocation.lon,
       place_name: trimmed,
-      formatted_address: `${trimmed}, Haifa, Israel`,
+      formatted_address: `${trimmed}, Israel`,
       source: 'gazetteer'
     };
   }

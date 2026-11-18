@@ -377,7 +377,7 @@ class SupabaseService {
   ): Promise<DirectRouteMatch[]> {
     this.ensureInit();
 
-    const radiiToTry = [radiusMeters, Math.max(1500, radiusMeters * 2)];
+    const radiiToTry = [radiusMeters, Math.max(1500, radiusMeters * 2), 3000];
     let dbSucceeded = false;
 
     for (const radius of radiiToTry) {

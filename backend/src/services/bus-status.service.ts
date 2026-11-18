@@ -148,9 +148,13 @@ export async function getLiveBusStatus(
     nearestBus?.current_stop_sequence ?? 1
   );
 
+  // Only show cafes if user has to wait > 10 minutes for the bus!
+  const hasLongWait =
+    nearestBus?.eta_minutes !== undefined && nearestBus.eta_minutes > 10;
+
   const nearbyOffers =
-    renderMode === 'interactive'
-      ? await fetchRealNearbyCafes(params.userLat, params.userLon)
+    (params.includeNearbyPlaces || renderMode === 'interactive') && hasLongWait
+      ? await fetchRealNearbyCafes(nearestStop.stop_lat, nearestStop.stop_lon)
       : [];
 
   // Focus bbox on the approaching bus, user stop, user GPS, and timeline stops between them
