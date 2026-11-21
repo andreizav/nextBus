@@ -20,23 +20,72 @@ export interface DestinationClassification {
 const KNOWN_CITIES: Array<{ canonical: string; regex: RegExp; cityTokenRegex: RegExp }> = [
   { canonical: 'חיפה', regex: /^(?:חיפה|хайф[аеуы]|haifa)$/i, cityTokenRegex: /(?:חיפה|хайф[аеуы]|haifa)/i },
   { canonical: 'טירת כרמל', regex: /^(?:טירת\s*כרמל|тират[- ]?кармел[ьяе]?|tirat\s*carmel)$/i, cityTokenRegex: /(?:טירת\s*כרמל|тират[- ]?кармел[ьяе]?|tirat\s*carmel)/i },
-  { canonical: 'תל אביב', regex: /^(?:תל[- ]?אביב(?:\s*יפו)?|тель[- ]?авив[аеу]?|tel[- ]?aviv(?:-yafo)?|tlv)$/i, cityTokenRegex: /(?:תל[- ]?אביב|тель[- ]?авив[аеу]?|tel[- ]?aviv|\btlv\b)/i },
+  { canonical: 'נשר', regex: /^(?:נשר|нешер[аеу]?|nesher)$/i, cityTokenRegex: /(?:נשר|нешер[аеу]?|nesher)/i },
+  { canonical: 'קרית אתא', regex: /^(?:קרי?ית\s*אתא|кирьят[- ]?ат[аеу]|kiryat\s*ata)$/i, cityTokenRegex: /(?:קרי?ית\s*אתא|кирьят[- ]?ат[аеу]|kiryat\s*ata)/i },
+  { canonical: 'קרית ביאליק', regex: /^(?:קרי?ית\s*ביאליק|кирьят[- ]?бьялик[аеу]?|kiryat\s*bialik)$/i, cityTokenRegex: /(?:קרי?ית\s*ביאליק|кирьят[- ]?бьялик[аеу]?|kiryat\s*bialik)/i },
+  { canonical: 'קרית מוצקין', regex: /^(?:קרי?ית\s*מוצקין|кирьят[- ]?моцкин[аеу]?|kiryat\s*motzkin)$/i, cityTokenRegex: /(?:קרי?ית\s*מוצקין|кирьят[- ]?моцкин[аеу]?|kiryat\s*motzkin)/i },
+  { canonical: 'קרית ים', regex: /^(?:קרי?ית\s*ים|кирьят[- ]?ям[аеу]?|kiryat\s*yam)$/i, cityTokenRegex: /(?:קרי?ית\s*ים|кирьят[- ]?ям[аеу]?|kiryat\s*yam)/i },
+  { canonical: 'תל אביב', regex: /^(?:תל[- ]?אביב(?:[-\s]*יפו)?|тель[- ]?авив[аеу]?|tel[- ]?aviv(?:-yafo)?|tlv)$/i, cityTokenRegex: /(?:תל[- ]?אביב|тель[- ]?авив[аеу]?|tel[- ]?aviv|\btlv\b)/i },
   { canonical: 'ירושלים', regex: /^(?:ירושלים|иерусалим[аеу]?|jerusalem)$/i, cityTokenRegex: /(?:ירושלים|иерусалим[аеу]?|jerusalem)/i },
-  { canonical: 'אשדוד', regex: /^(?:אשדוד|ашдод[аеу]?|ashdod)$/i, cityTokenRegex: /(?:אשדוד|ашдод[аеу]?|ashdod)/i },
-  { canonical: 'קריית גת', regex: /^(?:קרי?ית\s*גת|кирьят[- ]?гат[аеу]?|kiryat\s*gat)$/i, cityTokenRegex: /(?:קרי?ית\s*גת|кирьят[- ]?гат[аеу]?|kiryat\s*gat)/i },
-  { canonical: 'נתניה', regex: /^(?:נתניה|нетани[яию]|netanya)$/i, cityTokenRegex: /(?:נתניה|нетани[яию]|netanya)/i },
-  { canonical: 'באר שבע', regex: /^(?:באר\s*שבע|беэр[- ]?шев[аеу]|beer\s*sheva)$/i, cityTokenRegex: /(?:באר\s*שבע|беэр[- ]?шев[аеу]|beer\s*sheva)/i },
-  { canonical: 'אשקלון', regex: /^(?:אשקלון|ашкелон[аеу]?|ashkelon)$/i, cityTokenRegex: /(?:אשקלון|ашкелон[аеу]?|ashkelon)/i },
-  { canonical: 'חדרה', regex: /^(?:חדרה|хадер[аеу]|hadera)$/i, cityTokenRegex: /(?:חדרה|хадер[аеу]|hadera)/i },
-  { canonical: 'עכו', regex: /^(?:עכו|акко|acre|akko)$/i, cityTokenRegex: /(?:עכו|\bакко\b|\bacre\b|\bakko\b)/i },
-  { canonical: 'נהריה', regex: /^(?:נהריה|нагари[яию]|nahariya)$/i, cityTokenRegex: /(?:נהריה|нагари[яию]|nahariya)/i },
   { canonical: 'ראשון לציון', regex: /^(?:ראשון\s*לציון|ришон[- ]?ле[- ]?цион[аеу]?|rishon\s*lezion)$/i, cityTokenRegex: /(?:ראשון\s*לציון|ришон[- ]?ле[- ]?цион[аеу]?|rishon\s*lezion)/i },
   { canonical: 'רחובות', regex: /^(?:רחובות|реховот[аеу]?|rehovot)$/i, cityTokenRegex: /(?:רחובות|реховот[аеу]?|rehovot)/i },
   { canonical: 'פתח תקווה', regex: /^(?:פתח\s*תקווה|петах[- ]?тикв[аеу]|petah\s*tikva)$/i, cityTokenRegex: /(?:פתח\s*תקווה|петах[- ]?тикв[аеу]|petah\s*tikva)/i },
+  { canonical: 'חולון', regex: /^(?:חולון|холон[аеу]?|holon)$/i, cityTokenRegex: /(?:חולון|холон[аеу]?|holon)/i },
+  { canonical: 'בת ים', regex: /^(?:בת[-\s]*ים|бат[- ]?ям[аеу]?|bat[- ]?yam)$/i, cityTokenRegex: /(?:בת[-\s]*ים|бат[- ]?ям[аеу]?|bat[- ]?yam)/i },
+  { canonical: 'רמת גן', regex: /^(?:רמת[-\s]*גן|рамат[- ]?ган[аеу]?|ramat[- ]?gan)$/i, cityTokenRegex: /(?:רמת[-\s]*גן|рамат[- ]?ган[аеу]?|ramat[- ]?gan)/i },
+  { canonical: 'בני ברק', regex: /^(?:בני[-\s]*ברק|бней[- ]?брак[аеу]?|bnei[- ]?brak)$/i, cityTokenRegex: /(?:בני[-\s]*ברק|бней[- ]?брак[аеу]?|bnei[- ]?brak)/i },
+  { canonical: 'גבעתיים', regex: /^(?:גבעתיים|гиватаим[аеу]?|givatayim)$/i, cityTokenRegex: /(?:גבעתיים|гиватаим[аеу]?|givatayim)/i },
+  { canonical: 'כפר סבא', regex: /^(?:כפר[-\s]*סבא|кфар[- ]?саб[аеу]|kfar[- ]?saba)$/i, cityTokenRegex: /(?:כפר[-\s]*סבא|кфар[- ]?саб[аеу]|kfar[- ]?saba)/i },
+  { canonical: 'רעננה', regex: /^(?:רעננה|раанан[аеу]|ra'?anana)$/i, cityTokenRegex: /(?:רעננה|раанан[аеу]|ra'?anana)/i },
   { canonical: 'הרצליה', regex: /^(?:הרצליה|герцли[яию]|herzliya)$/i, cityTokenRegex: /(?:הרצליה|герцли[яию]|herzliya)/i },
-  { canonical: 'אילת', regex: /^(?:אילת|эйлат[аеу]?|eilat)$/i, cityTokenRegex: /(?:אילת|эйлат[аеу]?|eilat)/i },
+  { canonical: 'רמת השרון', regex: /^(?:רמת\s*השרון|рамат[- ]?ха[- ]?шарон[аеу]?|ramat\s*hasharon)$/i, cityTokenRegex: /(?:רמת\s*השרון|рамат[- ]?ха[- ]?шарон[аеу]?|ramat\s*hasharon)/i },
+  { canonical: 'הוד השרון', regex: /^(?:הוד\s*השרון|ход[- ]?ха[- ]?шарон[аеу]?|hod\s*hasharon)$/i, cityTokenRegex: /(?:הוד\s*השרון|ход[- ]?ха[- ]?шарон[аеу]?|hod\s*hasharon)/i },
+  { canonical: 'מודיעין מכבים רעות', regex: /^(?:מודיעין(?:\s*מכבים\s*רעות)?|модиин[аеу]?|modi'?in)$/i, cityTokenRegex: /(?:מודיעין|модиин[аеу]?|modi'?in)/i },
+  { canonical: 'לוד', regex: /^(?:לוד|лод[аеу]?|lod)$/i, cityTokenRegex: /(?:^|\s)(?:לוד|лод[аеу]?|lod)(?=\s|,|$)/i },
+  { canonical: 'רמלה', regex: /^(?:רמלה|рамл[аеу]|ramla)$/i, cityTokenRegex: /(?:רמלה|рамл[аеу]|ramla)/i },
+  { canonical: 'יבנה', regex: /^(?:יבנה|явне|yavne)$/i, cityTokenRegex: /(?:יבנה|явне|yavne)/i },
+  { canonical: 'נס ציונה', regex: /^(?:נס[-\s]*ציונה|нес[- ]?цион[аеу]|ness[- ]?ziona)$/i, cityTokenRegex: /(?:נס[-\s]*ציונה|нес[- ]?цион[аеу]|ness[- ]?ziona)/i },
+  { canonical: 'גדרה', regex: /^(?:גדרה|гедер[аеу]|gedera)$/i, cityTokenRegex: /(?:גדרה|гедер[аеу]|gedera)/i },
+  { canonical: 'בית שמש', regex: /^(?:בית[-\s]*שמש|бейт[- ]?шемеш[аеу]?|beit[- ]?shemesh)$/i, cityTokenRegex: /(?:בית[-\s]*שמש|бейт[- ]?шемеш[аеу]?|beit[- ]?shemesh)/i },
+  { canonical: 'ראש העין', regex: /^(?:ראש\s*העין|рош[- ]?ха[- ]?айн[аеу]?|rosh\s*ha'?ayin)$/i, cityTokenRegex: /(?:ראש\s*העין|рош[- ]?ха[- ]?айн[аеу]?|rosh\s*ha'?ayin)/i },
+  { canonical: 'אור יהודה', regex: /^(?:אור\s*יהודה|ор[- ]?йехуд[аеу]|or\s*yehuda)$/i, cityTokenRegex: /(?:אור\s*יהודה|ор[- ]?йехуд[аеу]|or\s*yehuda)/i },
+  { canonical: 'יהוד מונוסון', regex: /^(?:יהוד(?:[-\s]*מונוסון)?|йехуд[аеу]?|yehud)$/i, cityTokenRegex: /(?:יהוד|йехуд[аеу]?|yehud)/i },
+  { canonical: 'אריאל', regex: /^(?:אריאל|ариэл[ьяю]|ariel)$/i, cityTokenRegex: /(?:אריאל|ариэл[ьяю]|ariel)/i },
+  { canonical: 'מעלה אדומים', regex: /^(?:מעלה\s*אדומים|маале[- ]?адумим|ma'?ale\s*adumim)$/i, cityTokenRegex: /(?:מעלה\s*אדומים|маале[- ]?адумим|ma'?ale\s*adumim)/i },
+  { canonical: 'נתניה', regex: /^(?:נתניה|нетани[яию]|netanya)$/i, cityTokenRegex: /(?:נתניה|нетани[яию]|netanya)/i },
+  { canonical: 'חדרה', regex: /^(?:חדרה|хадер[аеу]|hadera)$/i, cityTokenRegex: /(?:חדרה|хадер[аеу]|hadera)/i },
+  { canonical: 'אור עקיבא', regex: /^(?:אור\s*עקיבא|ор[- ]?акив[аеу]|or\s*akiva)$/i, cityTokenRegex: /(?:אור\s*עקיבא|ор[- ]?акив[аеу]|or\s*akiva)/i },
+  { canonical: 'קיסריה', regex: /^(?:קיסריה|кесари[яию]|caesarea)$/i, cityTokenRegex: /(?:קיסריה|кесари[яию]|caesarea)/i },
+  { canonical: 'פרדס חנה כרכור', regex: /^(?:פרדס\s*חנה(?:[-\s]*כרכור)?|пардес[- ]?хан[аеу]|pardes\s*hana)$/i, cityTokenRegex: /(?:פרדס\s*חנה|пардес[- ]?хан[аеу]|pardes\s*hana)/i },
+  { canonical: 'בנימינה', regex: /^(?:בנימינה(?:[-\s]*גבעת\s*עדה)?|биньямин[аеу]|binyamina)$/i, cityTokenRegex: /(?:בנימינה|биньямин[аеу]|binyamina)/i },
+  { canonical: 'זכרון יעקב', regex: /^(?:זכרון\s*יעקב|зихрон[- ]?яаков[аеу]?|zikhron\s*ya'?akov)$/i, cityTokenRegex: /(?:זכרון\s*יעקב|зихрон[- ]?яаков[аеу]?|zikhron\s*ya'?akov)/i },
+  { canonical: 'עתלית', regex: /^(?:עתלית|атлит[аеу]?|atlit)$/i, cityTokenRegex: /(?:עתלית|атлит[аеу]?|atlit)/i },
+  { canonical: 'עכו', regex: /^(?:עכו|акко|acre|akko)$/i, cityTokenRegex: /(?:עכו|\bакко\b|\bacre\b|\bakko\b)/i },
+  { canonical: 'נהריה', regex: /^(?:נהריה|нагари[яию]|nahariya)$/i, cityTokenRegex: /(?:נהריה|нагари[яию]|nahariya)/i },
+  { canonical: 'מעלות', regex: /^(?:מעלות(?:[-\s]*תרשיחא)?|маалот|ma'?alot)$/i, cityTokenRegex: /(?:מעלות|маалот|ma'?alot)/i },
+  { canonical: 'כרמיאל', regex: /^(?:כרמיאל|кармиэл[ьяю]|karmiel)$/i, cityTokenRegex: /(?:כרמיאל|кармиэл[ьяю]|karmiel)/i },
+  { canonical: 'צפת', regex: /^(?:צפת|цфат[аеу]?|safed|tzfat)$/i, cityTokenRegex: /(?:צפת|цфат[аеу]?|safed|tzfat)/i },
+  { canonical: 'קרית שמונה', regex: /^(?:קרי?ית\s*שמונה|кирьят[- ]?шмон[аеу]|kiryat\s*shmona)$/i, cityTokenRegex: /(?:קרי?ית\s*שמונה|кирьят[- ]?шмон[аеу]|kiryat\s*shmona)/i },
+  { canonical: 'קצרין', regex: /^(?:קצרין|кацрин[аеу]?|katzrin)$/i, cityTokenRegex: /(?:קצרין|кацрин[аеу]?|katzrin)/i },
+  { canonical: 'טבריה', regex: /^(?:טבריה|твери[яию]|тивери[яию]|tiberias)$/i, cityTokenRegex: /(?:טבריה|твери[яию]|тивери[яию]|tiberias)/i },
+  { canonical: 'נוף הגליל', regex: /^(?:נוף\s*הגליל|נצרת\s*עילית|ноф[- ]?ха[- ]?галил|нацерет[- ]?илит|nof\s*hagalil)$/i, cityTokenRegex: /(?:נוף\s*הגליל|נצרת\s*עילית|ноф[- ]?ха[- ]?галил|нацерет[- ]?илит|nof\s*hagalil)/i },
+  { canonical: 'נצרת', regex: /^(?:נצרת|назарет[аеу]?|nazareth)$/i, cityTokenRegex: /(?:נצרת(?!\s*עילית)|назарет[аеу]?|nazareth)/i },
+  { canonical: 'עפולה', regex: /^(?:עפולה|афул[аеу]|afula)$/i, cityTokenRegex: /(?:עפולה|афул[аеу]|afula)/i },
+  { canonical: 'מגדל העמק', regex: /^(?:מגדל\s*העמק|мигдаль[- ]?ха[- ]?эмек[аеу]?|migdal\s*ha'?emek)$/i, cityTokenRegex: /(?:מגדל\s*העמק|мигдаль[- ]?ха[- ]?эмек[аеу]?|migdal\s*ha'?emek)/i },
+  { canonical: 'יקנעם עילית', regex: /^(?:יקנעם(?:\s*עילית)?|йокнеам[аеу]?|yokneam)$/i, cityTokenRegex: /(?:יקנעם|йокнеам[аеу]?|yokneam)/i },
+  { canonical: 'בית שאן', regex: /^(?:בית[-\s]*שאן|бейт[- ]?шеан[аеу]?|beit[- ]?she'?an)$/i, cityTokenRegex: /(?:בית[-\s]*שאן|бейт[- ]?шеан[аеу]?|beit[- ]?she'?an)/i },
+  { canonical: 'אשדוד', regex: /^(?:אשדוד|ашдод[аеу]?|ashdod)$/i, cityTokenRegex: /(?:אשדוד|ашдод[аеу]?|ashdod)/i },
+  { canonical: 'אשקלון', regex: /^(?:אשקלון|ашкелон[аеу]?|ashkelon)$/i, cityTokenRegex: /(?:אשקלון|ашкелон[аеу]?|ashkelon)/i },
+  { canonical: 'קריית גת', regex: /^(?:קרי?ית\s*גת|кирьят[- ]?гат[аеу]?|kiryat\s*gat)$/i, cityTokenRegex: /(?:קרי?ית\s*גת|кирьят[- ]?гат[аеу]?|kiryat\s*gat)/i },
+  { canonical: 'שדרות', regex: /^(?:שדרות|сдерот[аеу]?|sderot)$/i, cityTokenRegex: /(?:שדרות|сдерот[аеу]?|sderot)/i },
+  { canonical: 'נתיבות', regex: /^(?:נתיבות|нетивот[аеу]?|netivot)$/i, cityTokenRegex: /(?:נתיבות|нетивот[аеу]?|netivot)/i },
+  { canonical: 'אופקים', regex: /^(?:אופקים|офаким[аеу]?|ofakim)$/i, cityTokenRegex: /(?:אופקים|офаким[аеу]?|ofakim)/i },
+  { canonical: 'באר שבע', regex: /^(?:באר\s*שבע|беэр[- ]?шев[аеу]|beer\s*sheva)$/i, cityTokenRegex: /(?:באר\s*שבע|беэр[- ]?шев[аеу]|beer\s*sheva)/i },
+  { canonical: 'רהט', regex: /^(?:רהט|рахат[аеу]?|rahat)$/i, cityTokenRegex: /(?:רהט|рахат[аеу]?|rahat)/i },
   { canonical: 'דימונה', regex: /^(?:דימונה|димон[аеу]|dimona)$/i, cityTokenRegex: /(?:דימונה|димон[аеу]|dimona)/i },
-  { canonical: 'מצפה רמון', regex: /^(?:מצפה\s*רמון|мицпе[- ]?рамон[аеу]?|mitzpe\s*ramon)$/i, cityTokenRegex: /(?:מצפה\s*רמון|мицпе[- ]?рамон[аеу]?|mitzpe\s*ramon)/i }
+  { canonical: 'ערד', regex: /^(?:ערד|арад[аеу]?|arad)$/i, cityTokenRegex: /(?:ערד|арад[аеу]?|\barad\b)/i },
+  { canonical: 'מצפה רמון', regex: /^(?:מצפה\s*רמון|мицпе[- ]?рамон[аеу]?|mitzpe\s*ramon)$/i, cityTokenRegex: /(?:מצפה\s*רמון|мицпе[- ]?рамон[аеу]?|mitzpe\s*ramon)/i },
+  { canonical: 'אילת', regex: /^(?:אילת|эйлат[аеу]?|eilat)$/i, cityTokenRegex: /(?:אילת|эйлат[аеу]?|eilat)/i }
 ];
 
 const KNOWN_STREET_ROOTS =
@@ -232,6 +281,349 @@ const ISRAEL_GAZETTEER: IsraelLandmark[] = [
     lon: 35.0989,
     place_name: 'Нагария (נהריה)',
     formatted_address: 'Gaaton Blvd, Nahariya, Israel'
+  },
+  {
+    patterns: [/холон|holon|חולון/i],
+    lat: 32.0158,
+    lon: 34.7874,
+    place_name: 'Холон (חולון)',
+    formatted_address: 'Sokolov St, Holon, Israel'
+  },
+  {
+    patterns: [/бат[- ]?ям|bat[- ]?yam|בת[- ]?ים/i],
+    lat: 32.0165,
+    lon: 34.7503,
+    place_name: 'Бат-Ям (בת ים)',
+    formatted_address: 'Balfour St, Bat Yam, Israel'
+  },
+  {
+    patterns: [/рамат[- ]?ган|ramat[- ]?gan|רמת[- ]?גן/i],
+    lat: 32.0684,
+    lon: 34.8248,
+    place_name: 'Рамат-Ган (רמת גן)',
+    formatted_address: 'Bialik St, Ramat Gan, Israel'
+  },
+  {
+    patterns: [/бней[- ]?брак|bnei[- ]?brak|בני[- ]?ברק/i],
+    lat: 32.0834,
+    lon: 34.8338,
+    place_name: 'Бней-Брак (בני ברק)',
+    formatted_address: 'Rabbi Akiva St, Bnei Brak, Israel'
+  },
+  {
+    patterns: [/гиватаим|givatayim|גבעתיים/i],
+    lat: 32.0722,
+    lon: 34.8125,
+    place_name: 'Гиватаим (גבעתיים)',
+    formatted_address: 'Katznelson St, Givatayim, Israel'
+  },
+  {
+    patterns: [/кфар[- ]?саб[аеу]|kfar[- ]?saba|כפר[-\s]*סבא/i],
+    lat: 32.175,
+    lon: 34.9069,
+    place_name: 'Кфар-Саба (כפר סבא)',
+    formatted_address: 'Weizmann St, Kfar Saba, Israel'
+  },
+  {
+    patterns: [/раанана|ra'?anana|רעננה/i],
+    lat: 32.1848,
+    lon: 34.8713,
+    place_name: 'Раанана (רעננה)',
+    formatted_address: 'Ahuza St, Raanana, Israel'
+  },
+  {
+    patterns: [/рамат[- ]?ха[- ]?шарон|ramat\s*hasharon|רמת\s*השרון/i],
+    lat: 32.1461,
+    lon: 34.8394,
+    place_name: 'Рамат-ха-Шарон (רמת השרון)',
+    formatted_address: 'Sokolov Blvd, Ramat HaSharon, Israel'
+  },
+  {
+    patterns: [/ход[- ]?ха[- ]?шарон|hod\s*hasharon|הוד\s*השרון/i],
+    lat: 32.1502,
+    lon: 34.8886,
+    place_name: 'Ход-ха-Шарон (הוד השרון)',
+    formatted_address: 'Derech Ramatayim, Hod HaSharon, Israel'
+  },
+  {
+    patterns: [/модиин|modi'?in|מודיעין/i],
+    lat: 31.8977,
+    lon: 35.0104,
+    place_name: 'Модиин (מודיעין מכבים רעות)',
+    formatted_address: 'Modiin Central Station, Israel'
+  },
+  {
+    patterns: [/(?:^|\s)лод[аеу]?(?=\s|,|$)|\blod\b|^לוד$/i],
+    lat: 31.9514,
+    lon: 34.8881,
+    place_name: 'Лод (לוד)',
+    formatted_address: 'Herzl Blvd, Lod, Israel'
+  },
+  {
+    patterns: [/рамл[аеу]|ramla|רמלה/i],
+    lat: 31.9292,
+    lon: 34.8656,
+    place_name: 'Рамла (רמלה)',
+    formatted_address: 'Herzl Blvd, Ramla, Israel'
+  },
+  {
+    patterns: [/явне|yavne|יבנה/i],
+    lat: 31.8781,
+    lon: 34.7398,
+    place_name: 'Явне (יבנה)',
+    formatted_address: 'HaAtzmaut Blvd, Yavne, Israel'
+  },
+  {
+    patterns: [/нес[- ]?цион|ness[- ]?ziona|נס[-\s]*ציונה/i],
+    lat: 31.9293,
+    lon: 34.7987,
+    place_name: 'Нес-Циона (נס ציונה)',
+    formatted_address: 'Weizmann St, Ness Ziona, Israel'
+  },
+  {
+    patterns: [/гедер[аеу]|gedera|גדרה/i],
+    lat: 31.8146,
+    lon: 34.7796,
+    place_name: 'Гедера (גדרה)',
+    formatted_address: 'Bilu St, Gedera, Israel'
+  },
+  {
+    patterns: [/бейт[- ]?шемеш|beit[- ]?shemesh|בית[-\s]*שמש/i],
+    lat: 31.747,
+    lon: 34.9881,
+    place_name: 'Бейт-Шемеш (בית שמש)',
+    formatted_address: 'HaNassi St, Beit Shemesh, Israel'
+  },
+  {
+    patterns: [/рош[- ]?ха[- ]?айн|rosh\s*ha'?ayin|ראש\s*העין/i],
+    lat: 32.0956,
+    lon: 34.9566,
+    place_name: 'Рош-ха-Айн (ראש העין)',
+    formatted_address: 'Begin Blvd, Rosh HaAyin, Israel'
+  },
+  {
+    patterns: [/ор[- ]?йехуд|or\s*yehuda|אור\s*יהודה/i],
+    lat: 32.0292,
+    lon: 34.8579,
+    place_name: 'Ор-Иехуда (אור יהודה)',
+    formatted_address: 'Yosef Katz St, Or Yehuda, Israel'
+  },
+  {
+    patterns: [/йехуд|yehud|יהוד/i],
+    lat: 32.0332,
+    lon: 34.8878,
+    place_name: 'Йехуд-Моноссон (יהוד מונוסון)',
+    formatted_address: 'Saadia HaTov St, Yehud, Israel'
+  },
+  {
+    patterns: [/ариэл|ariel|אריאל/i],
+    lat: 32.1045,
+    lon: 35.1743,
+    place_name: 'Ариэль (אריאל)',
+    formatted_address: 'Ariel Central, Israel'
+  },
+  {
+    patterns: [/маале[- ]?адумим|ma'?ale\s*adumim|מעלה\s*אדומים/i],
+    lat: 31.777,
+    lon: 35.2974,
+    place_name: 'Маале-Адумим (מעלה אדומים)',
+    formatted_address: 'Derech Kedem, Maale Adumim, Israel'
+  },
+  {
+    patterns: [/твери|тивери|tiberias|טבריה/i],
+    lat: 32.7922,
+    lon: 35.5312,
+    place_name: 'Тверия (טבריה — תחנה מרכזית)',
+    formatted_address: 'HaBanim St, Tiberias, Israel'
+  },
+  {
+    patterns: [/ноф[- ]?ха[- ]?галил|нацерет[- ]?илит|nof\s*hagalil|נוף\s*הגליל|נצרת\s*עילית/i],
+    lat: 32.7069,
+    lon: 35.3249,
+    place_name: 'Ноф-ха-Галиль (נוף הגליל)',
+    formatted_address: 'Maale Yitzhak Blvd, Nof HaGalil, Israel'
+  },
+  {
+    patterns: [/назарет|nazareth|נצרת/i],
+    lat: 32.7021,
+    lon: 35.2978,
+    place_name: 'Назарет (נצרת)',
+    formatted_address: 'Paulus VI St, Nazareth, Israel'
+  },
+  {
+    patterns: [/афул|afula|עפולה/i],
+    lat: 32.6075,
+    lon: 35.2895,
+    place_name: 'Афула (עפולה — תחנה מרכזית)',
+    formatted_address: 'Afula Central Bus Station, Israel'
+  },
+  {
+    patterns: [/кармиэл|karmiel|כרמיאל/i],
+    lat: 32.9199,
+    lon: 35.2961,
+    place_name: 'Кармиэль (כרמיאל)',
+    formatted_address: 'HaNassi Blvd, Karmiel, Israel'
+  },
+  {
+    patterns: [/цфат|safed|tzfat|צפת/i],
+    lat: 32.9646,
+    lon: 35.496,
+    place_name: 'Цфат (צפת — תחנה מרכזית)',
+    formatted_address: 'HaAtzmaut St, Safed, Israel'
+  },
+  {
+    patterns: [/кирьят[- ]?шмон|kiryat\s*shmona|קרי?ית\s*שמונה/i],
+    lat: 33.2073,
+    lon: 35.5699,
+    place_name: 'Кирьят-Шмона (קרית שמונה — תחנה מרכזית)',
+    formatted_address: 'Tel Hai Rd, Kiryat Shmona, Israel'
+  },
+  {
+    patterns: [/кацрин|katzrin|קצרין/i],
+    lat: 32.9918,
+    lon: 35.6911,
+    place_name: 'Кацрин (קצרין)',
+    formatted_address: 'Katzrin, Israel'
+  },
+  {
+    patterns: [/маалот|ma'?alot|מעלות/i],
+    lat: 33.0169,
+    lon: 35.271,
+    place_name: 'Маалот-Таршиха (מעלות-תרשיחא)',
+    formatted_address: 'Maalot Central Station, Israel'
+  },
+  {
+    patterns: [/мигдаль[- ]?ха[- ]?эмек|migdal\s*ha'?emek|מגדל\s*העמק/i],
+    lat: 32.6754,
+    lon: 35.2407,
+    place_name: 'Мигдаль-ха-Эмек (מגדל העמק)',
+    formatted_address: 'Migdal HaEmek, Israel'
+  },
+  {
+    patterns: [/йокнеам|yokneam|יקנעם/i],
+    lat: 32.6594,
+    lon: 35.1095,
+    place_name: 'Йокнеам (יקנעם עילית)',
+    formatted_address: 'Yokneam Illit, Israel'
+  },
+  {
+    patterns: [/бейт[- ]?шеан|beit[- ]?she'?an|בית[-\s]*שאן/i],
+    lat: 32.4971,
+    lon: 35.4975,
+    place_name: 'Бейт-Шеан (בית שאן)',
+    formatted_address: 'Beit Shean, Israel'
+  },
+  {
+    patterns: [/нешер|nesher|נשר/i],
+    lat: 32.7717,
+    lon: 35.0394,
+    place_name: 'Нешер (נשר)',
+    formatted_address: 'Derech HaShalom, Nesher, Israel'
+  },
+  {
+    patterns: [/кирьят[- ]?ат|kiryat\s*ata|קרי?ית\s*אתא/i],
+    lat: 32.8058,
+    lon: 35.1046,
+    place_name: 'Кирьят-Ата (קרית אתא)',
+    formatted_address: 'HaAtzmaut St, Kiryat Ata, Israel'
+  },
+  {
+    patterns: [/кирьят[- ]?бьялик|kiryat\s*bialik|קרי?ית\s*ביאליק/i],
+    lat: 32.8275,
+    lon: 35.0858,
+    place_name: 'Кирьят-Бялик (קרית ביאליק)',
+    formatted_address: 'HaHistadrut Blvd, Kiryat Bialik, Israel'
+  },
+  {
+    patterns: [/кирьят[- ]?моцкин|kiryat\s*motzkin|קרי?ית\s*מוצקין/i],
+    lat: 32.838,
+    lon: 35.0776,
+    place_name: 'Кирьят-Моцкин (קרית מוצקין)',
+    formatted_address: 'Ben Gurion Blvd, Kiryat Motzkin, Israel'
+  },
+  {
+    patterns: [/кирьят[- ]?ям|kiryat\s*yam|קרי?ית\s*ים/i],
+    lat: 32.8493,
+    lon: 35.0689,
+    place_name: 'Кирьят-Ям (קרית ים)',
+    formatted_address: 'Jerusalem Blvd, Kiryat Yam, Israel'
+  },
+  {
+    patterns: [/зихрон|zikhron|זכרון\s*יעקב/i],
+    lat: 32.5707,
+    lon: 34.9537,
+    place_name: 'Зихрон-Яаков (זכרון יעקב)',
+    formatted_address: 'HaMeyasdim St, Zikhron Yaakov, Israel'
+  },
+  {
+    patterns: [/биньямин|binyamina|בנימינה/i],
+    lat: 32.5219,
+    lon: 34.9498,
+    place_name: 'Биньямина (בנימינה-גבעת עדה)',
+    formatted_address: 'Binyamina Train Station, Israel'
+  },
+  {
+    patterns: [/пардес[- ]?хан|pardes\s*hana|פרדס\s*חנה/i],
+    lat: 32.4737,
+    lon: 34.9713,
+    place_name: 'Пардес-Хана (פרדס חנה כרכור)',
+    formatted_address: 'Derech HaBanim, Pardes Hana, Israel'
+  },
+  {
+    patterns: [/ор[- ]?акива|or\s*akiva|אור\s*עקיבא/i],
+    lat: 32.507,
+    lon: 34.9204,
+    place_name: 'Ор-Акива (אור עקיבא)',
+    formatted_address: 'HaNassi St, Or Akiva, Israel'
+  },
+  {
+    patterns: [/кесари|caesarea|קיסריה/i],
+    lat: 32.5189,
+    lon: 34.9045,
+    place_name: 'Кесария (קיסריה)',
+    formatted_address: 'Caesarea, Israel'
+  },
+  {
+    patterns: [/атлит|atlit|עתלית/i],
+    lat: 32.6889,
+    lon: 34.9385,
+    place_name: 'Атлит (עתלית)',
+    formatted_address: 'HaZayit St, Atlit, Israel'
+  },
+  {
+    patterns: [/сдерот|sderot|שדרות/i],
+    lat: 31.525,
+    lon: 34.5955,
+    place_name: 'Сдерот (שדרות)',
+    formatted_address: 'Begin Blvd, Sderot, Israel'
+  },
+  {
+    patterns: [/нетивот|netivot|נתיבות/i],
+    lat: 31.4227,
+    lon: 34.5887,
+    place_name: 'Нетивот (נתיבות)',
+    formatted_address: 'Jerusalem St, Netivot, Israel'
+  },
+  {
+    patterns: [/офаким|ofakim|אופקים/i],
+    lat: 31.3141,
+    lon: 34.6203,
+    place_name: 'Офаким (אופקים)',
+    formatted_address: 'Herzl St, Ofakim, Israel'
+  },
+  {
+    patterns: [/рахат|rahat|רהט/i],
+    lat: 31.3925,
+    lon: 34.7544,
+    place_name: 'Рахат (רהט)',
+    formatted_address: 'Rahat, Israel'
+  },
+  {
+    patterns: [/арад|arad|ערד/i],
+    lat: 31.2588,
+    lon: 35.2128,
+    place_name: 'Арад (ערד — תחנה מרכזית)',
+    formatted_address: 'Arad Central Bus Station, Israel'
   },
 
   // --- Coastal & Central Hubs ---
@@ -461,8 +853,18 @@ function stripLeadingDirectionPreposition(text: string): string {
   const stripped = trimmed
     .replace(/^(?:в|во|до|на|к|по|to)\s+/i, '')
     .trim();
-  if (/^ל(?:רחוב|מרכז|חיפה|תל|ירושלים|אשדוד|קריית|נתניה|טירת|באר|אשקלון|חדרה|אילת|דימונה|מצפה)/.test(stripped)) {
+  if (/^ל(?:רחוב|מרכז)/.test(stripped)) {
     return stripped.slice(1).trim();
+  }
+  if (
+    stripped.startsWith('ל') &&
+    stripped.length > 2 &&
+    !KNOWN_CITIES.some((c) => c.regex.test(stripped))
+  ) {
+    const withoutLamed = stripped.slice(1).trim();
+    if (KNOWN_CITIES.some((c) => c.regex.test(withoutLamed) || c.cityTokenRegex.test(withoutLamed))) {
+      return withoutLamed;
+    }
   }
   return stripped || trimmed;
 }
@@ -491,12 +893,13 @@ export function classifyDestinationGranularity(rawQuery: string): DestinationCla
     .replace(/(?:,\s*)?(?:израиль|israel|ישראל)$/i, '')
     .replace(/^[\s,.-]+|[\s,.-]+$/g, '')
     .trim();
+  const candidateWithoutParens = pureCityCandidate.replace(/\s*\([^)]*\)\s*$/, '').trim();
 
   for (const city of KNOWN_CITIES) {
-    if (city.regex.test(pureCityCandidate)) {
+    if (city.regex.test(pureCityCandidate) || city.regex.test(candidateWithoutParens)) {
       return {
         granularity: 'city',
-        cleanedQuery: pureCityCandidate,
+        cleanedQuery: candidateWithoutParens || pureCityCandidate,
         cityName: city.canonical
       };
     }
@@ -651,6 +1054,28 @@ export async function resolveDestinationText(
     }
   }
 
+  // Layer 1d: Nationwide GTFS town/settlement lookup before external geocoders
+  if (
+    !resolved &&
+    classification.granularity !== 'city' &&
+    classification.granularity !== 'address' &&
+    !POI_KEYWORD_REGEX.test(trimmed)
+  ) {
+    const townStop = await supabaseService.findCentralStopForCity(trimmed);
+    if (townStop) {
+      resolved = {
+        lat: townStop.lat,
+        lon: townStop.lon,
+        place_name: townStop.stop_name_he || townStop.stop_name,
+        formatted_address: `${townStop.stop_name} (${trimmed})`,
+        source: 'gtfs_db',
+        destination_granularity: 'city',
+        city_name: trimmed,
+        resolved_stop: townStop
+      };
+    }
+  }
+
   // Layer 3 (Fallback Geocoder): Free OpenStreetMap Nominatim first, then optional GOOGLE_MAPS_API_KEY
   if (!resolved) {
     resolved = await queryNominatim(trimmed, userLocation);
@@ -685,10 +1110,13 @@ export async function resolveDestinationText(
     };
   }
 
-  // Attach granularity & nearest physical stop in walking radius (~450-500m) for address/POI/city
+  // Attach granularity & nearest physical stop in walking radius (~450-500m, expanding to 1500m) for address/POI/city
   let nearestStop: ResolvedStopOption | undefined = resolved.resolved_stop;
   if (!nearestStop) {
-    const stopsNearby = await supabaseService.findNearestStopsToPoint(resolved.lat, resolved.lon, 480);
+    let stopsNearby = await supabaseService.findNearestStopsToPoint(resolved.lat, resolved.lon, 480);
+    if (stopsNearby.length === 0) {
+      stopsNearby = await supabaseService.findNearestStopsToPoint(resolved.lat, resolved.lon, 1500);
+    }
     if (stopsNearby.length > 0) {
       nearestStop = stopsNearby[0];
     }

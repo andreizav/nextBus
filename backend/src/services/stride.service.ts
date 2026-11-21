@@ -67,6 +67,14 @@ const LINE_REF_BY_ROUTE: Record<string, [string, string]> = {
 };
 
 function resolveStrideLineRef(routeId: string, directionId: 0 | 1): string {
+  const dualMatch = routeId.match(/^gtfs-(\d+)-(\d+)$/);
+  if (dualMatch) {
+    return directionId === 0 ? dualMatch[1] : dualMatch[2];
+  }
+  const singleMatch = routeId.match(/^gtfs-(\d+)$/);
+  if (singleMatch) {
+    return singleMatch[1];
+  }
   const pair = LINE_REF_BY_ROUTE[routeId];
   if (pair) {
     return directionId === 0 ? pair[0] : pair[1];

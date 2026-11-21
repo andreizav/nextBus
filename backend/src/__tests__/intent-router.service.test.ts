@@ -490,5 +490,48 @@ describe('Intent Router & Conversational Query Parsing', () => {
         vi.restoreAllMocks();
       }
     });
+
+    it('resolves nationwide cities such as Rehovot (Реховот), Lod (לוד), and Tiberias (Тверия) via GTFS central hubs', async () => {
+      expect(classifyDestinationGranularity('Реховот')).toMatchObject({
+        granularity: 'city',
+        cityName: 'רחובות'
+      });
+      expect(classifyDestinationGranularity('לרחובות')).toMatchObject({
+        granularity: 'city',
+        cityName: 'רחובות'
+      });
+      expect(classifyDestinationGranularity('לוד')).toMatchObject({
+        granularity: 'city',
+        cityName: 'לוד'
+      });
+      expect(classifyDestinationGranularity('Тверия')).toMatchObject({
+        granularity: 'city',
+        cityName: 'טבריה'
+      });
+
+      vi.spyOn(redisService, 'getJson').mockResolvedValue(null);
+      vi.spyOn(redisService, 'setJson').mockResolvedValue(undefined);
+      const centralSpy = vi
+        .spyOn(supabaseService, 'findCentralStopForCity')
+        .mockResolvedValue({
+          stop_id: 'stop-31100',
+          stop_code: '31100',
+          stop_name: 'ת. מרכזית רחובות/רציפים (רחובות)',
+          stop_name_he: 'ת. מרכזית רחובות/רציפים (רחובות)',
+          lat: 31.8935,
+          lon: 34.8077,
+          routes_count: 18,
+          is_central_hub: true
+        });
+
+      try {
+        const rehovot = await resolveDestinationText('Реховот (רחובות)', { lat: 32.7615, lon: 34.9718 });
+        expect(['gtfs_db', 'gazetteer']).toContain(rehovot.source);
+        expect(rehovot.resolved_stop?.stop_id).toBe('stop-31100');
+        expect(centralSpy).toHaveBeenCalledWith('רחובות');
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
   });
 });

@@ -742,5 +742,115 @@ describe('Trip Planner A -> B matching and Top-3 ranking', () => {
         vi.restoreAllMocks();
       }
     });
+
+    it('decomposes 2-transfer intercity journeys via major hubs without calling unpruned SQL joins', async () => {
+      const directSpy = vi
+        .spyOn(supabaseService, 'findDirectRoutesBetweenPoints')
+        .mockImplementation(async (origLat, _origLon, destLat) => {
+          // Leg 1: Tirat Carmel -> Hof HaCarmel (Line 49)
+          if (Math.abs(origLat - 32.7615) < 0.01 && Math.abs(destLat - 32.7934) < 0.02) {
+            return [
+              {
+                route_id: 'stride-10049',
+                route_short_name: '49',
+                route_long_name: 'טירת כרמל - חוף הכרמל',
+                direction_id: 0,
+                origin_stop_id: 'stop-40888',
+                origin_stop_code: '40888',
+                origin_stop_name: 'שדרות אריאל שרון/השחף (טירת כרמל)',
+                origin_stop_name_he: 'שדרות אריאל שרון/השחף (טירת כרמל)',
+                origin_stop_sequence: 3,
+                origin_lat: 32.7615,
+                origin_lon: 34.9718,
+                dest_stop_id: 'stop-42657',
+                dest_stop_code: '42657',
+                dest_stop_name: 'ת. מרכזית חוף הכרמל/הורדה (חיפה)',
+                dest_stop_name_he: 'ת. מרכזית חוף הכרמל/הורדה (חיפה)',
+                dest_stop_sequence: 20,
+                dest_lat: 32.7934,
+                dest_lon: 34.9596,
+                stops_between: 17
+              }
+            ];
+          }
+          // Leg 2: Hof HaCarmel -> Tel Aviv Savidor (Line 910)
+          if (Math.abs(origLat - 32.7934) < 0.02 && Math.abs(destLat - 32.0837) < 0.05) {
+            return [
+              {
+                route_id: 'gtfs-7192-7189',
+                route_short_name: '910',
+                route_long_name: 'חיפה - תל אביב',
+                direction_id: 0,
+                origin_stop_id: 'stop-42658',
+                origin_stop_code: '42658',
+                origin_stop_name: 'ת. מרכזית חוף הכרמל/רציפים בינעירוני (חיפה)',
+                origin_stop_name_he: 'ת. מרכזית חוף הכרמל/רציפים בינעירוני (חיפה)',
+                origin_stop_sequence: 1,
+                origin_lat: 32.7934,
+                origin_lon: 34.9590,
+                dest_stop_id: 'stop-28624',
+                dest_stop_code: '28624',
+                dest_stop_name: 'ת. רכבת תל אביב - סבידור מרכז/רציפים (תל אביב יפו)',
+                dest_stop_name_he: 'ת. רכבת תל אביב - סבידור מרכז/רציפים (תל אביב יפו)',
+                dest_stop_sequence: 25,
+                dest_lat: 32.0837,
+                dest_lon: 34.7978,
+                stops_between: 24
+              }
+            ];
+          }
+          // Leg 3: Tel Aviv Savidor -> Rehovot (Line 301)
+          if (Math.abs(origLat - 32.0837) < 0.05 && Math.abs(destLat - 31.8935) < 0.05) {
+            return [
+              {
+                route_id: 'gtfs-3354-3356',
+                route_short_name: '301',
+                route_long_name: 'תל אביב - רחובות - אשקלון',
+                direction_id: 0,
+                origin_stop_id: 'stop-28624',
+                origin_stop_code: '28624',
+                origin_stop_name: 'ת. רכבת תל אביב - סבידור מרכז/רציפים (תל אביב יפו)',
+                origin_stop_name_he: 'ת. רכבת תל אביב - סבידור מרכז/רציפים (תל אביב יפו)',
+                origin_stop_sequence: 1,
+                origin_lat: 32.0837,
+                origin_lon: 34.7978,
+                dest_stop_id: 'stop-31100',
+                dest_stop_code: '31100',
+                dest_stop_name: 'ת. מרכזית רחובות/רציפים (רחובות)',
+                dest_stop_name_he: 'ת. מרכזית רחובות/רציפים (רחובות)',
+                dest_stop_sequence: 22,
+                dest_lat: 31.8935,
+                dest_lon: 34.8077,
+                stops_between: 21
+              }
+            ];
+          }
+          return [];
+        });
+
+      const xferSpy = vi
+        .spyOn(supabaseService, 'findTransferRoutesBetweenPoints')
+        .mockResolvedValue([]);
+
+      try {
+        const matches = await supabaseService.findTransferTrips(
+          32.7615,
+          34.9718,
+          31.8935,
+          34.8077,
+          600,
+          2
+        );
+        expect(matches.length).toBeGreaterThan(0);
+        expect(matches[0].transfers_count).toBe(2);
+        expect(matches[0].leg1_route_short_name).toBe('49');
+        expect(matches[0].leg2_route_short_name).toBe('910');
+        expect(matches[0].leg3_route_short_name).toBe('301');
+        expect(matches[0].dest_stop_id).toBe('stop-31100');
+        expect(directSpy).toHaveBeenCalled();
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
   });
 });

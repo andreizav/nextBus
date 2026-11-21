@@ -238,6 +238,22 @@ const LINE_49_FALLBACK_STOPS: RouteStopCoord[] = [
   }
 ];
 
+export const MAJOR_INTERCITY_HUBS = [
+  { name: 'Haifa Hof HaCarmel', lat: 32.7934, lon: 34.9590 },
+  { name: 'Haifa Merkazit HaMifratz', lat: 32.7946, lon: 35.0365 },
+  { name: 'Tel Aviv Savidor', lat: 32.0837, lon: 34.7978 },
+  { name: 'Tel Aviv CBS', lat: 32.0558, lon: 34.7788 },
+  { name: 'Jerusalem CBS', lat: 31.7890, lon: 35.2030 },
+  { name: "Be'er Sheva CBS", lat: 31.2439, lon: 34.7966 },
+  { name: 'Netanya CBS', lat: 32.3270, lon: 34.8595 },
+  { name: 'Hadera CBS', lat: 32.4340, lon: 34.9197 },
+  { name: 'Ashdod CBS', lat: 31.7978, lon: 34.6503 },
+  { name: 'Rehovot CBS', lat: 31.8935, lon: 34.8077 },
+  { name: 'Afula CBS', lat: 32.6075, lon: 35.2895 },
+  { name: 'Tiberias CBS', lat: 32.7922, lon: 35.5312 },
+  { name: 'Eilat CBS', lat: 29.5575, lon: 34.9530 }
+];
+
 function getFallbackStopsForDirection(directionId: 0 | 1): RouteStopCoord[] {
   if (directionId === 0) {
     return LINE_49_FALLBACK_STOPS;
@@ -521,7 +537,11 @@ class SupabaseService {
     };
   }
 
-  async getDirectionStopCoords(routeId: string, directionId: 0 | 1): Promise<RouteStopCoord[]> {
+  async getDirectionStopCoords(
+    routeId: string,
+    directionId: 0 | 1,
+    allowReverseFallback = true
+  ): Promise<RouteStopCoord[]> {
     this.ensureInit();
 
     if (this.client) {
@@ -618,6 +638,20 @@ class SupabaseService {
         }
       } catch (err) {
         console.warn('[Supabase] PostgREST route_stops table fallback error:', (err as Error).message);
+      }
+    }
+
+    if (!allowReverseFallback) {
+      return [];
+    }
+
+    if (routeId !== 'stride-10049') {
+      const oppositeDir: 0 | 1 = directionId === 0 ? 1 : 0;
+      const oppositeStops = await this.getDirectionStopCoords(routeId, oppositeDir, false);
+      if (oppositeStops.length > 0) {
+        return [...oppositeStops]
+          .reverse()
+          .map((stop, idx) => ({ ...stop, stop_sequence: idx + 1 }));
       }
     }
 
@@ -795,6 +829,91 @@ class SupabaseService {
     };
   }
 
+  async findSingleTransferTripsViaHubs(
+    originLat: number,
+    originLon: number,
+    destLat: number,
+    destLon: number,
+    radiusMeters = 650
+  ): Promise<TransferRouteMatch[]> {
+    const candidateHubs = MAJOR_INTERCITY_HUBS.map((h) => ({
+      ...h,
+      distOrigin: haversineDistanceMeters(originLat, originLon, h.lat, h.lon),
+      distDest: haversineDistanceMeters(destLat, destLon, h.lat, h.lon)
+    }))
+      .filter((h) => h.distOrigin > 700 && h.distDest > 700)
+      .sort((a, b) => a.distOrigin + a.distDest - (b.distOrigin + b.distDest))
+      .slice(0, 4);
+
+    const matches: TransferRouteMatch[] = [];
+
+    const hubResults = await Promise.all(
+      candidateHubs.map(async (h) => {
+        const [l1, l2] = await Promise.all([
+          this.findDirectRoutesBetweenPoints(originLat, originLon, h.lat, h.lon, radiusMeters),
+          this.findDirectRoutesBetweenPoints(h.lat, h.lon, destLat, destLon, radiusMeters)
+        ]);
+        return { hub: h, l1, l2 };
+      })
+    );
+
+    for (const { l1, l2 } of hubResults) {
+      for (const leg1 of l1.slice(0, 3)) {
+        for (const leg2 of l2.slice(0, 3)) {
+          if (leg1.route_id === leg2.route_id) continue;
+          const walkMeters = Math.round(
+            haversineDistanceMeters(leg1.dest_lat, leg1.dest_lon, leg2.origin_lat, leg2.origin_lon)
+          );
+          if (walkMeters > 900) continue;
+
+          matches.push({
+            leg1_route_id: leg1.route_id,
+            leg1_route_short_name: leg1.route_short_name,
+            leg1_route_long_name: leg1.route_long_name,
+            leg1_direction_id: leg1.direction_id,
+            origin_stop_id: leg1.origin_stop_id,
+            origin_stop_code: leg1.origin_stop_code,
+            origin_stop_name: leg1.origin_stop_name,
+            origin_stop_name_he: leg1.origin_stop_name_he,
+            origin_stop_sequence: leg1.origin_stop_sequence,
+            origin_lat: leg1.origin_lat,
+            origin_lon: leg1.origin_lon,
+            xfer_alight_stop_id: leg1.dest_stop_id,
+            xfer_alight_stop_code: leg1.dest_stop_code,
+            xfer_alight_stop_name: leg1.dest_stop_name,
+            xfer_alight_stop_name_he: leg1.dest_stop_name_he,
+            xfer_alight_stop_sequence: leg1.dest_stop_sequence,
+            xfer_alight_lat: leg1.dest_lat,
+            xfer_alight_lon: leg1.dest_lon,
+            leg1_stops_between: leg1.stops_between,
+            transfer_walk_meters_actual: walkMeters,
+            leg2_route_id: leg2.route_id,
+            leg2_route_short_name: leg2.route_short_name,
+            leg2_route_long_name: leg2.route_long_name,
+            leg2_direction_id: leg2.direction_id,
+            xfer_board_stop_id: leg2.origin_stop_id,
+            xfer_board_stop_code: leg2.origin_stop_code,
+            xfer_board_stop_name: leg2.origin_stop_name,
+            xfer_board_stop_name_he: leg2.origin_stop_name_he,
+            xfer_board_stop_sequence: leg2.origin_stop_sequence,
+            xfer_board_lat: leg2.origin_lat,
+            xfer_board_lon: leg2.origin_lon,
+            dest_stop_id: leg2.dest_stop_id,
+            dest_stop_code: leg2.dest_stop_code,
+            dest_stop_name: leg2.dest_stop_name,
+            dest_stop_name_he: leg2.dest_stop_name_he,
+            dest_stop_sequence: leg2.dest_stop_sequence,
+            dest_lat: leg2.dest_lat,
+            dest_lon: leg2.dest_lon,
+            leg2_stops_between: leg2.stops_between
+          });
+        }
+      }
+    }
+
+    return matches;
+  }
+
   async findTransferRoutesBetweenPoints(
     originLat: number,
     originLon: number,
@@ -805,55 +924,80 @@ class SupabaseService {
   ): Promise<TransferRouteMatch[]> {
     this.ensureInit();
 
+    const totalDistMeters = haversineDistanceMeters(originLat, originLon, destLat, destLon);
     const radiiToTry = Array.from(new Set([radiusMeters, Math.max(1100, radiusMeters)]));
     const collected = new Map<string, TransferRouteMatch>();
     const distinctLeg1Routes = new Set<string>();
 
-    for (const radius of radiiToTry) {
-      let batch: TransferRouteMatch[] = [];
+    // For regional trips <= 30 km, try PostGIS RPC first
+    if (totalDistMeters <= 30_000) {
+      for (const radius of radiiToTry) {
+        let batch: TransferRouteMatch[] = [];
 
-      if (this.client) {
-        try {
-          const { data, error } = await this.client.rpc('find_transfer_routes_between_points', {
-            origin_lat: originLat,
-            origin_lon: originLon,
-            dest_lat: destLat,
-            dest_lon: destLon,
-            radius_meters: radius,
-            transfer_walk_meters: transferWalkMeters
-          });
-          if (!error && Array.isArray(data) && data.length > 0) {
-            batch = data.map((row) => this.mapTransferRouteRow(row as Record<string, unknown>));
+        if (this.client) {
+          try {
+            const rpcPromise = this.client.rpc('find_transfer_routes_between_points', {
+              origin_lat: originLat,
+              origin_lon: originLon,
+              dest_lat: destLat,
+              dest_lon: destLon,
+              radius_meters: radius,
+              transfer_walk_meters: transferWalkMeters
+            });
+            const timeoutPromise = new Promise<{ data: null; error: { message: string } }>((resolve) =>
+              setTimeout(() => resolve({ data: null, error: { message: 'timeout' } }), 2000)
+            );
+            const { data, error } = await Promise.race([rpcPromise, timeoutPromise]);
+            if (!error && Array.isArray(data) && data.length > 0) {
+              batch = data.map((row) => this.mapTransferRouteRow(row as Record<string, unknown>));
+            }
+          } catch (err) {
+            console.warn('[Supabase] find_transfer_routes RPC fallback:', (err as Error).message);
           }
-        } catch (err) {
-          console.warn('[Supabase] find_transfer_routes RPC fallback:', (err as Error).message);
+        }
+
+        if (batch.length === 0 && this.pgPool) {
+          try {
+            const res = await this.pgPool.query(
+              `SELECT * FROM find_transfer_routes_between_points($1, $2, $3, $4, $5, $6)`,
+              [originLat, originLon, destLat, destLon, radius, transferWalkMeters]
+            );
+            if (res.rows.length > 0) {
+              batch = res.rows.map((row) => this.mapTransferRouteRow(row as Record<string, unknown>));
+            }
+          } catch (err) {
+            console.warn('[PostgreSQL] find_transfer_routes query error:', (err as Error).message);
+          }
+        }
+
+        for (const item of batch) {
+          const key = `${item.leg1_route_id}:${item.leg1_direction_id}:${item.leg2_route_id}:${item.leg2_direction_id}`;
+          if (!collected.has(key)) {
+            collected.set(key, item);
+            distinctLeg1Routes.add(item.leg1_route_id);
+          }
+        }
+
+        if (distinctLeg1Routes.size >= 3) {
+          break;
         }
       }
+    }
 
-      if (batch.length === 0 && this.pgPool) {
-        try {
-          const res = await this.pgPool.query(
-            `SELECT * FROM find_transfer_routes_between_points($1, $2, $3, $4, $5, $6)`,
-            [originLat, originLon, destLat, destLon, radius, transferWalkMeters]
-          );
-          if (res.rows.length > 0) {
-            batch = res.rows.map((row) => this.mapTransferRouteRow(row as Record<string, unknown>));
-          }
-        } catch (err) {
-          console.warn('[PostgreSQL] find_transfer_routes query error:', (err as Error).message);
-        }
-      }
-
-      for (const item of batch) {
-        const key = `${item.leg1_route_id}:${item.leg1_direction_id}:${item.leg2_route_id}:${item.leg2_direction_id}`;
+    // Hub-based fallback for nationwide or when RPC times out / yields 0 matches
+    if (collected.size === 0) {
+      const hubMatches = await this.findSingleTransferTripsViaHubs(
+        originLat,
+        originLon,
+        destLat,
+        destLon,
+        radiusMeters
+      );
+      for (const m of hubMatches) {
+        const key = `${m.leg1_route_id}:${m.leg1_direction_id}:${m.leg2_route_id}:${m.leg2_direction_id}`;
         if (!collected.has(key)) {
-          collected.set(key, item);
-          distinctLeg1Routes.add(item.leg1_route_id);
+          collected.set(key, m);
         }
-      }
-
-      if (distinctLeg1Routes.size >= 3) {
-        break;
       }
     }
 
@@ -1023,6 +1167,277 @@ class SupabaseService {
     return this.findDirectRoutesBetweenPoints(originLat, originLon, destLat, destLon, radiusMeters);
   }
 
+  private async findTwoTransferTripsViaHubs(
+    originLat: number,
+    originLon: number,
+    destLat: number,
+    destLon: number,
+    radiusMeters: number
+  ): Promise<TwoTransferTripMatch[]> {
+    const oHubs = MAJOR_INTERCITY_HUBS.map((h) => ({
+      ...h,
+      distOrigin: haversineDistanceMeters(originLat, originLon, h.lat, h.lon),
+      distDest: haversineDistanceMeters(destLat, destLon, h.lat, h.lon)
+    }))
+      .filter((h) => h.distOrigin <= 35_000 && h.distDest > 800)
+      .sort((a, b) => a.distOrigin - b.distOrigin)
+      .slice(0, 2);
+
+    const dHubs = MAJOR_INTERCITY_HUBS.map((h) => ({
+      ...h,
+      distOrigin: haversineDistanceMeters(originLat, originLon, h.lat, h.lon),
+      distDest: haversineDistanceMeters(destLat, destLon, h.lat, h.lon)
+    }))
+      .filter((h) => h.distDest <= 35_000 && h.distOrigin > 800)
+      .sort((a, b) => a.distDest - b.distDest)
+      .slice(0, 2);
+
+    const CORE_INTERCHANGES = [
+      MAJOR_INTERCITY_HUBS.find((h) => h.name === 'Tel Aviv Savidor')!,
+      MAJOR_INTERCITY_HUBS.find((h) => h.name === 'Haifa Hof HaCarmel')!,
+      MAJOR_INTERCITY_HUBS.find((h) => h.name === 'Haifa Merkazit HaMifratz')!,
+      MAJOR_INTERCITY_HUBS.find((h) => h.name === 'Jerusalem CBS')!,
+      MAJOR_INTERCITY_HUBS.find((h) => h.name === "Be'er Sheva CBS")!
+    ].filter(Boolean);
+
+    const collected = new Map<string, { score: number; row: TwoTransferTripMatch }>();
+
+    for (const oH of oHubs) {
+      const leg1List = await this.findDirectRoutesBetweenPoints(
+        originLat,
+        originLon,
+        oH.lat,
+        oH.lon,
+        radiusMeters
+      );
+      if (leg1List.length === 0) continue;
+
+      for (const core of CORE_INTERCHANGES) {
+        if (core.name === oH.name) {
+          for (const dH of dHubs) {
+            if (dH.name === oH.name) continue;
+            const [leg2List, leg3List] = await Promise.all([
+              this.findDirectRoutesBetweenPoints(oH.lat, oH.lon, dH.lat, dH.lon, 850),
+              this.findDirectRoutesBetweenPoints(dH.lat, dH.lon, destLat, destLon, 850)
+            ]);
+            for (const l1 of leg1List.slice(0, 3)) {
+              for (const l2 of leg2List.slice(0, 3)) {
+                for (const l3 of leg3List.slice(0, 3)) {
+                  if (
+                    l1.route_id === l2.route_id ||
+                    l2.route_id === l3.route_id ||
+                    l1.route_id === l3.route_id ||
+                    l1.origin_stop_sequence >= l1.dest_stop_sequence ||
+                    l2.origin_stop_sequence >= l2.dest_stop_sequence ||
+                    l3.origin_stop_sequence >= l3.dest_stop_sequence
+                  ) {
+                    continue;
+                  }
+                  const xfer1Walk = Math.round(
+                    haversineDistanceMeters(l1.dest_lat, l1.dest_lon, l2.origin_lat, l2.origin_lon)
+                  );
+                  const xfer2Walk = Math.round(
+                    haversineDistanceMeters(l2.dest_lat, l2.dest_lon, l3.origin_lat, l3.origin_lon)
+                  );
+                  if (xfer1Walk > 900 || xfer2Walk > 900) continue;
+
+                  const totalStops = l1.stops_between + l2.stops_between + l3.stops_between;
+                  const score = totalStops * 10 + xfer1Walk + xfer2Walk;
+                  const key = `${l1.route_id}:${l2.route_id}:${l3.route_id}`;
+                  const existing = collected.get(key);
+                  if (existing && existing.score <= score) continue;
+
+                  collected.set(key, {
+                    score,
+                    row: {
+                      transfers_count: 2,
+                      leg1_route_id: l1.route_id,
+                      leg1_route_short_name: l1.route_short_name,
+                      leg1_route_long_name: l1.route_long_name,
+                      leg1_direction_id: l1.direction_id,
+                      origin_stop_id: l1.origin_stop_id,
+                      origin_stop_code: l1.origin_stop_code,
+                      origin_stop_name: l1.origin_stop_name,
+                      origin_stop_name_he: l1.origin_stop_name_he,
+                      origin_stop_sequence: l1.origin_stop_sequence,
+                      origin_lat: l1.origin_lat,
+                      origin_lon: l1.origin_lon,
+                      xfer1_alight_stop_id: l1.dest_stop_id,
+                      xfer1_alight_stop_code: l1.dest_stop_code,
+                      xfer1_alight_stop_name: l1.dest_stop_name,
+                      xfer1_alight_stop_name_he: l1.dest_stop_name_he,
+                      xfer1_alight_stop_sequence: l1.dest_stop_sequence,
+                      xfer1_alight_lat: l1.dest_lat,
+                      xfer1_alight_lon: l1.dest_lon,
+                      leg1_stops_between: l1.stops_between,
+                      xfer1_walk_meters: xfer1Walk,
+                      leg2_route_id: l2.route_id,
+                      leg2_route_short_name: l2.route_short_name,
+                      leg2_route_long_name: l2.route_long_name,
+                      leg2_direction_id: l2.direction_id,
+                      xfer1_board_stop_id: l2.origin_stop_id,
+                      xfer1_board_stop_code: l2.origin_stop_code,
+                      xfer1_board_stop_name: l2.origin_stop_name,
+                      xfer1_board_stop_name_he: l2.origin_stop_name_he,
+                      xfer1_board_stop_sequence: l2.origin_stop_sequence,
+                      xfer1_board_lat: l2.origin_lat,
+                      xfer1_board_lon: l2.origin_lon,
+                      xfer2_alight_stop_id: l2.dest_stop_id,
+                      xfer2_alight_stop_code: l2.dest_stop_code,
+                      xfer2_alight_stop_name: l2.dest_stop_name,
+                      xfer2_alight_stop_name_he: l2.dest_stop_name_he,
+                      xfer2_alight_stop_sequence: l2.dest_stop_sequence,
+                      xfer2_alight_lat: l2.dest_lat,
+                      xfer2_alight_lon: l2.dest_lon,
+                      leg2_stops_between: l2.stops_between,
+                      xfer2_walk_meters: xfer2Walk,
+                      leg3_route_id: l3.route_id,
+                      leg3_route_short_name: l3.route_short_name,
+                      leg3_route_long_name: l3.route_long_name,
+                      leg3_direction_id: l3.direction_id,
+                      xfer2_board_stop_id: l3.origin_stop_id,
+                      xfer2_board_stop_code: l3.origin_stop_code,
+                      xfer2_board_stop_name: l3.origin_stop_name,
+                      xfer2_board_stop_name_he: l3.origin_stop_name_he,
+                      xfer2_board_stop_sequence: l3.origin_stop_sequence,
+                      xfer2_board_lat: l3.origin_lat,
+                      xfer2_board_lon: l3.origin_lon,
+                      dest_stop_id: l3.dest_stop_id,
+                      dest_stop_code: l3.dest_stop_code,
+                      dest_stop_name: l3.dest_stop_name,
+                      dest_stop_name_he: l3.dest_stop_name_he,
+                      dest_stop_sequence: l3.dest_stop_sequence,
+                      dest_lat: l3.dest_lat,
+                      dest_lon: l3.dest_lon,
+                      leg3_stops_between: l3.stops_between
+                    }
+                  });
+                }
+              }
+            }
+          }
+        } else {
+          const leg2List = await this.findDirectRoutesBetweenPoints(
+            oH.lat,
+            oH.lon,
+            core.lat,
+            core.lon,
+            850
+          );
+          if (leg2List.length === 0) continue;
+
+          const leg3List = await this.findDirectRoutesBetweenPoints(
+            core.lat,
+            core.lon,
+            destLat,
+            destLon,
+            850
+          );
+          for (const l1 of leg1List.slice(0, 3)) {
+            for (const l2 of leg2List.slice(0, 3)) {
+              for (const l3 of leg3List.slice(0, 3)) {
+                if (
+                  l1.route_id === l2.route_id ||
+                  l2.route_id === l3.route_id ||
+                  l1.route_id === l3.route_id ||
+                  l1.origin_stop_sequence >= l1.dest_stop_sequence ||
+                  l2.origin_stop_sequence >= l2.dest_stop_sequence ||
+                  l3.origin_stop_sequence >= l3.dest_stop_sequence
+                ) {
+                  continue;
+                }
+                const xfer1Walk = Math.round(
+                  haversineDistanceMeters(l1.dest_lat, l1.dest_lon, l2.origin_lat, l2.origin_lon)
+                );
+                const xfer2Walk = Math.round(
+                  haversineDistanceMeters(l2.dest_lat, l2.dest_lon, l3.origin_lat, l3.origin_lon)
+                );
+                if (xfer1Walk > 900 || xfer2Walk > 900) continue;
+
+                const totalStops = l1.stops_between + l2.stops_between + l3.stops_between;
+                const score = totalStops * 10 + xfer1Walk + xfer2Walk;
+                const key = `${l1.route_id}:${l2.route_id}:${l3.route_id}`;
+                const existing = collected.get(key);
+                if (existing && existing.score <= score) continue;
+
+                collected.set(key, {
+                  score,
+                  row: {
+                    transfers_count: 2,
+                    leg1_route_id: l1.route_id,
+                    leg1_route_short_name: l1.route_short_name,
+                    leg1_route_long_name: l1.route_long_name,
+                    leg1_direction_id: l1.direction_id,
+                    origin_stop_id: l1.origin_stop_id,
+                    origin_stop_code: l1.origin_stop_code,
+                    origin_stop_name: l1.origin_stop_name,
+                    origin_stop_name_he: l1.origin_stop_name_he,
+                    origin_stop_sequence: l1.origin_stop_sequence,
+                    origin_lat: l1.origin_lat,
+                    origin_lon: l1.origin_lon,
+                    xfer1_alight_stop_id: l1.dest_stop_id,
+                    xfer1_alight_stop_code: l1.dest_stop_code,
+                    xfer1_alight_stop_name: l1.dest_stop_name,
+                    xfer1_alight_stop_name_he: l1.dest_stop_name_he,
+                    xfer1_alight_stop_sequence: l1.dest_stop_sequence,
+                    xfer1_alight_lat: l1.dest_lat,
+                    xfer1_alight_lon: l1.dest_lon,
+                    leg1_stops_between: l1.stops_between,
+                    xfer1_walk_meters: xfer1Walk,
+                    leg2_route_id: l2.route_id,
+                    leg2_route_short_name: l2.route_short_name,
+                    leg2_route_long_name: l2.route_long_name,
+                    leg2_direction_id: l2.direction_id,
+                    xfer1_board_stop_id: l2.origin_stop_id,
+                    xfer1_board_stop_code: l2.origin_stop_code,
+                    xfer1_board_stop_name: l2.origin_stop_name,
+                    xfer1_board_stop_name_he: l2.origin_stop_name_he,
+                    xfer1_board_stop_sequence: l2.origin_stop_sequence,
+                    xfer1_board_lat: l2.origin_lat,
+                    xfer1_board_lon: l2.origin_lon,
+                    xfer2_alight_stop_id: l2.dest_stop_id,
+                    xfer2_alight_stop_code: l2.dest_stop_code,
+                    xfer2_alight_stop_name: l2.dest_stop_name,
+                    xfer2_alight_stop_name_he: l2.dest_stop_name_he,
+                    xfer2_alight_stop_sequence: l2.dest_stop_sequence,
+                    xfer2_alight_lat: l2.dest_lat,
+                    xfer2_alight_lon: l2.dest_lon,
+                    leg2_stops_between: l2.stops_between,
+                    xfer2_walk_meters: xfer2Walk,
+                    leg3_route_id: l3.route_id,
+                    leg3_route_short_name: l3.route_short_name,
+                    leg3_route_long_name: l3.route_long_name,
+                    leg3_direction_id: l3.direction_id,
+                    xfer2_board_stop_id: l3.origin_stop_id,
+                    xfer2_board_stop_code: l3.origin_stop_code,
+                    xfer2_board_stop_name: l3.origin_stop_name,
+                    xfer2_board_stop_name_he: l3.origin_stop_name_he,
+                    xfer2_board_stop_sequence: l3.origin_stop_sequence,
+                    xfer2_board_lat: l3.origin_lat,
+                    xfer2_board_lon: l3.origin_lon,
+                    dest_stop_id: l3.dest_stop_id,
+                    dest_stop_code: l3.dest_stop_code,
+                    dest_stop_name: l3.dest_stop_name,
+                    dest_stop_name_he: l3.dest_stop_name_he,
+                    dest_stop_sequence: l3.dest_stop_sequence,
+                    dest_lat: l3.dest_lat,
+                    dest_lon: l3.dest_lon,
+                    leg3_stops_between: l3.stops_between
+                  }
+                });
+              }
+            }
+          }
+        }
+      }
+    }
+
+    return Array.from(collected.values())
+      .sort((a, b) => a.score - b.score)
+      .slice(0, 6)
+      .map((item) => item.row);
+  }
+
   async findTransferTrips(
     originLat: number,
     originLon: number,
@@ -1032,115 +1447,74 @@ class SupabaseService {
     maxTransfers = 2
   ): Promise<TwoTransferTripMatch[]> {
     this.ensureInit();
-    const radiiToTry = Array.from(new Set([radiusMeters, Math.max(1100, radiusMeters)]));
-    const collected = new Map<string, TwoTransferTripMatch>();
-    const distinctLeg1Routes = new Set<string>();
 
-    for (const radius of radiiToTry) {
-      let batch: TwoTransferTripMatch[] = [];
-
-      if (this.client) {
-        try {
-          const { data, error } = await this.client.rpc('find_transfer_trips', {
-            origin_lat: originLat,
-            origin_lon: originLon,
-            dest_lat: destLat,
-            dest_lon: destLon,
-            radius_meters: radius,
-            max_transfers: maxTransfers
-          });
-          if (!error && Array.isArray(data) && data.length > 0) {
-            batch = data as TwoTransferTripMatch[];
-          }
-        } catch (err) {
-          console.warn('[Supabase] find_transfer_trips RPC fallback:', (err as Error).message);
-        }
-      }
-
-      if (batch.length === 0 && this.pgPool) {
-        try {
-          const res = await this.pgPool.query(
-            `SELECT * FROM find_transfer_trips($1, $2, $3, $4, $5, $6)`,
-            [originLat, originLon, destLat, destLon, radius, maxTransfers]
-          );
-          if (res.rows.length > 0) {
-            batch = res.rows as TwoTransferTripMatch[];
-          }
-        } catch (err) {
-          console.warn('[PostgreSQL] find_transfer_trips error:', (err as Error).message);
-        }
-      }
-
-      for (const item of batch) {
-        const key = `${item.leg1_route_id}:${item.leg1_direction_id}:${item.leg2_route_id}:${item.leg2_direction_id}:${item.leg3_route_id ?? ''}`;
-        if (!collected.has(key)) {
-          collected.set(key, item);
-          distinctLeg1Routes.add(item.leg1_route_id);
-        }
-      }
-
-      if (distinctLeg1Routes.size >= 3) {
-        break;
-      }
-    }
-
-    if (collected.size > 0) {
-      return Array.from(collected.values());
-    }
-
-    // Compatibility fallback to findTransferRoutesBetweenPoints
     const singleTransfers = await this.findTransferRoutesBetweenPoints(
       originLat,
       originLon,
       destLat,
       destLon,
       radiusMeters,
-      260
+      300
     );
-    return singleTransfers.map((m) => ({
-      transfers_count: 1 as const,
-      leg1_route_id: m.leg1_route_id,
-      leg1_route_short_name: m.leg1_route_short_name,
-      leg1_route_long_name: m.leg1_route_long_name,
-      leg1_direction_id: m.leg1_direction_id,
-      origin_stop_id: m.origin_stop_id,
-      origin_stop_code: m.origin_stop_code,
-      origin_stop_name: m.origin_stop_name,
-      origin_stop_name_he: m.origin_stop_name_he,
-      origin_stop_sequence: m.origin_stop_sequence,
-      origin_lat: m.origin_lat,
-      origin_lon: m.origin_lon,
-      xfer1_alight_stop_id: m.xfer_alight_stop_id,
-      xfer1_alight_stop_code: m.xfer_alight_stop_code,
-      xfer1_alight_stop_name: m.xfer_alight_stop_name,
-      xfer1_alight_stop_name_he: m.xfer_alight_stop_name_he,
-      xfer1_alight_stop_sequence: m.xfer_alight_stop_sequence,
-      xfer1_alight_lat: m.xfer_alight_lat,
-      xfer1_alight_lon: m.xfer_alight_lon,
-      leg1_stops_between: m.leg1_stops_between,
-      xfer1_walk_meters: m.transfer_walk_meters_actual,
-      leg2_route_id: m.leg2_route_id,
-      leg2_route_short_name: m.leg2_route_short_name,
-      leg2_route_long_name: m.leg2_route_long_name,
-      leg2_direction_id: m.leg2_direction_id,
-      xfer1_board_stop_id: m.xfer_board_stop_id,
-      xfer1_board_stop_code: m.xfer_board_stop_code,
-      xfer1_board_stop_name: m.xfer_board_stop_name,
-      xfer1_board_stop_name_he: m.xfer_board_stop_name_he,
-      xfer1_board_stop_sequence: m.xfer_board_stop_sequence,
-      xfer1_board_lat: m.xfer_board_lat,
-      xfer1_board_lon: m.xfer_board_lon,
-      leg2_stops_between: m.leg2_stops_between,
-      xfer2_walk_meters: 0,
-      dest_stop_id: m.dest_stop_id,
-      dest_stop_code: m.dest_stop_code,
-      dest_stop_name: m.dest_stop_name,
-      dest_stop_name_he: m.dest_stop_name_he,
-      dest_stop_sequence: m.dest_stop_sequence,
-      dest_lat: m.dest_lat,
-      dest_lon: m.dest_lon,
-      leg3_stops_between: 0
-    }));
+
+    if (singleTransfers.length > 0) {
+      return singleTransfers.map((m) => ({
+        transfers_count: 1 as const,
+        leg1_route_id: m.leg1_route_id,
+        leg1_route_short_name: m.leg1_route_short_name,
+        leg1_route_long_name: m.leg1_route_long_name,
+        leg1_direction_id: m.leg1_direction_id,
+        origin_stop_id: m.origin_stop_id,
+        origin_stop_code: m.origin_stop_code,
+        origin_stop_name: m.origin_stop_name,
+        origin_stop_name_he: m.origin_stop_name_he,
+        origin_stop_sequence: m.origin_stop_sequence,
+        origin_lat: m.origin_lat,
+        origin_lon: m.origin_lon,
+        xfer1_alight_stop_id: m.xfer_alight_stop_id,
+        xfer1_alight_stop_code: m.xfer_alight_stop_code,
+        xfer1_alight_stop_name: m.xfer_alight_stop_name,
+        xfer1_alight_stop_name_he: m.xfer_alight_stop_name_he,
+        xfer1_alight_stop_sequence: m.xfer_alight_stop_sequence,
+        xfer1_alight_lat: m.xfer_alight_lat,
+        xfer1_alight_lon: m.xfer_alight_lon,
+        leg1_stops_between: m.leg1_stops_between,
+        xfer1_walk_meters: m.transfer_walk_meters_actual,
+        leg2_route_id: m.leg2_route_id,
+        leg2_route_short_name: m.leg2_route_short_name,
+        leg2_route_long_name: m.leg2_route_long_name,
+        leg2_direction_id: m.leg2_direction_id,
+        xfer1_board_stop_id: m.xfer_board_stop_id,
+        xfer1_board_stop_code: m.xfer_board_stop_code,
+        xfer1_board_stop_name: m.xfer_board_stop_name,
+        xfer1_board_stop_name_he: m.xfer_board_stop_name_he,
+        xfer1_board_stop_sequence: m.xfer_board_stop_sequence,
+        xfer1_board_lat: m.xfer_board_lat,
+        xfer1_board_lon: m.xfer_board_lon,
+        leg2_stops_between: m.leg2_stops_between,
+        xfer2_walk_meters: 0,
+        dest_stop_id: m.dest_stop_id,
+        dest_stop_code: m.dest_stop_code,
+        dest_stop_name: m.dest_stop_name,
+        dest_stop_name_he: m.dest_stop_name_he,
+        dest_stop_sequence: m.dest_stop_sequence,
+        dest_lat: m.dest_lat,
+        dest_lon: m.dest_lon,
+        leg3_stops_between: 0
+      }));
+    }
+
+    if (maxTransfers >= 2) {
+      return this.findTwoTransferTripsViaHubs(
+        originLat,
+        originLon,
+        destLat,
+        destLon,
+        radiusMeters
+      );
+    }
+
+    return [];
   }
 
   private mapNearbyTerminusRow(row: Record<string, unknown>): NearbyLineTerminusRow {
@@ -1271,23 +1645,72 @@ class SupabaseService {
     const q = cityName.trim().toLowerCase();
     if (/חיפה|хайф|haifa/.test(q)) return ['חיפה', 'haifa'];
     if (/טירת|тират|tirat/.test(q)) return ['טירת כרמל', 'tirat carmel'];
-    if (/תל.?אביב|тель.?авив|tel.?aviv|\btlv\b/.test(q)) return ['תל אביב', 'tel aviv'];
+    if (/נשר|нешер|nesher/.test(q)) return ['נשר', 'nesher'];
+    if (/קרית אתא|קריית אתא|кирьят.?ат|kiryat.?ata/.test(q)) return ['קרית אתא', 'קריית אתא', 'kiryat ata'];
+    if (/קרית ביאליק|קריית ביאליק|кирьят.?бьялик|kiryat.?bialik/.test(q)) return ['קרית ביאליק', 'קריית ביאליק', 'kiryat bialik'];
+    if (/קרית מוצקין|קריית מוצקין|кирьят.?моцкин|kiryat.?motzkin/.test(q)) return ['קרית מוצקין', 'קריית מוצקין', 'kiryat motzkin'];
+    if (/קרית ים|קריית ים|кирьят.?ям|kiryat.?yam/.test(q)) return ['קרית ים', 'קריית ים', 'kiryat yam'];
+    if (/תל.?אביב|тель.?авив|tel.?aviv|\btlv\b/.test(q)) return ['תל אביב יפו', 'תל אביב', 'tel aviv'];
     if (/ירושלים|иерусалим|jerusalem/.test(q)) return ['ירושלים', 'jerusalem'];
-    if (/אילת|эйлат|eilat/.test(q)) return ['אילת', 'eilat'];
-    if (/באר.?שבע|беэр.?шев|beer.?sheva/.test(q)) return ['באר שבע', "be'er sheva", 'beer sheva'];
-    if (/דימונה|димон|dimona/.test(q)) return ['דימונה', 'dimona'];
-    if (/מצפה.?רמון|мицпе.?рамон|mitzpe.?ramon/.test(q)) return ['מצפה רמון', 'mitzpe ramon'];
-    if (/אשדוד|ашдод|ashdod/.test(q)) return ['אשדוד', 'ashdod'];
-    if (/קריית.?גת|קרית.?גת|кирьят.?гат|kiryat.?gat/.test(q)) return ['קריית גת', 'kiryat gat'];
-    if (/נתניה|нетани|netanya/.test(q)) return ['נתניה', 'netanya'];
-    if (/אשקלון|ашкелон|ashkelon/.test(q)) return ['אשקלון', 'ashkelon'];
-    if (/חדרה|хадер|hadera/.test(q)) return ['חדרה', 'hadera'];
-    if (/עכו|акко|acre|akko/.test(q)) return ['עכו', 'acre', 'akko'];
-    if (/נהריה|нагари|nahariya/.test(q)) return ['נהריה', 'nahariya'];
     if (/ראשון.?לציון|ришон|rishon/.test(q)) return ['ראשון לציון', 'rishon lezion'];
     if (/רחובות|реховот|rehovot/.test(q)) return ['רחובות', 'rehovot'];
     if (/פתח.?תקווה|петах|petah/.test(q)) return ['פתח תקווה', 'petah tikva'];
+    if (/חולון|холон|holon/.test(q)) return ['חולון', 'holon'];
+    if (/בת.?ים|бат.?ям|bat.?yam/.test(q)) return ['בת ים', 'bat yam'];
+    if (/רמת.?גן|рамат.?ган|ramat.?gan/.test(q)) return ['רמת גן', 'ramat gan'];
+    if (/בני.?ברק|бней.?брак|bnei.?brak/.test(q)) return ['בני ברק', 'bnei brak'];
+    if (/גבעתיים|гиватаим|givatayim/.test(q)) return ['גבעתיים', 'givatayim'];
+    if (/כפר.?סבא|кфар.?саб|kfar.?saba/.test(q)) return ['כפר סבא', 'kfar saba'];
+    if (/רעננה|раанана|raanana|ra'anana/.test(q)) return ['רעננה', 'raanana'];
     if (/הרצליה|герцли|herzliya/.test(q)) return ['הרצליה', 'herzliya'];
+    if (/רמת.?השרון|рамат.?ха.?шарон|ramat.?hasharon/.test(q)) return ['רמת השרון', 'ramat hasharon'];
+    if (/הוד.?השרון|ход.?ха.?шарон|hod.?hasharon/.test(q)) return ['הוד השרון', 'hod hasharon'];
+    if (/מודיעין|модиин|modiin|modi'in/.test(q)) return ['מודיעין מכבים רעות', 'מודיעין', 'modiin'];
+    if (/לוד|\bлод\b|\blod\b/.test(q)) return ['לוד', 'lod'];
+    if (/רמלה|рамл[аеу]|ramla/.test(q)) return ['רמלה', 'ramla'];
+    if (/יבנה|явне|yavne/.test(q)) return ['יבנה', 'yavne'];
+    if (/נס.?ציונה|нес.?цион|ness.?ziona/.test(q)) return ['נס ציונה', 'ness ziona'];
+    if (/גדרה|гедер[аеу]|gedera/.test(q)) return ['גדרה', 'gedera'];
+    if (/בית.?שמש|бейт.?шемеш|beit.?shemesh/.test(q)) return ['בית שמש', 'beit shemesh'];
+    if (/ראש.?העין|рош.?ха.?айн|rosh.?haayin/.test(q)) return ['ראש העין', 'rosh haayin'];
+    if (/אור.?יהודה|ор.?йехуд|or.?yehuda/.test(q)) return ['אור יהודה', 'or yehuda'];
+    if (/יהוד|йехуд|\byehud\b/.test(q)) return ['יהוד מונוסון', 'יהוד-מונוסון', 'יהוד', 'yehud'];
+    if (/אריאל|ариэл|ariel/.test(q)) return ['אריאל', 'ariel'];
+    if (/מעלה.?אדומים|маале.?адумим|maale.?adumim/.test(q)) return ['מעלה אדומים', 'maale adumim'];
+    if (/נתניה|нетани|netanya/.test(q)) return ['נתניה', 'netanya'];
+    if (/חדרה|хадер|hadera/.test(q)) return ['חדרה', 'hadera'];
+    if (/אור.?עקיבא|ор.?акива|or.?akiva/.test(q)) return ['אור עקיבא', 'or akiva'];
+    if (/קיסריה|кесари|caesarea/.test(q)) return ['קיסריה', 'caesarea'];
+    if (/פרדס.?חנה|пардес.?хан|pardes.?hana/.test(q)) return ['פרדס חנה כרכור', 'פרדס חנה-כרכור', 'פרדס חנה', 'pardes hana'];
+    if (/בנימינה|биньямина|binyamina/.test(q)) return ['בנימינה-גבעת עדה', 'בנימינה', 'binyamina'];
+    if (/זכרון|зихрон|zikhron/.test(q)) return ['זכרון יעקב', 'zikhron yaakov'];
+    if (/עתלית|атлит|atlit/.test(q)) return ['עתלית', 'atlit'];
+    if (/עכו|акко|acre|akko/.test(q)) return ['עכו', 'acre', 'akko'];
+    if (/נהריה|нагари|nahariya/.test(q)) return ['נהריה', 'nahariya'];
+    if (/מעלות|מאלות|маалот|maalot/.test(q)) return ['מעלות-תרשיחא', 'מעלות תרשיחא', 'מעלות', 'maalot'];
+    if (/כרמיאל|кармиэл|karmiel/.test(q)) return ['כרמיאל', 'karmiel'];
+    if (/צפת|цфат|safed|tzfat/.test(q)) return ['צפת', 'safed', 'tzfat'];
+    if (/קרית.?שמונה|קריית.?שמונה|кирьят.?шмон|kiryat.?shmona/.test(q)) return ['קרית שמונה', 'קריית שמונה', 'kiryat shmona'];
+    if (/קצרין|кацрин|katzrin/.test(q)) return ['קצרין', 'katzrin'];
+    if (/טבריה|твери|tiberias/.test(q)) return ['טבריה', 'tiberias'];
+    if (/נוף.?הגליל|נצרת.?עילית|ноф.?ха.?галил|нацерет.?илит|nof.?hagalil/.test(q)) return ['נוף הגליל', 'נצרת עילית', 'nof hagalil'];
+    if (/נצרת|назарет|nazareth/.test(q)) return ['נצרת', 'nazareth'];
+    if (/עפולה|афула|afula/.test(q)) return ['עפולה', 'afula'];
+    if (/מגדל.?העמק|мигдаль.?ха.?эмек|migdal.?haemek/.test(q)) return ['מגדל העמק', 'migdal haemek'];
+    if (/יקנעם|йокнеам|yokneam/.test(q)) return ['יקנעם עילית', 'יקנעם', 'yokneam'];
+    if (/בית.?שאן|бейт.?шеан|beit.?shean/.test(q)) return ['בית שאן', 'beit shean'];
+    if (/אשדוד|ашдод|ashdod/.test(q)) return ['אשדוד', 'ashdod'];
+    if (/אשקלון|ашкелон|ashkelon/.test(q)) return ['אשקלון', 'ashkelon'];
+    if (/קרי?ית.?גת|кирьят.?гат|kiryat.?gat/.test(q)) return ['קרית גת', 'קריית גת', 'kiryat gat'];
+    if (/שדרות|сдерот|sderot/.test(q)) return ['שדרות', 'sderot'];
+    if (/נתיבות|нетивот|netivot/.test(q)) return ['נתיבות', 'netivot'];
+    if (/אופקים|офаким|ofakim/.test(q)) return ['אופקים', 'ofakim'];
+    if (/באר.?שבע|беэр.?шев|beer.?sheva/.test(q)) return ['באר שבע', "be'er sheva", 'beer sheva'];
+    if (/רהט|рахат|rahat/.test(q)) return ['רהט', 'rahat'];
+    if (/דימונה|димон|dimona/.test(q)) return ['דימונה', 'dimona'];
+    if (/ערד|арад|\barad\b/.test(q)) return ['ערד', 'arad'];
+    if (/מצפה.?רמון|мицпе.?рамон|mitzpe.?ramon/.test(q)) return ['מצפה רמון', 'mitzpe ramon'];
+    if (/אילת|эйлат|eilat/.test(q)) return ['אילת', 'eilat'];
     return [cityName.trim()];
   }
 
@@ -1333,6 +1756,29 @@ class SupabaseService {
     };
   }
 
+  private scoreCityStopCandidate(
+    stopName: string,
+    stopNameHe: string,
+    hebrewCityKeywords: string[],
+    routesCount: number
+  ): { score: number; isCentralHub: boolean } {
+    const txt = `${stopName} ${stopNameHe}`;
+    const exactCityMatch = hebrewCityKeywords.some((kw) => stopNameHe.includes(`(${kw})`));
+    const isCbs =
+      /(תחנה\s*מרכזית|ת\.\s*מרכזית|מרכזית|Central Bus Station|רציפים בינעירוני)/i.test(txt);
+    const isHub = /(רכבת|מסוף|סבידור|חוף\s*הכרמל|Central Train|Savidor|Hof HaCarmel)/i.test(txt);
+    const isMinorCenter = /(קניון|מרכז|Mall|Center)/i.test(txt);
+    const isDrop = /הורדה/i.test(txt);
+
+    const score =
+      (exactCityMatch ? 200 : 0) +
+      (isCbs ? 100 : isHub ? 80 : isMinorCenter ? 30 : 0) +
+      (isDrop ? -20 : 0) +
+      routesCount * 3;
+
+    return { score, isCentralHub: isCbs || isHub };
+  }
+
   /**
    * Finds the primary central bus station or main transit hub of a city via GTFS/PostGIS.
    */
@@ -1341,7 +1787,180 @@ class SupabaseService {
     const cleaned = cityName.trim();
     if (!cleaned) return null;
 
+    const keywords = this.resolveCityKeywords(cleaned);
+    const hebrewKeywords = keywords.filter((kw) => /[\u0590-\u05FF]/.test(kw));
+    const searchKeywords = hebrewKeywords.length > 0 ? hebrewKeywords : keywords;
+
+    // 1. Direct indexed city-exact lookup on pgPool (avoids full route_stops scan)
+    if (this.pgPool) {
+      try {
+        const patterns = searchKeywords.map((kw) => `%(${kw})%`);
+        const broadPatterns = keywords.map((kw) => `%${kw}%`);
+        const res = await this.pgPool.query(
+          `WITH candidates AS (
+             SELECT
+               s.stop_id,
+               s.stop_code,
+               s.stop_name,
+               COALESCE(s.stop_name_he, s.stop_name) AS stop_name_he,
+               ST_Y(s.location::geometry)::FLOAT AS stop_lat,
+               ST_X(s.location::geometry)::FLOAT AS stop_lon,
+               (
+                 CASE WHEN COALESCE(s.stop_name_he, '') ILIKE ANY($1::TEXT[]) THEN 200 ELSE 0 END +
+                 CASE
+                   WHEN COALESCE(s.stop_name_he, '') ~* '(תחנה\s*מרכזית|ת\.\s*מרכזית|מרכזית|רציפים בינעירוני)' OR s.stop_name ~* 'Central Bus Station' THEN 100
+                   WHEN COALESCE(s.stop_name_he, '') ~* '(רכבת|מסוף|סבידור|חוף\s*הכרמל)' OR s.stop_name ~* '(Central Train|Savidor|Hof HaCarmel)' THEN 80
+                   WHEN COALESCE(s.stop_name_he, '') ~* '(קניון|מרכז)' OR s.stop_name ~* '(Mall|Center)' THEN 30
+                   ELSE 0
+                 END -
+                 CASE WHEN COALESCE(s.stop_name_he, '') ~* 'הורדה' THEN 20 ELSE 0 END
+               ) AS base_score
+             FROM stops s
+             WHERE COALESCE(s.stop_name_he, '') ILIKE ANY($1::TEXT[])
+                OR s.stop_name ILIKE ANY($2::TEXT[])
+                OR COALESCE(s.stop_name_he, '') ILIKE ANY($2::TEXT[])
+             ORDER BY base_score DESC, s.stop_id ASC
+             LIMIT 40
+           )
+           SELECT
+             c.*,
+             COUNT(DISTINCT rs.route_id)::INT AS routes_count
+           FROM candidates c
+           LEFT JOIN route_stops rs ON rs.stop_id = c.stop_id
+           GROUP BY c.stop_id, c.stop_code, c.stop_name, c.stop_name_he, c.stop_lat, c.stop_lon, c.base_score
+           ORDER BY (c.base_score + COUNT(DISTINCT rs.route_id)::INT * 3) DESC, c.stop_id ASC
+           LIMIT 1`,
+          [patterns, broadPatterns]
+        );
+        if (res.rows[0]) {
+          const row = res.rows[0] as Record<string, unknown>;
+          return this.mapResolvedStopRow({
+            ...row,
+            is_central_hub: Number(row.base_score ?? 0) >= 80
+          });
+        }
+      } catch (err) {
+        console.warn('[PostgreSQL] Direct findCentralStopForCity query error:', (err as Error).message);
+      }
+    }
+
+    // 2. Direct city-exact lookup via Supabase PostgREST before falling back to full-scan RPC
     if (this.client) {
+      try {
+        const parenOr = searchKeywords
+          .map((kw) => `stop_name_he.ilike.%(${kw})%`)
+          .join(',');
+        const hubFilter =
+          'stop_name_he.ilike.%מרכזית%,stop_name_he.ilike.%רכבת%,stop_name_he.ilike.%מסוף%,stop_name_he.ilike.%קניון%,stop_name_he.ilike.%מרכז%';
+
+        let { data: stopsData } = await this.client
+          .from('stops')
+          .select('stop_id, stop_code, stop_name, stop_name_he, location')
+          .or(parenOr)
+          .or(hubFilter)
+          .limit(60);
+
+        if (!stopsData || stopsData.length === 0) {
+          const broadOr = keywords
+            .flatMap((kw) => [`stop_name_he.ilike.%${kw}%`, `stop_name.ilike.%${kw}%`])
+            .join(',');
+          const fallbackRes = await this.client
+            .from('stops')
+            .select('stop_id, stop_code, stop_name, stop_name_he, location')
+            .or(broadOr)
+            .limit(60);
+          stopsData = fallbackRes.data;
+        }
+
+        if (stopsData && stopsData.length > 0) {
+          const preSorted = [...stopsData].sort((a, b) => {
+            const sa = this.scoreCityStopCandidate(
+              String(a.stop_name ?? ''),
+              String(a.stop_name_he ?? a.stop_name ?? ''),
+              searchKeywords,
+              0
+            ).score;
+            const sb = this.scoreCityStopCandidate(
+              String(b.stop_name ?? ''),
+              String(b.stop_name_he ?? b.stop_name ?? ''),
+              searchKeywords,
+              0
+            ).score;
+            return sb - sa;
+          });
+
+          const topStops = preSorted.slice(0, 25);
+          const stopIds = topStops.map((s) => String(s.stop_id));
+          const { data: rsData } = await this.client
+            .from('route_stops')
+            .select('stop_id, route_id')
+            .in('stop_id', stopIds);
+
+          const routeMap = new Map<string, Set<string>>();
+          for (const rs of rsData ?? []) {
+            const sid = String(rs.stop_id);
+            const set = routeMap.get(sid) ?? new Set<string>();
+            set.add(String(rs.route_id));
+            routeMap.set(sid, set);
+          }
+
+          const ranked = topStops
+            .map((s) => {
+              const sid = String(s.stop_id);
+              const routesCnt = routeMap.get(sid)?.size ?? 0;
+              const scored = this.scoreCityStopCandidate(
+                String(s.stop_name ?? ''),
+                String(s.stop_name_he ?? s.stop_name ?? ''),
+                searchKeywords,
+                routesCnt
+              );
+              return { row: s, routesCnt, ...scored };
+            })
+            .sort((a, b) => b.score - a.score);
+
+          for (const candidate of ranked) {
+            const coords = parsePostgisPoint(candidate.row.location);
+            if (coords) {
+              return {
+                stop_id: String(candidate.row.stop_id),
+                stop_code: String(candidate.row.stop_code ?? candidate.row.stop_id),
+                stop_name: String(candidate.row.stop_name),
+                stop_name_he: String(candidate.row.stop_name_he ?? candidate.row.stop_name),
+                lat: coords.lat,
+                lon: coords.lon,
+                routes_count: candidate.routesCnt || 1,
+                is_central_hub: candidate.isCentralHub
+              };
+            }
+            const bestRouteId = Array.from(routeMap.get(String(candidate.row.stop_id)) ?? [])[0];
+            if (bestRouteId) {
+              const routeCoords =
+                (await this.getDirectionStopCoords(bestRouteId, 0)).find(
+                  (c) => c.stop_id === candidate.row.stop_id
+                ) ??
+                (await this.getDirectionStopCoords(bestRouteId, 1)).find(
+                  (c) => c.stop_id === candidate.row.stop_id
+                );
+              if (routeCoords) {
+                return {
+                  stop_id: routeCoords.stop_id,
+                  stop_code: routeCoords.stop_code,
+                  stop_name: routeCoords.stop_name,
+                  stop_name_he: routeCoords.stop_name_he,
+                  lat: routeCoords.lat,
+                  lon: routeCoords.lon,
+                  routes_count: candidate.routesCnt || 1,
+                  is_central_hub: candidate.isCentralHub
+                };
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[Supabase] Direct findCentralStopForCity fallback error:', (err as Error).message);
+      }
+
+      // 3. RPC fallback only if direct queries returned nothing
       try {
         const { data, error } = await this.client.rpc('find_central_stop_for_city', {
           city_name: cleaned
@@ -1357,79 +1976,12 @@ class SupabaseService {
 
     if (this.pgPool) {
       try {
-        const res = await this.pgPool.query(
-          `SELECT * FROM find_central_stop_for_city($1)`,
-          [cleaned]
-        );
+        const res = await this.pgPool.query(`SELECT * FROM find_central_stop_for_city($1)`, [cleaned]);
         if (res.rows[0]) {
           return this.mapResolvedStopRow(res.rows[0] as Record<string, unknown>);
         }
       } catch (err) {
-        console.warn('[PostgreSQL] find_central_stop_for_city query error:', (err as Error).message);
-      }
-    }
-
-    // PostgREST fallback scan on stops + route_stops when RPC isn't installed remotely
-    if (this.client) {
-      try {
-        const keywords = this.resolveCityKeywords(cleaned);
-        const orFilter = keywords
-          .flatMap((kw) => [`stop_name.ilike.%${kw}%`, `stop_name_he.ilike.%${kw}%`])
-          .join(',');
-        const { data: stopsData } = await this.client
-          .from('stops')
-          .select('stop_id, stop_code, stop_name, stop_name_he')
-          .or(orFilter)
-          .limit(30);
-
-        if (stopsData && stopsData.length > 0) {
-          const stopIds = stopsData.map((s) => String(s.stop_id));
-          const { data: rsData } = await this.client
-            .from('route_stops')
-            .select('stop_id, route_id')
-            .in('stop_id', stopIds);
-
-          const routeMap = new Map<string, Set<string>>();
-          for (const rs of rsData ?? []) {
-            const sid = String(rs.stop_id);
-            const set = routeMap.get(sid) ?? new Set<string>();
-            set.add(String(rs.route_id));
-            routeMap.set(sid, set);
-          }
-
-          const scoreStop = (s: { stop_id: string; stop_name: string; stop_name_he?: string | null }) => {
-            const txt = `${s.stop_name} ${s.stop_name_he ?? ''}`;
-            const isCbs = /(תחנה\s*מרכזית|ת\.\s*מרכזית|Central Bus Station|רציפים בינעירוני)/i.test(txt) ? 100 : 0;
-            const isHub = /(רכבת\s*מרכז|מסוף|סבידור|חוף\s*הכרמל|Central Train|Savidor|Hof HaCarmel)/i.test(txt) ? 80 : 0;
-            const isDrop = /הורדה/i.test(txt) ? -15 : 0;
-            const routesCnt = routeMap.get(s.stop_id)?.size ?? 0;
-            return isCbs + isHub + isDrop + routesCnt * 3;
-          };
-
-          const ranked = [...stopsData].sort((a, b) => scoreStop(b) - scoreStop(a));
-          const best = ranked[0];
-          // Retrieve coordinates via getDirectionStopCoords if associated with a route
-          const bestRouteId = Array.from(routeMap.get(String(best.stop_id)) ?? [])[0];
-          if (bestRouteId) {
-            const coords =
-              (await this.getDirectionStopCoords(bestRouteId, 0)).find((c) => c.stop_id === best.stop_id) ??
-              (await this.getDirectionStopCoords(bestRouteId, 1)).find((c) => c.stop_id === best.stop_id);
-            if (coords) {
-              return {
-                stop_id: coords.stop_id,
-                stop_code: coords.stop_code,
-                stop_name: coords.stop_name,
-                stop_name_he: coords.stop_name_he,
-                lat: coords.lat,
-                lon: coords.lon,
-                routes_count: routeMap.get(String(best.stop_id))?.size ?? 1,
-                is_central_hub: scoreStop(best) >= 80
-              };
-            }
-          }
-        }
-      } catch (err) {
-        console.warn('[Supabase] findCentralStopForCity table fallback error:', (err as Error).message);
+        console.warn('[PostgreSQL] find_central_stop_for_city RPC error:', (err as Error).message);
       }
     }
 
