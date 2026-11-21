@@ -20,3 +20,17 @@ coverage/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Android TWA & Signing Secrets
+.keystore/
+*.keystore
+*.jks
+keystore.properties
+twa-keystore*
+android-twa/.gradle/
+android-twa/build/
+android-twa/app/build/
+android-twa/local.properties
+*.apk
+*.aab
+*.idsig

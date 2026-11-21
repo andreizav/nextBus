@@ -1,0 +1,43 @@
+{
+  "packageId": "app.nextbus.twa",
+  "host": "nextbus-production-04bce44f.up.railway.app",
+  "name": "nextBus",
+  "launcherName": "nextBus",
+  "display": "standalone",
+  "themeColor": "#181E24",
+  "themeColorDark": "#181E24",
+  "navigationColor": "#181E24",
+  "navigationColorDark": "#181E24",
+  "navigationDividerColor": "#181E24",
+  "navigationDividerColorDark": "#181E24",
+  "backgroundColor": "#181E24",
+  "enableNotifications": true,
+  "startUrl": "/?entry_context=standalone",
+  "iconUrl": "https://nextbus-production-04bce44f.up.railway.app/assets/icon.svg",
+  "maskableIconUrl": "https://nextbus-production-04bce44f.up.railway.app/assets/icon.svg",
+  "splashScreenFadeOutDuration": 300,
+  "shortcuts": [],
+  "signingKey": {
+    "path": "../.keystore/nextbus-release.keystore",
+    "alias": "nextbus"
+  },
+  "generatorApp": "bubblewrap-cli",
+  "webManifestUrl": "https://nextbus-production-04bce44f.up.railway.app/manifest.webmanifest",
+  "fallbackType": "customtabs",
+  "features": {},
+  "alphaDependencies": {
+    "enabled": false
+  },
+  "enableSiteSettingsShortcut": true,
+  "isChromeOSOnly": false,
+  "isMetaQuest": false,
+  "fullScopeUrl": "https://nextbus-production-04bce44f.up.railway.app/",
+  "minSdkVersion": 24,
+  "orientation": "portrait",
+  "fingerprints": [],
+  "additionalTrustedOrigins": [],
+  "retainedBundles": [],
+  "appVersionCode": 1,
+  "appVersionName": "1.0.0",
+  "appVersion": "1.0.0"
+}
