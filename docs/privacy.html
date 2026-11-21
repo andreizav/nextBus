@@ -28,15 +28,23 @@
       <h2>1. Data We Process</h2>
       <p>
         nextBus provides real-time public transit arrival estimates in Israel via Google Connected Apps
-        and the Model Context Protocol (MCP). When you request bus status, your query transmits your
-        requested line number and approximate GPS coordinates solely to locate the nearest public transit stop.
+        and the Model Context Protocol (MCP), as well as our standalone web widget. When you request bus status
+        or route directions, your query transmits your requested line number or destination and approximate GPS
+        coordinates solely to locate nearby public transit stops and verified GTFS routes.
       </p>
 
-      <h2>2. Ephemeral Caching &amp; No Personal Tracking</h2>
+      <h2>2. Ephemeral Caching, Anonymous Route History &amp; No Personal Tracking</h2>
       <p>
-        GPS coordinates passed in <code>get_live_bus_status</code> are used only during the active request
-        for geospatial lookup against PostGIS stop tables and are never persisted to user profiles,
-        sold, or shared for advertising. Live bus telemetry is cached transiently in Redis for up to 60 seconds.
+        Live bus telemetry is cached transiently in Redis for up to 60 seconds and static route pairs up to 3 hours.
+        In standalone web/mobile mode, the app generates a random anonymous device identifier
+        (<code>nextbus_user_id</code> stored in browser <code>localStorage</code>) strictly to remember your recent
+        transit searches (<code>user_route_history</code>) near your departure area (~250 m radius) so you can
+        re-select frequent routes with one tap.
+      </p>
+      <p>
+        We do not collect personally identifiable information (no names, emails, phone numbers, or accounts),
+        we do not perform cross-site advertising tracking, and we never sell or share user data with advertisers.
+        You may reset your anonymous identifier and history at any time by clearing your browser storage.
       </p>
 
       <h2>3. Third-Party Data Sources</h2>

@@ -55,6 +55,52 @@ app.get('/.well-known/google-connected-apps', (_req: Request, res: Response) => 
   });
 });
 
+// 2a. Google Play Trusted Web Activity (TWA) Digital Asset Links endpoint
+app.get('/.well-known/assetlinks.json', (_req: Request, res: Response) => {
+  const packageName = process.env.ANDROID_PACKAGE_NAME?.trim() || 'app.nextbus.twa';
+  const rawFingerprints = process.env.ANDROID_SHA256_CERT_FINGERPRINTS?.trim() || '';
+  const fingerprints = rawFingerprints
+    .split(',')
+    .map((fp) => fp.trim())
+    .filter(Boolean);
+
+  res.type('application/json').json([
+    {
+      relation: ['delegate_permission/common.handle_all_urls'],
+      target: {
+        namespace: 'android_app',
+        package_name: packageName,
+        sha256_cert_fingerprints: fingerprints
+      }
+    }
+  ]);
+});
+
+// 2b. Progressive Web App (PWA) Manifest for standalone & TWA installability
+app.get('/manifest.webmanifest', (_req: Request, res: Response) => {
+  res.type('application/manifest+json').json({
+    name: 'nextBus — Live Israeli Transit',
+    short_name: 'nextBus',
+    description: 'Real-time Israeli bus arrival tracker, trip planner, and live map.',
+    start_url: '/?entry_context=standalone',
+    scope: '/',
+    display: 'standalone',
+    orientation: 'portrait',
+    background_color: '#181e24',
+    theme_color: '#181e24',
+    lang: 'he',
+    dir: 'auto',
+    icons: [
+      {
+        src: '/assets/icon.svg',
+        sizes: 'any',
+        type: 'image/svg+xml',
+        purpose: 'any maskable'
+      }
+    ]
+  });
+});
+
 // 3. MCP Streamable HTTP endpoint (POST /mcp)
 app.post('/mcp', async (req: Request, res: Response) => {
   try {
