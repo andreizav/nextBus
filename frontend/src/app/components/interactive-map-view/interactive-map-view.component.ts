@@ -50,17 +50,18 @@ import type {
             }
           </div>
           <div class="nb-map-metric-caption">{{ labels().arrivalCountdown }}</div>
-          @if (activeBus()) {
-            <div
-              class="nb-map-freshness-pill"
-              [class.is-realtime]="!isScheduledEta()"
-              [class.is-scheduled]="isScheduledEta()"
-            >
-              <span class="nb-map-eta-dot" aria-hidden="true"></span>
-              <span>{{ etaStatusText() }}</span>
-            </div>
-          }
         </div>
+
+        @if (activeBus()) {
+          <div
+            class="nb-map-freshness-pill"
+            [class.is-realtime]="!isScheduledEta()"
+            [class.is-scheduled]="isScheduledEta()"
+          >
+            <span class="nb-map-eta-dot" aria-hidden="true"></span>
+            <span>{{ etaStatusText() }}</span>
+          </div>
+        }
       </header>
 
       <!-- 2. Universal Direction / Reverse Route Bar (Line Lookup AND A⇄B Destination Trips) -->
@@ -238,9 +239,10 @@ import type {
       .nb-map-hero {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
-        align-items: end;
+        align-items: start;
         text-align: center;
-        gap: 0.5rem;
+        column-gap: 0.5rem;
+        row-gap: 0.4rem;
         min-inline-size: 0;
         max-inline-size: 100%;
         padding-block: 0.25rem 0.1rem;
@@ -256,10 +258,14 @@ import type {
       }
 
       .nb-map-metric-main {
+        display: inline-flex;
+        align-items: baseline;
+        justify-content: center;
+        block-size: clamp(2.35rem, 9vw, 3.2rem);
         color: #ffffff;
         font-size: clamp(2.1rem, 8.5vw, 3rem);
         font-weight: 700;
-        line-height: 1;
+        line-height: 1.05;
         letter-spacing: -0.03em;
         white-space: nowrap;
         max-inline-size: 100%;
@@ -287,12 +293,13 @@ import type {
       }
 
       .nb-map-freshness-pill {
+        grid-column: 1 / -1;
+        justify-self: center;
         display: inline-flex;
         align-items: center;
         justify-content: center;
         gap: 0.3rem;
-        margin-block-start: 0.15rem;
-        padding: 0.14rem 0.5rem;
+        padding: 0.14rem 0.58rem;
         border-radius: 999px;
         font-size: 0.68rem;
         font-weight: 600;
@@ -354,10 +361,18 @@ import type {
         font-size: 0.78rem;
         color: #cbd5e1;
         font-weight: 500;
+        flex: 1 1 auto;
         min-inline-size: 0;
-        overflow: hidden;
+        overflow-x: auto;
+        overflow-y: hidden;
+        scrollbar-width: none;
+        -webkit-overflow-scrolling: touch;
         text-overflow: ellipsis;
         white-space: nowrap;
+      }
+
+      .nb-map-dir-label::-webkit-scrollbar {
+        display: none;
       }
 
       .nb-map-dir-btn {
@@ -508,8 +523,9 @@ import type {
 
       .nb-map-recenter-fab {
         position: absolute;
-        inset-block-start: 0.65rem;
-        inset-inline-end: 0.65rem;
+        top: 0.65rem;
+        right: 0.65rem;
+        left: auto;
         z-index: 450;
         display: grid;
         place-items: center;
@@ -619,11 +635,30 @@ import type {
         display: inline-flex;
         align-items: center;
         gap: 0.28rem;
+        flex: 1 1 160px;
         min-inline-size: 0;
         max-inline-size: 100%;
+        overflow-x: auto;
+        overflow-y: hidden;
+        scrollbar-width: none;
+        -webkit-overflow-scrolling: touch;
+        white-space: nowrap;
+      }
+
+      .nb-hud-stop::-webkit-scrollbar {
+        display: none;
+      }
+
+      .nb-hud-pin,
+      .nb-hud-muted {
+        flex-shrink: 0;
+      }
+
+      .nb-hud-stop strong {
+        min-inline-size: 0;
         overflow: hidden;
         text-overflow: ellipsis;
-        overflow-wrap: anywhere;
+        white-space: nowrap;
       }
 
       .nb-hud-muted {
@@ -854,7 +889,11 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
       this.lang() === 'he'
         ? dir?.label_he ?? dir?.label ?? route.direction_label
         : dir?.label ?? route.direction_label;
-    return raw.replace(/\s*->\s*/g, ' → ');
+    return raw
+      .split(/\s*(?:->|→)\s*/)
+      .map((part) => part.replace(/\s*\([^)]+\)\s*/g, '').trim())
+      .filter(Boolean)
+      .join(' → ');
   });
 
   readonly tripDirectionText = computed(() => {

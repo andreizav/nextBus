@@ -50,6 +50,8 @@ export class VoiceRecognitionService {
   readonly error = signal<string | null>(null);
 
   private activeRecognition: SpeechRecognitionLike | null = null;
+  private pendingFinalCallback: ((text: string) => void) | null = null;
+  private pendingEndedCallback: (() => void) | null = null;
 
   private detectSupport(): boolean {
     if (typeof window === 'undefined') return false;
@@ -75,12 +77,14 @@ export class VoiceRecognitionService {
     }
   }
 
-  startListening(
+  private beginRecognition(
     lang: WidgetLang,
-    onFinalTranscript: (text: string) => void
+    continuous: boolean,
+    onFinalTranscript: (text: string) => void,
+    onSessionEnded?: () => void
   ): void {
-    if (this.isListening()) {
-      this.stopListening();
+    if (typeof window === 'undefined') {
+      this.error.set('speech-unsupported');
       return;
     }
 
@@ -96,32 +100,28 @@ export class VoiceRecognitionService {
 
     this.error.set(null);
     this.transcript.set('');
+    this.pendingFinalCallback = onFinalTranscript;
+    this.pendingEndedCallback = onSessionEnded ?? null;
 
     const recognition = new Ctor();
     recognition.lang = this.getSpeechLocale(lang);
-    recognition.continuous = false;
+    recognition.continuous = continuous;
     recognition.interimResults = true;
     recognition.maxAlternatives = 1;
-
-    let finalBuffer = '';
 
     recognition.onstart = () => {
       this.isListening.set(true);
     };
 
     recognition.onresult = (event) => {
-      let interim = '';
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const res = event.results[i];
-        const piece = res?.[0]?.transcript ?? '';
-        if (res?.isFinal) {
-          finalBuffer += `${piece} `;
-        } else {
-          interim += piece;
+      const chunks: string[] = [];
+      for (let i = 0; i < event.results.length; i++) {
+        const piece = event.results[i]?.[0]?.transcript?.trim();
+        if (piece) {
+          chunks.push(piece);
         }
       }
-      const combined = `${finalBuffer}${interim}`.trim();
-      this.transcript.set(combined);
+      this.transcript.set(chunks.join(' ').trim());
     };
 
     recognition.onerror = (event) => {
@@ -132,9 +132,16 @@ export class VoiceRecognitionService {
     recognition.onend = () => {
       this.isListening.set(false);
       this.activeRecognition = null;
-      const resolvedText = (finalBuffer || this.transcript()).trim();
-      if (resolvedText) {
-        onFinalTranscript(resolvedText);
+      const finalCb = this.pendingFinalCallback;
+      const endedCb = this.pendingEndedCallback;
+      this.pendingFinalCallback = null;
+      this.pendingEndedCallback = null;
+
+      const resolvedText = this.transcript().trim();
+      if (finalCb && resolvedText) {
+        finalCb(resolvedText);
+      } else if (endedCb) {
+        endedCb();
       }
     };
 
@@ -142,20 +149,62 @@ export class VoiceRecognitionService {
     try {
       recognition.start();
     } catch {
+      this.pendingFinalCallback = null;
+      this.pendingEndedCallback = null;
+      this.activeRecognition = null;
       this.isListening.set(false);
       this.error.set('start-failed');
     }
   }
 
-  stopListening(): void {
+  startListening(
+    lang: WidgetLang,
+    onFinalTranscript: (text: string) => void
+  ): void {
+    if (this.isListening()) {
+      this.stopListening();
+      return;
+    }
+    this.beginRecognition(lang, false, onFinalTranscript);
+  }
+
+  startPushToTalk(
+    lang: WidgetLang,
+    onFinalTranscript: (text: string) => void,
+    onSessionEnded?: () => void
+  ): void {
+    this.cancelListening();
+    this.beginRecognition(lang, true, onFinalTranscript, onSessionEnded);
+  }
+
+  stopAndSubmitPushToTalk(): void {
     if (this.activeRecognition) {
       try {
         this.activeRecognition.stop();
       } catch {
         // Ignore stop errors if already ended
       }
+    }
+    this.isListening.set(false);
+  }
+
+  cancelListening(): void {
+    this.pendingFinalCallback = null;
+    this.pendingEndedCallback = null;
+    if (this.activeRecognition) {
+      try {
+        this.activeRecognition.abort();
+      } catch {
+        // Ignore abort errors
+      }
       this.activeRecognition = null;
     }
     this.isListening.set(false);
+    this.transcript.set('');
+  }
+
+  stopListening(): void {
+    this.stopAndSubmitPushToTalk();
+    this.activeRecognition = null;
   }
 }

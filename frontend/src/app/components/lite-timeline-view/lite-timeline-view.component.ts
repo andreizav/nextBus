@@ -45,17 +45,18 @@ import type {
             }
           </div>
           <div class="metric-caption">{{ labels().arrivalCountdown }}</div>
-          @if (activeBus()) {
-            <div
-              class="eta-freshness-pill"
-              [class.is-realtime]="!isScheduledEta()"
-              [class.is-scheduled]="isScheduledEta()"
-            >
-              <span class="eta-dot" aria-hidden="true"></span>
-              <span>{{ etaStatusText() }}</span>
-            </div>
-          }
         </div>
+
+        @if (activeBus()) {
+          <div
+            class="eta-freshness-pill"
+            [class.is-realtime]="!isScheduledEta()"
+            [class.is-scheduled]="isScheduledEta()"
+          >
+            <span class="eta-dot" aria-hidden="true"></span>
+            <span>{{ etaStatusText() }}</span>
+          </div>
+        }
       </header>
 
       <!-- 2. Universal Direction / Reverse Route Bar (Line Lookup AND A⇄B Destination Trips) -->
@@ -243,9 +244,10 @@ import type {
       .hero-metrics {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
-        align-items: end;
+        align-items: start;
         text-align: center;
-        gap: 0.5rem;
+        column-gap: 0.5rem;
+        row-gap: 0.4rem;
         min-inline-size: 0;
         max-inline-size: 100%;
         padding-block: 0.35rem 0.15rem;
@@ -261,10 +263,14 @@ import type {
       }
 
       .metric-main {
+        display: inline-flex;
+        align-items: baseline;
+        justify-content: center;
+        block-size: clamp(2.35rem, 9vw, 3.25rem);
         color: #ffffff;
         font-size: clamp(2.1rem, 8.5vw, 3.1rem);
         font-weight: 700;
-        line-height: 1;
+        line-height: 1.05;
         letter-spacing: -0.03em;
         white-space: nowrap;
         max-inline-size: 100%;
@@ -292,12 +298,13 @@ import type {
       }
 
       .eta-freshness-pill {
+        grid-column: 1 / -1;
+        justify-self: center;
         display: inline-flex;
         align-items: center;
         justify-content: center;
         gap: 0.3rem;
-        margin-block-start: 0.15rem;
-        padding: 0.14rem 0.5rem;
+        padding: 0.14rem 0.58rem;
         border-radius: 999px;
         font-size: 0.68rem;
         font-weight: 600;
@@ -359,10 +366,18 @@ import type {
         font-size: 0.78rem;
         color: #cbd5e1;
         font-weight: 500;
+        flex: 1 1 auto;
         min-inline-size: 0;
-        overflow: hidden;
+        overflow-x: auto;
+        overflow-y: hidden;
+        scrollbar-width: none;
+        -webkit-overflow-scrolling: touch;
         text-overflow: ellipsis;
         white-space: nowrap;
+      }
+
+      .dir-label::-webkit-scrollbar {
+        display: none;
       }
 
       .direction-switch-btn {
@@ -718,9 +733,16 @@ import type {
       .stop-label {
         flex: 1 1 auto;
         min-inline-size: 0;
-        overflow: hidden;
+        overflow-x: auto;
+        overflow-y: hidden;
+        scrollbar-width: none;
+        -webkit-overflow-scrolling: touch;
         text-overflow: ellipsis;
         white-space: nowrap;
+      }
+
+      .stop-label::-webkit-scrollbar {
+        display: none;
       }
 
       .text-muted {
@@ -820,7 +842,11 @@ export class LiteTimelineViewComponent {
       this.lang() === 'he'
         ? dir?.label_he ?? dir?.label ?? route.direction_label
         : dir?.label ?? route.direction_label;
-    return raw.replace(/\s*->\s*/g, ' → ');
+    return raw
+      .split(/\s*(?:->|→)\s*/)
+      .map((part) => part.replace(/\s*\([^)]+\)\s*/g, '').trim())
+      .filter(Boolean)
+      .join(' → ');
   });
 
   readonly tripDirectionText = computed(() => {
