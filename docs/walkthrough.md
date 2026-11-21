@@ -54,4 +54,29 @@ DATABASE_URL=postgresql://postgres:postgrespassword@localhost:5432/nextbus
    - `POST /api/search-routes` (`"Сорок девятый автобус"`, Тират-Кармель): вернул `entry_context: "standalone"`, `intent_type: "LINE_DISAMBIGUATION"`, 4 кандидата (`49`, `49א`), `timeline_window.compact_stops = 7` из `36` остановок.
    - `POST /api/search-routes` (`"Хочу поехать в больницу Рамбам"`, Тират-Кармель): вернул `intent_type: "TRIP_PLANNER"`, упорядоченные маршруты с пересадками (`Вариант 1: 49א -> 28`, `Вариант 2: 49 -> 17`).
    - `POST /mcp` (`get_live_bus_status`, `find_best_buses_to_destination`): вернул `entry_context: "mcp"` с компактным окном остановок и шагами поездки.
-4. **Примечание о Chrome DevTools:** автоматический запуск браузерного сабагента к локальному Google Chrome был заблокирован политикой macOS (`EPERM: operation not permitted` при чтении `/Users/andrey/Library/Application Support/Google/Chrome/DevToolsActivePort`), поэтому визуальный рендер проверяется открытием ссылки вручную в браузере.
+4. **Примечание о Chrome DevTools:** автоматический запуск браузерного сабагента к локальному Google Chrome был заблокирован политикой macOS (`EPERM: operation not permitted` при чтении `/Users/andrey/Development/projects/nextBus/Application Support/Google/Chrome/DevToolsActivePort` / `~/.gemini` sandbox), при этом визуальная проверка выполнялась напрямую через headless Google Chrome (`--headless=new --screenshot`).
+
+---
+
+## 4. Обновление: Полное покрытие GTFS (включая Эйлат и Беэр-Шеву), двухслойный кэш и вспомогательный геокодер
+
+### 4.1. Трёхуровневый пайплайн поиска ([spec.md](file:///Users/andrey/Development/projects/nextBus/docs/spec.md))
+1. **Слой 1 — Собственная база GTFS (Supabase PostgreSQL + PostGIS):**
+   - Добавлена [migration_06_full_country_south_eilat_beersheva.sql](file:///Users/andrey/Development/projects/nextBus/database/migration_06_full_country_south_eilat_beersheva.sql) (включена в [supabase_full_setup.sql](file:///Users/andrey/Development/projects/nextBus/database/supabase_full_setup.sql)) с узлами и маршрутами Южного коридора: **Беэр-Шева (`stop-53001`, маршруты `4`, `369`, `380`, `390`, `397`, `993`)** и **Эйлат (`stop-59001`, маршруты `15`, `390`, `397`, `993`)**, а также Димона, Мицпе-Рамон и Ашкелон.
+   - Добавлен полнострановой GTFS-импортёр [import-full-gtfs.ts](file:///Users/andrey/Development/projects/nextBus/database/import-full-gtfs.ts) для загрузки официального архива Минтранса (`https://gtfs.mot.gov.il/gtfsfiles/israel-public-transportation.zip`) или локальной папки GTFS батчами по 500 записей:
+     - Быстрая проверка/засев южных узлов (Эйлат, Беэр-Шева): `npm --prefix database run seed:nationwide`
+     - Полный импорт GTFS Минтранса: `npm --prefix database run import:gtfs` (или `--cities=eilat,beer-sheva`)
+   - [supabase.service.ts](file:///Users/andrey/Development/projects/nextBus/backend/src/services/supabase.service.ts): строгая сортировка `stop_sequence ASC`, PostgREST table-fallback для `getDirectionStopCoords`, расширение `resolveCityKeywords` для городов всей страны.
+2. **Слой 2 — Двухслойный кэш Upstash Redis ([redis.service.ts](file:///Users/andrey/Development/projects/nextBus/backend/src/services/redis.service.ts), [trip-planner.service.ts](file:///Users/andrey/Development/projects/nextBus/backend/src/services/trip-planner.service.ts)):**
+   - `route:pair:{origin_grid}:{dest_grid}` (шаг сетки `0.0015°` ~150 м, `TTL = 10800s` = 3 часа): хранит только статику связок маршрутов и остановок без зашитых `eta_minutes`.
+   - `bus:state:{route_id}:{direction_id}` (`TTL = 60s`) и `bus:active_routes` (окно 15 минут, опрос каждые 15 секунд): при каждом запросе подмешивается свежее время прибытия (с фильтрацией «зависших» точек > 300 с и расчётом дистанции по цепочке остановок `calculateRoutePathDistanceMeters`). При отсутствии активных машин возвращается плановое расписание (`eta_source: "scheduled"`, `is_realtime: false`) вместо пустого ответа.
+3. **Слой 3 — Вспомогательный геокодер ([geocoding.service.ts](file:///Users/andrey/Development/projects/nextBus/backend/src/services/geocoding.service.ts)):**
+   - Вызывается только при промахе по Layer 1 (GTFS БД / Gazetteer) и Layer 2 (`geo:cache:{hash}`, `TTL = 86400s` = 24 часа): сначала бесплатный OpenStreetMap Nominatim (`User-Agent: nextBus-Transit-App/1.0`), затем опциональный `GOOGLE_MAPS_API_KEY`.
+
+### 4.2. Проверка импорта, тестов, сборки и продакшена
+- **Supabase (`npm --prefix database run seed:nationwide`):** подтверждены остановки Беэр-Шевы (`3`) и Эйлата (`3`), RPC `find_central_stop_for_city('אילת')` → `stop-59001`, `find_central_stop_for_city('באר שבע')` → `stop-53001`, все `route_stops` без пропусков `stop_sequence`.
+- **Unit-тесты бэкенда (`cd backend && npm test && npm run build`):** **5 файлов / 52 теста пройдены** (`eta.service.test.ts`, `places.service.test.ts`, `user-context.service.test.ts`, `trip-planner.service.test.ts`, `intent-router.service.test.ts`), сборка `tsc` без ошибок.
+- **Сборка фронтенда (`cd frontend && npm run build`):** Angular 20 production-бандл собран чисто (`entry_context: "standalone" | "mcp"`, `@defer`, `dir="rtl"`, раскрытие всех остановок маршрута).
+- **E2E-проверка `POST /api/search-routes` (из Хайфы `32.7895, 34.9640`):**
+  - `"Эйлат"` → HTTP `200`, `intent_type: "TRIP_PLANNER"`, маршрут `993`, `9` остановок (окно `5/9`), `eta_source: "scheduled"`.
+  - `"Беэр-Шева"` → HTTP `200`, `intent_type: "TRIP_PLANNER"`, маршрут `993`, `dest_stop: stop-53001`, `9` остановок (окно `5/9`), `eta_source: "scheduled"`.
