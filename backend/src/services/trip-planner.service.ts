@@ -203,48 +203,92 @@ export function calculateTransferTripMetrics(params: {
   };
 }
 
+export const MAX_ROUTE_ORIGIN_DISTANCE_METERS = 600;
+const FALLBACK_ORIGIN_SEARCH_RADIUS_METERS = 1600;
+
+function isWithinOriginRadius(
+  opt: RecommendedBusOption,
+  maxDistanceMeters: number = MAX_ROUTE_ORIGIN_DISTANCE_METERS
+): boolean {
+  return (
+    opt.origin_stop.distance_meters === undefined ||
+    opt.origin_stop.distance_meters <= maxDistanceMeters
+  );
+}
+
+function compareBusOptionsByDistanceThenTime(
+  a: RecommendedBusOption,
+  b: RecommendedBusOption
+): number {
+  const distA = a.origin_stop.distance_meters ?? 0;
+  const distB = b.origin_stop.distance_meters ?? 0;
+  if (distA !== distB) {
+    return distA - distB;
+  }
+  if (a.total_arrival_min !== b.total_arrival_min) {
+    return a.total_arrival_min - b.total_arrival_min;
+  }
+  if ((a.is_transfer ? 1 : 0) !== (b.is_transfer ? 1 : 0)) {
+    return a.is_transfer ? 1 : -1;
+  }
+  return a.eta_to_boarding_min - b.eta_to_boarding_min;
+}
+
 /**
- * Sorts candidate bus options by total arrival time ascending and returns strictly Top-N (default 3).
+ * Filters candidate bus options to within MAX_ROUTE_ORIGIN_DISTANCE_METERS (600m),
+ * sorts from closest boarding stop ascending (then total arrival time), and returns Top-N.
+ * If NO option exists within 600m, falls back to returning strictly the 1 closest option
+ * so at least one route is always shown while alternatives never exceed 600m.
  */
 export function rankTopBusOptions(
   options: RecommendedBusOption[],
   topN: number = 3
 ): RecommendedBusOption[] {
-  const sorted = [...options].sort((a, b) => {
-    if (a.total_arrival_min !== b.total_arrival_min) {
-      return a.total_arrival_min - b.total_arrival_min;
-    }
-    return a.eta_to_boarding_min - b.eta_to_boarding_min;
-  });
+  const withinRadius = options
+    .filter((opt) => isWithinOriginRadius(opt))
+    .sort(compareBusOptionsByDistanceThenTime);
 
-  return sorted.slice(0, topN).map((opt, idx) => ({
+  if (withinRadius.length > 0) {
+    return withinRadius.slice(0, topN).map((opt, idx) => ({
+      ...opt,
+      rank: (idx + 1) as 1 | 2 | 3
+    }));
+  }
+
+  // Fallback: always show at least the single closest route, no alternatives > 600m
+  const closestFallback = [...options].sort(compareBusOptionsByDistanceThenTime).slice(0, 1);
+  return closestFallback.map((opt) => ({
     ...opt,
-    rank: (idx + 1) as 1 | 2 | 3
+    rank: 1 as const
   }));
 }
 
 /**
- * Selects Top-3 combined direct & transfer options sorted by total_arrival_min.
- * Ensures transfer options fill any open slots and exposes the best transfer
- * option in slot #3 when >=3 direct routes also exist alongside a transfer corridor.
+ * Selects Top-3 combined direct & transfer options within 600m sorted from closest
+ * boarding stop ascending (with total_arrival_min as tie-breaker).
+ * If NO option exists within 600m, falls back to returning strictly the 1 closest option.
  */
 export function selectTop3MixedOptions(
   directOptions: RecommendedBusOption[],
   transferOptions: RecommendedBusOption[],
   topN: number = 3
 ): RecommendedBusOption[] {
-  const byTotalTime = (a: RecommendedBusOption, b: RecommendedBusOption) => {
-    if (a.total_arrival_min !== b.total_arrival_min) {
-      return a.total_arrival_min - b.total_arrival_min;
-    }
-    if ((a.is_transfer ? 1 : 0) !== (b.is_transfer ? 1 : 0)) {
-      return a.is_transfer ? 1 : -1;
-    }
-    return a.eta_to_boarding_min - b.eta_to_boarding_min;
-  };
+  const sortedDirect = directOptions
+    .filter((opt) => isWithinOriginRadius(opt))
+    .sort(compareBusOptionsByDistanceThenTime);
+  const sortedTransfer = transferOptions
+    .filter((opt) => isWithinOriginRadius(opt))
+    .sort(compareBusOptionsByDistanceThenTime);
 
-  const sortedDirect = [...directOptions].sort(byTotalTime);
-  const sortedTransfer = [...transferOptions].sort(byTotalTime);
+  if (sortedDirect.length === 0 && sortedTransfer.length === 0) {
+    const allFallback = [...directOptions, ...transferOptions].sort(
+      compareBusOptionsByDistanceThenTime
+    );
+    return allFallback.slice(0, 1).map((opt) => ({
+      ...opt,
+      rank: 1 as const
+    }));
+  }
 
   if (sortedDirect.length === 0) {
     return rankTopBusOptions(sortedTransfer, topN);
@@ -255,9 +299,13 @@ export function selectTop3MixedOptions(
 
   let selected: RecommendedBusOption[];
   if (sortedDirect.length < topN) {
-    selected = [...sortedDirect, ...sortedTransfer].sort(byTotalTime).slice(0, topN);
+    selected = [...sortedDirect, ...sortedTransfer]
+      .sort(compareBusOptionsByDistanceThenTime)
+      .slice(0, topN);
   } else {
-    const combinedTop = [...sortedDirect, ...sortedTransfer].sort(byTotalTime).slice(0, topN);
+    const combinedTop = [...sortedDirect, ...sortedTransfer]
+      .sort(compareBusOptionsByDistanceThenTime)
+      .slice(0, topN);
     const hasTransferInTop = combinedTop.some((o) => o.is_transfer);
     selected = hasTransferInTop
       ? combinedTop
@@ -271,32 +319,28 @@ export function selectTop3MixedOptions(
 }
 
 /**
- * Picks strictly the single fastest route option (either fastest direct or fastest non-redundant
- * 1-transfer connection), excluding redundant transfers that touch an already-direct route.
+ * Picks the single best route option (preferring within 600m, closest boarding stop first;
+ * falls back to closest overall if none are within 600m), excluding redundant transfers.
  */
 export function selectBestSingleOption(
   directOptions: RecommendedBusOption[],
   transferOptions: RecommendedBusOption[]
 ): RecommendedBusOption | null {
-  const byTotalTime = (a: RecommendedBusOption, b: RecommendedBusOption) => {
-    if (a.total_arrival_min !== b.total_arrival_min) {
-      return a.total_arrival_min - b.total_arrival_min;
-    }
-    if ((a.is_transfer ? 1 : 0) !== (b.is_transfer ? 1 : 0)) {
-      return a.is_transfer ? 1 : -1;
-    }
-    return a.eta_to_boarding_min - b.eta_to_boarding_min;
-  };
+  const directWithin = directOptions.filter((opt) => isWithinOriginRadius(opt));
+  const transferWithin = transferOptions.filter((opt) => isWithinOriginRadius(opt));
 
-  const directRouteIds = new Set(directOptions.map((o) => o.route.route_id));
-  const validTransfers = transferOptions.filter(
+  const usePoolDirect = directWithin.length > 0 || transferWithin.length > 0 ? directWithin : directOptions;
+  const usePoolTransfer = directWithin.length > 0 || transferWithin.length > 0 ? transferWithin : transferOptions;
+
+  const directRouteIds = new Set(usePoolDirect.map((o) => o.route.route_id));
+  const validTransfers = usePoolTransfer.filter(
     (t) =>
       !directRouteIds.has(t.route.route_id) &&
       (!t.second_leg || !directRouteIds.has(t.second_leg.route.route_id))
   );
 
-  const sortedDirect = [...directOptions].sort(byTotalTime);
-  const sortedTransfer = [...validTransfers].sort(byTotalTime);
+  const sortedDirect = [...usePoolDirect].sort(compareBusOptionsByDistanceThenTime);
+  const sortedTransfer = [...validTransfers].sort(compareBusOptionsByDistanceThenTime);
 
   const bestDirect = sortedDirect[0] ?? null;
   const bestTransfer = sortedTransfer[0] ?? null;
@@ -306,7 +350,9 @@ export function selectBestSingleOption(
   if (!bestTransfer) return { ...bestDirect, rank: 1 };
 
   const winner =
-    bestTransfer.total_arrival_min < bestDirect.total_arrival_min ? bestTransfer : bestDirect;
+    compareBusOptionsByDistanceThenTime(bestTransfer, bestDirect) < 0
+      ? bestTransfer
+      : bestDirect;
   return { ...winner, rank: 1 };
 }
 
@@ -524,7 +570,7 @@ function findClosestValidOriginStop(
   userLat: number,
   userLon: number,
   maxStopSequence: number,
-  maxRadiusMeters = 1150
+  maxRadiusMeters = FALLBACK_ORIGIN_SEARCH_RADIUS_METERS
 ): (RouteStopCoord & { distance_meters: number }) | null {
   let best: (RouteStopCoord & { distance_meters: number }) | null = null;
   for (const stop of allStops) {
@@ -644,23 +690,44 @@ export async function planBestBusesToDestination(
       `[TripPlanner] Route-pair CACHE HIT (${pairCacheKey}) — reusing static topology, refreshing live Redis ETAs`
     );
   } else {
-    const [rawDirect, rawTransfersAll] = await Promise.all([
+    let [rawDirect, rawTransfersAll] = await Promise.all([
       supabaseService.findDirectTrips(
         userLocation.lat,
         userLocation.lon,
         destination.lat,
         destination.lon,
-        650
+        MAX_ROUTE_ORIGIN_DISTANCE_METERS
       ),
       supabaseService.findTransferTrips(
         userLocation.lat,
         userLocation.lon,
         destination.lat,
         destination.lon,
-        650,
+        MAX_ROUTE_ORIGIN_DISTANCE_METERS,
         2
       )
     ]);
+
+    // If no route starts within 600m, expand search once so at least 1 closest route is shown
+    if (rawDirect.length === 0 && rawTransfersAll.length === 0) {
+      [rawDirect, rawTransfersAll] = await Promise.all([
+        supabaseService.findDirectTrips(
+          userLocation.lat,
+          userLocation.lon,
+          destination.lat,
+          destination.lon,
+          FALLBACK_ORIGIN_SEARCH_RADIUS_METERS
+        ),
+        supabaseService.findTransferTrips(
+          userLocation.lat,
+          userLocation.lon,
+          destination.lat,
+          destination.lon,
+          FALLBACK_ORIGIN_SEARCH_RADIUS_METERS,
+          2
+        )
+      ]);
+    }
 
     const rawTransfer: TransferRouteMatch[] = rawTransfersAll
       .filter((t) => Number(t.transfers_count ?? 1) === 1)
@@ -1353,7 +1420,7 @@ export async function planBestBusesToDestination(
   );
 
   const sortedNonRedundant = [...nonRedundantTransfers].sort(
-    (a, b) => a.total_arrival_min - b.total_arrival_min
+    compareBusOptionsByDistanceThenTime
   );
   const uniquePairTransfers: RecommendedBusOption[] = [];
   const seenRoutePairs = new Set<string>();

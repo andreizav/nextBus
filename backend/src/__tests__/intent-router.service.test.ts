@@ -425,7 +425,7 @@ describe('Intent Router & Conversational Query Parsing', () => {
         expect(confirmedRes.requires_confirmation).toBeUndefined();
         expect(confirmedRes.intent_type).toBe('TRIP_PLANNER');
         expect(confirmedRes.route.short_name).toBe('480');
-        expect(directSpy).toHaveBeenCalledWith(32.0837, 34.7978, 31.789, 35.203, 650);
+        expect(directSpy).toHaveBeenCalledWith(32.0837, 34.7978, 31.789, 35.203, 600);
       } finally {
         vi.restoreAllMocks();
       }

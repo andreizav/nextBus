@@ -188,6 +188,41 @@ describe('Trip Planner A -> B matching and Top-3 ranking', () => {
       expect(top3.map((o) => o.route.short_name)).toEqual(['24', '11', '123']);
       expect(top3.map((o) => o.rank)).toEqual([1, 2, 3]);
     });
+
+    it('filters out routes further than 600m and sorts from closest boarding stop ascending', () => {
+      const farOption = makeOption('99', 1, 5);
+      farOption.origin_stop.distance_meters = 650;
+
+      const midOption = makeOption('24', 2, 8);
+      midOption.origin_stop.distance_meters = 420;
+
+      const closeOption = makeOption('49', 7, 18);
+      closeOption.origin_stop.distance_meters = 110;
+
+      const boundaryOption = makeOption('11', 3, 12);
+      boundaryOption.origin_stop.distance_meters = 600;
+
+      const ranked = rankTopBusOptions([farOption, midOption, closeOption, boundaryOption], 5);
+      expect(ranked.map((o) => o.route.short_name)).toEqual(['49', '24', '11']);
+      expect(ranked.map((o) => o.origin_stop.distance_meters)).toEqual([110, 420, 600]);
+    });
+
+    it('falls back to strictly 1 closest route when all candidates are further than 600m', () => {
+      const far1 = makeOption('99', 2, 10);
+      far1.origin_stop.distance_meters = 950;
+
+      const far2 = makeOption('49', 5, 15);
+      far2.origin_stop.distance_meters = 720;
+
+      const far3 = makeOption('24', 1, 8);
+      far3.origin_stop.distance_meters = 1100;
+
+      const ranked = rankTopBusOptions([far1, far2, far3], 3);
+      expect(ranked).toHaveLength(1);
+      expect(ranked[0].route.short_name).toBe('49');
+      expect(ranked[0].origin_stop.distance_meters).toBe(720);
+      expect(ranked[0].rank).toBe(1);
+    });
   });
 
   describe('filterValidTransferMatches', () => {

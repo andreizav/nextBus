@@ -197,9 +197,9 @@ app.get('/api/local-suggestions', async (req: Request, res: Response) => {
     }
 
     const userId = req.query.user_id ? String(req.query.user_id).trim() : '';
-    const radiusRaw = Number(req.query.radius ?? 500);
+    const radiusRaw = Number(req.query.radius ?? 600);
     const radiusMeters =
-      !Number.isNaN(radiusRaw) && radiusRaw > 0 ? Math.min(2000, radiusRaw) : 500;
+      !Number.isNaN(radiusRaw) && radiusRaw > 0 ? Math.min(600, radiusRaw) : 600;
 
     const [returningRoutes, localLines] = await Promise.all([
       userId ? getReturningRoutesForLocation(userId, lat, lon, 250) : Promise.resolve([]),

@@ -190,4 +190,121 @@ describe('User Context Service (per-user history & local stop suggestions)', () 
       vi.restoreAllMocks();
     }
   });
+
+  it('caps local suggestions radius at 600m, excludes >600m stops, and sorts closest first', async () => {
+    const rpcSpy = vi.spyOn(supabaseService, 'getNearbyLinesAndTermini').mockResolvedValue([
+      {
+        route_id: 'stride-far',
+        line_number: '99',
+        route_long_name: 'Far Line',
+        direction_id: 0,
+        nearest_stop_id: 'stop-far',
+        nearest_stop_code: '99999',
+        nearest_stop_name: 'Far Stop',
+        nearest_stop_name_he: 'תחנה רחוקה',
+        nearest_stop_sequence: 1,
+        stop_lat: 32.77,
+        stop_lon: 34.98,
+        distance_meters: 720,
+        destination_name: 'Far Dest',
+        destination_he: 'יעד רחוק'
+      },
+      {
+        route_id: 'stride-mid',
+        line_number: '24',
+        route_long_name: 'Mid Line',
+        direction_id: 0,
+        nearest_stop_id: 'stop-mid',
+        nearest_stop_code: '24000',
+        nearest_stop_name: 'Mid Stop',
+        nearest_stop_name_he: 'תחנה בינונית',
+        nearest_stop_sequence: 2,
+        stop_lat: 32.765,
+        stop_lon: 34.972,
+        distance_meters: 480,
+        destination_name: 'Mid Dest',
+        destination_he: 'יעד בינוני'
+      },
+      {
+        route_id: 'stride-near',
+        line_number: '49',
+        route_long_name: 'Near Line',
+        direction_id: 0,
+        nearest_stop_id: 'stop-near',
+        nearest_stop_code: '49000',
+        nearest_stop_name: 'Near Stop',
+        nearest_stop_name_he: 'תחנה קרובה',
+        nearest_stop_sequence: 3,
+        stop_lat: 32.7625,
+        stop_lon: 34.9712,
+        distance_meters: 95,
+        destination_name: 'Near Dest',
+        destination_he: 'יעד קרוב'
+      }
+    ]);
+    vi.spyOn(redisService, 'touchActiveRoute').mockResolvedValue(undefined);
+    vi.spyOn(redisService, 'getBusState').mockResolvedValue(null);
+
+    try {
+      const suggestions = await getLocalStopSuggestions(32.762, 34.971, 1500, 8);
+      expect(rpcSpy).toHaveBeenCalledWith(32.762, 34.971, 600, 8);
+      expect(suggestions.map((s) => s.line_number)).toEqual(['49', '24']);
+      expect(suggestions.map((s) => s.distance_meters)).toEqual([95, 480]);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('falls back to strictly 1 closest local line when none are within 600m', async () => {
+    const rpcSpy = vi
+      .spyOn(supabaseService, 'getNearbyLinesAndTermini')
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          route_id: 'stride-far-2',
+          line_number: '24',
+          route_long_name: 'Farther Line',
+          direction_id: 0,
+          nearest_stop_id: 'stop-far-2',
+          nearest_stop_code: '24001',
+          nearest_stop_name: 'Farther Stop',
+          nearest_stop_name_he: 'תחנה רחוקה 2',
+          nearest_stop_sequence: 1,
+          stop_lat: 32.771,
+          stop_lon: 34.981,
+          distance_meters: 980,
+          destination_name: 'Dest 2',
+          destination_he: 'יעד 2'
+        },
+        {
+          route_id: 'stride-far-1',
+          line_number: '49',
+          route_long_name: 'Closest Far Line',
+          direction_id: 0,
+          nearest_stop_id: 'stop-far-1',
+          nearest_stop_code: '49001',
+          nearest_stop_name: 'Closest Far Stop',
+          nearest_stop_name_he: 'תחנה הכי קרובה',
+          nearest_stop_sequence: 2,
+          stop_lat: 32.769,
+          stop_lon: 34.978,
+          distance_meters: 740,
+          destination_name: 'Dest 1',
+          destination_he: 'יעד 1'
+        }
+      ]);
+    vi.spyOn(redisService, 'touchActiveRoute').mockResolvedValue(undefined);
+    vi.spyOn(redisService, 'getBusState').mockResolvedValue(null);
+
+    try {
+      const suggestions = await getLocalStopSuggestions(32.762, 34.971, 600, 8);
+      expect(rpcSpy).toHaveBeenNthCalledWith(1, 32.762, 34.971, 600, 8);
+      expect(rpcSpy).toHaveBeenNthCalledWith(2, 32.762, 34.971, 1600, 1);
+      expect(suggestions).toHaveLength(1);
+      expect(suggestions[0].line_number).toBe('49');
+      expect(suggestions[0].distance_meters).toBe(740);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
 });

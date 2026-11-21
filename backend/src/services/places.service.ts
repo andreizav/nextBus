@@ -3,6 +3,7 @@ import { redisService } from './redis.service.js';
 import type { NearbyOffer } from '../types/bus.types.js';
 
 const CAFES_CACHE_TTL_SECONDS = 3600;
+export const MAX_CAFE_DISTANCE_METERS = 400;
 
 interface NominatimPlace {
   place_id: number;
@@ -124,8 +125,8 @@ async function fetchJsonWithTimeout<T>(url: string, timeoutMs = 4500): Promise<T
 }
 
 async function queryNominatimCafes(lat: number, lon: number): Promise<NearbyOffer[]> {
-  const deltaLat = 0.025;
-  const deltaLon = 0.03;
+  const deltaLat = 0.005;
+  const deltaLon = 0.006;
   const viewbox = `${(lon - deltaLon).toFixed(5)},${(lat + deltaLat).toFixed(5)},${(
     lon + deltaLon
   ).toFixed(5)},${(lat - deltaLat).toFixed(5)}`;
@@ -169,7 +170,7 @@ async function queryNominatimCafes(lat: number, lon: number): Promise<NearbyOffe
       const openingHours = item.extratags?.['opening_hours'];
       const distanceMeters = Math.round(haversineDistanceMeters(lat, lon, cafeLat, cafeLon));
 
-      if (distanceMeters > 3500) continue;
+      if (distanceMeters > MAX_CAFE_DISTANCE_METERS) continue;
 
       const details = [addressStr, openingHours].filter(Boolean).join(' • ');
 
@@ -207,7 +208,7 @@ async function queryPhotonCafes(lat: number, lon: number): Promise<NearbyOffer[]
 
     const [cafeLon, cafeLat] = coords;
     const distanceMeters = Math.round(haversineDistanceMeters(lat, lon, cafeLat, cafeLon));
-    if (distanceMeters > 3500) continue;
+    if (distanceMeters > MAX_CAFE_DISTANCE_METERS) continue;
 
     const addressStr = [props.street, props.district, props.city].filter(Boolean).join(', ');
     results.push({
@@ -228,7 +229,7 @@ async function queryPhotonCafes(lat: number, lon: number): Promise<NearbyOffer[]
 }
 
 async function queryFastOverpassCafes(lat: number, lon: number): Promise<NearbyOffer[]> {
-  const query = `[out:json][timeout:3];node["amenity"="cafe"](around:1500,${lat},${lon});out body 12;`;
+  const query = `[out:json][timeout:3];node["amenity"="cafe"](around:${MAX_CAFE_DISTANCE_METERS},${lat},${lon});out body 12;`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 2800);
   try {
@@ -250,6 +251,7 @@ async function queryFastOverpassCafes(lat: number, lon: number): Promise<NearbyO
       const nameHe = tags['name:he'] || tags['name'] || nameEn;
       if (!nameEn || typeof el.lat !== 'number' || typeof el.lon !== 'number') continue;
       const distanceMeters = Math.round(haversineDistanceMeters(lat, lon, el.lat, el.lon));
+      if (distanceMeters > MAX_CAFE_DISTANCE_METERS) continue;
       const addressStr = [tags['addr:street'], tags['addr:housenumber'], tags['addr:city']]
         .filter(Boolean)
         .join(' ');
@@ -279,17 +281,21 @@ async function queryFastOverpassCafes(lat: number, lon: number): Promise<NearbyO
 }
 
 /**
- * Fetches real cafes near (lat, lon) via OpenStreetMap (Overpass + Nominatim + Photon)
- * with 1-hour Redis cache.
+ * Fetches real cafes near (lat, lon) within MAX_CAFE_DISTANCE_METERS (400m) via
+ * OpenStreetMap (Overpass + Nominatim + Photon) with 1-hour Redis cache.
  */
 export async function fetchRealNearbyCafes(
   lat: number,
-  lon: number
+  lon: number,
+  maxDistanceMeters: number = MAX_CAFE_DISTANCE_METERS
 ): Promise<NearbyOffer[]> {
-  const cacheKey = `bus:cafes:v2:${lat.toFixed(3)}:${lon.toFixed(3)}`;
+  const effectiveMaxDist = Math.min(maxDistanceMeters, MAX_CAFE_DISTANCE_METERS);
+  const cacheKey = `bus:cafes:v3:${lat.toFixed(3)}:${lon.toFixed(3)}`;
   const cached = await redisService.getJson<NearbyOffer[]>(cacheKey);
   if (cached && cached.length > 0) {
-    return cached;
+    return cached
+      .filter((c) => c.distance_meters <= effectiveMaxDist)
+      .sort((a, b) => a.distance_meters - b.distance_meters);
   }
 
   const [overpassRes, nominatimRes, photonRes] = await Promise.all([
@@ -302,6 +308,7 @@ export async function fetchRealNearbyCafes(
   const deduped = new Map<string, NearbyOffer>();
 
   for (const cafe of combined) {
+    if (cafe.distance_meters > effectiveMaxDist) continue;
     // Deduplicate by normalized name + proximity bucket (~100m)
     const coordBucket = `${cafe.lat.toFixed(3)},${cafe.lon.toFixed(3)}`;
     const key = `${cafe.name_he.trim().toLowerCase()}@${coordBucket}`;
@@ -334,5 +341,7 @@ export async function fetchRealNearbyCafes(
       address: cafe.address,
       maps_url: buildGoogleMapsUrl(cafe.lat, cafe.lon, cafe.name)
     };
-  }).sort((a, b) => a.distance_meters - b.distance_meters);
+  })
+    .filter((cafe) => cafe.distance_meters <= effectiveMaxDist)
+    .sort((a, b) => a.distance_meters - b.distance_meters);
 }

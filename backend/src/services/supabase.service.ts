@@ -1028,41 +1028,46 @@ class SupabaseService {
   async getNearbyLinesAndTermini(
     userLat: number,
     userLon: number,
-    radiusMeters = 500,
+    radiusMeters = 600,
     maxLines = 8
   ): Promise<NearbyLineTerminusRow[]> {
     this.ensureInit();
-    const radiiToTry = Array.from(new Set([radiusMeters, Math.max(900, radiusMeters), 1600]));
 
-    for (const radius of radiiToTry) {
-      if (this.client) {
-        try {
-          const { data, error } = await this.client.rpc('get_nearby_lines_and_termini', {
-            user_lat: userLat,
-            user_lon: userLon,
-            radius_meters: radius,
-            max_lines: maxLines
-          });
-          if (!error && Array.isArray(data) && data.length > 0) {
-            return data.map((row) => this.mapNearbyTerminusRow(row as Record<string, unknown>));
-          }
-        } catch (err) {
-          console.warn('[Supabase] get_nearby_lines_and_termini RPC fallback:', (err as Error).message);
+    if (this.client) {
+      try {
+        const { data, error } = await this.client.rpc('get_nearby_lines_and_termini', {
+          user_lat: userLat,
+          user_lon: userLon,
+          radius_meters: radiusMeters,
+          max_lines: maxLines
+        });
+        if (!error && Array.isArray(data) && data.length > 0) {
+          return data
+            .map((row) => this.mapNearbyTerminusRow(row as Record<string, unknown>))
+            .filter((row) => row.distance_meters <= radiusMeters)
+            .sort((a, b) => a.distance_meters - b.distance_meters || a.line_number.localeCompare(b.line_number))
+            .slice(0, maxLines);
         }
+      } catch (err) {
+        console.warn('[Supabase] get_nearby_lines_and_termini RPC fallback:', (err as Error).message);
       }
+    }
 
-      if (this.pgPool) {
-        try {
-          const res = await this.pgPool.query(
-            `SELECT * FROM get_nearby_lines_and_termini($1, $2, $3, $4)`,
-            [userLat, userLon, radius, maxLines]
-          );
-          if (res.rows.length > 0) {
-            return res.rows.map((row) => this.mapNearbyTerminusRow(row as Record<string, unknown>));
-          }
-        } catch (err) {
-          console.warn('[PostgreSQL] get_nearby_lines_and_termini error:', (err as Error).message);
+    if (this.pgPool) {
+      try {
+        const res = await this.pgPool.query(
+          `SELECT * FROM get_nearby_lines_and_termini($1, $2, $3, $4)`,
+          [userLat, userLon, radiusMeters, maxLines]
+        );
+        if (res.rows.length > 0) {
+          return res.rows
+            .map((row) => this.mapNearbyTerminusRow(row as Record<string, unknown>))
+            .filter((row) => row.distance_meters <= radiusMeters)
+            .sort((a, b) => a.distance_meters - b.distance_meters || a.line_number.localeCompare(b.line_number))
+            .slice(0, maxLines);
         }
+      } catch (err) {
+        console.warn('[PostgreSQL] get_nearby_lines_and_termini error:', (err as Error).message);
       }
     }
 
@@ -1091,7 +1096,7 @@ class SupabaseService {
               }
             }
 
-            if (bestStop && minDist <= 1600) {
+            if (bestStop && minDist <= radiusMeters) {
               matches.push({
                 route_id: String(r.route_id),
                 line_number: String(r.route_short_name),

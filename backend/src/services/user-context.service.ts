@@ -348,25 +348,48 @@ export async function getReturningRoutesForLocation(
   );
 }
 
+export const MAX_LOCAL_STOP_RADIUS_METERS = 600;
+const FALLBACK_LOCAL_STOP_RADIUS_METERS = 1600;
+
 /**
- * Returns local bus lines passing nearby stops around `(lat, lon)` along with
- * each line's terminal destination and live arrival ETA from Redis.
+ * Returns local bus lines passing nearby stops around `(lat, lon)` within at most 600m,
+ * sorted from the closest stop ascending, along with each line's terminal destination and live ETA.
+ * If no stop exists within 600m, falls back to returning strictly the 1 closest line within 1600m
+ * so at least one route is always shown while alternatives never exceed 600m.
  */
 export async function getLocalStopSuggestions(
   lat: number,
   lon: number,
-  radiusMeters = 500,
+  radiusMeters = MAX_LOCAL_STOP_RADIUS_METERS,
   maxLines = 8
 ): Promise<LocalLineSuggestion[]> {
+  const effectiveRadius = Math.min(radiusMeters, MAX_LOCAL_STOP_RADIUS_METERS);
   const rows: NearbyLineTerminusRow[] = await supabaseService.getNearbyLinesAndTermini(
     lat,
     lon,
-    radiusMeters,
+    effectiveRadius,
     maxLines
   );
 
+  let selectedRows = rows
+    .filter((row) => row.distance_meters <= effectiveRadius)
+    .sort((a, b) => a.distance_meters - b.distance_meters || a.line_number.localeCompare(b.line_number))
+    .slice(0, maxLines);
+
+  if (selectedRows.length === 0) {
+    const fallbackRows = await supabaseService.getNearbyLinesAndTermini(
+      lat,
+      lon,
+      FALLBACK_LOCAL_STOP_RADIUS_METERS,
+      1
+    );
+    selectedRows = [...fallbackRows]
+      .sort((a, b) => a.distance_meters - b.distance_meters || a.line_number.localeCompare(b.line_number))
+      .slice(0, 1);
+  }
+
   return Promise.all(
-    rows.map(async (row): Promise<LocalLineSuggestion> => {
+    selectedRows.map(async (row): Promise<LocalLineSuggestion> => {
       const liveEta = await computeLiveEtaForRoute({
         routeId: row.route_id,
         directionId: row.direction_id,
