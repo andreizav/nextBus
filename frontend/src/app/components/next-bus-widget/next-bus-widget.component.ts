@@ -18,7 +18,9 @@ import type {
   LocalLineSuggestion,
   LocalSuggestionsResponse,
   RenderMode,
+  ResolvedStopOption,
   ReturningRouteSuggestion,
+  UserStopInfo,
   WidgetLang
 } from '../../models/bus.models';
 import { InteractiveMapViewComponent } from '../interactive-map-view/interactive-map-view.component';
@@ -259,7 +261,95 @@ const EMPTY_INITIAL_STATE: LiveBusStatusResponse = {
             }
           </div>
         </section>
+      } @else if (busState().requires_confirmation && busState().confirmation_type === 'location_mismatch') {
+        <!-- Location Mismatch Confirmation Card -->
+        <section class="mismatch-card" role="alertdialog" aria-label="Location mismatch confirmation">
+          <div class="mismatch-head">
+            <span class="mismatch-icon" aria-hidden="true">📍</span>
+            <h3 class="mismatch-title">{{ extraLabels().mismatchTitle }}</h3>
+          </div>
+          <p class="mismatch-body" dir="auto">{{ mismatchPromptText() }}</p>
+          @if (busState().proposed_origin; as prop) {
+            <div class="mismatch-chips">
+              <div class="mismatch-chip" dir="auto">
+                <span class="chip-k">{{ extraLabels().currentGpsLabel }}:</span>
+                <span class="chip-v">{{ busState().current_location_summary?.label }}</span>
+              </div>
+              <div class="mismatch-chip is-proposed" dir="auto">
+                <span class="chip-k">{{ extraLabels().requestedOriginLabel }}:</span>
+                <span class="chip-v">{{ prop.label }}</span>
+              </div>
+            </div>
+          }
+          <div class="mismatch-actions">
+            <button
+              type="button"
+              class="mismatch-btn is-confirm"
+              [disabled]="isSearching()"
+              (click)="confirmLocationMismatch()"
+            >
+              {{ extraLabels().confirmProposedBtn }}
+            </button>
+            <button
+              type="button"
+              class="mismatch-btn is-current"
+              [disabled]="isSearching()"
+              (click)="useCurrentLocationInstead()"
+            >
+              {{ extraLabels().useCurrentBtn }}
+            </button>
+          </div>
+        </section>
+      } @else if (busState().no_verified_route) {
+        <!-- Honest No Verified GTFS Route Card -->
+        <section class="notice-card" role="status">
+          <div class="mismatch-head">
+            <span class="mismatch-icon" aria-hidden="true">🧭</span>
+            <h3 class="mismatch-title">{{ extraLabels().noRouteTitle }}</h3>
+          </div>
+          <p class="mismatch-body" dir="auto">{{ routingNoticeText() }}</p>
+          @if (busState().routing_notice?.nearest_confirmed_hub; as hub) {
+            <button
+              type="button"
+              class="mismatch-btn is-confirm"
+              [disabled]="isSearching()"
+              (click)="planToConfirmedHub(hub)"
+            >
+              {{ extraLabels().routeToHubPrefix }}: {{ cleanPlaceName(lang() === 'he' || lang() === 'ar' ? hub.stop_name_he : hub.stop_name) }}
+            </button>
+          }
+          <button
+            type="button"
+            class="mismatch-btn is-current"
+            (click)="resetSearch()"
+          >
+            {{ welcomeLabels().resetBtn }}
+          </button>
+        </section>
       } @else {
+        @if (busState().destination?.destination_granularity === 'street' && (busState().destination?.alternative_street_stops?.length ?? 0) > 1) {
+          <div class="street-stops-strip" role="region" aria-label="Alternative street stops">
+            <div class="street-stops-head">{{ extraLabels().streetStopsTitle }}</div>
+            <div class="street-stops-pills">
+              @for (s of busState().destination!.alternative_street_stops!; track s.stop_id) {
+                <button
+                  type="button"
+                  class="street-stop-pill"
+                  [class.is-active]="(preferredDestStopId() || busState().destination?.resolved_stop?.stop_id) === s.stop_id"
+                  (click)="onSelectStreetStop(s)"
+                >
+                  <span class="pill-name" dir="auto">
+                    {{ cleanPlaceName(lang() === 'he' || lang() === 'ar' ? s.stop_name_he : s.stop_name) }}
+                  </span>
+                  @if (s.routes_count) {
+                    <span class="pill-cnt">({{ s.routes_count }})</span>
+                  }
+                </button>
+              }
+            </div>
+          </div>
+        }
+
         @if (viewMode() === 'lite') {
           <nb-lite-timeline-view
             [state]="busState()"
@@ -631,6 +721,185 @@ const EMPTY_INITIAL_STATE: LiveBusStatusResponse = {
       .live-dot.is-paused {
         color: #94a3b8;
       }
+
+      /* Location Mismatch Confirmation & Honest Notice Cards */
+      .mismatch-card,
+      .notice-card {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 0.75rem;
+        background: rgba(255, 255, 255, 0.045);
+        border: 1px solid rgba(59, 130, 246, 0.35);
+        border-radius: 1.15rem;
+        padding: 0.9rem 0.95rem;
+        min-inline-size: 0;
+        max-inline-size: 100%;
+      }
+
+      .notice-card {
+        border-color: rgba(245, 158, 11, 0.4);
+      }
+
+      .mismatch-head {
+        display: flex;
+        align-items: center;
+        gap: 0.45rem;
+        min-inline-size: 0;
+      }
+
+      .mismatch-icon {
+        font-size: 1.05rem;
+        flex-shrink: 0;
+      }
+
+      .mismatch-title {
+        margin: 0;
+        font-size: 0.95rem;
+        font-weight: 700;
+        color: #f8fafc;
+        overflow-wrap: anywhere;
+      }
+
+      .mismatch-body {
+        margin: 0;
+        font-size: 0.82rem;
+        line-height: 1.45;
+        color: #dbe2ea;
+        overflow-wrap: anywhere;
+      }
+
+      .mismatch-chips {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 0.35rem;
+        min-inline-size: 0;
+      }
+
+      .mismatch-chip {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.3rem;
+        font-size: 0.74rem;
+        padding: 0.38rem 0.6rem;
+        border-radius: 0.65rem;
+        background: rgba(15, 23, 34, 0.55);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        color: #cbd5e1;
+        min-inline-size: 0;
+        overflow-wrap: anywhere;
+      }
+
+      .mismatch-chip.is-proposed {
+        border-color: rgba(59, 130, 246, 0.4);
+        color: #eff6ff;
+      }
+
+      .chip-k {
+        color: #9aa6b4;
+        font-weight: 600;
+      }
+
+      .mismatch-actions {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 0.45rem;
+        min-inline-size: 0;
+      }
+
+      .mismatch-btn {
+        inline-size: 100%;
+        padding: 0.58rem 0.8rem;
+        border-radius: 0.85rem;
+        border: 1px solid transparent;
+        font-size: 0.8rem;
+        font-weight: 700;
+        cursor: pointer;
+        text-align: center;
+        overflow-wrap: anywhere;
+        transition: all 0.15s ease;
+      }
+
+      .mismatch-btn:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+
+      .mismatch-btn.is-confirm {
+        background: #3087f6;
+        color: #ffffff;
+      }
+
+      .mismatch-btn.is-confirm:hover:not(:disabled) {
+        background: #2563eb;
+      }
+
+      .mismatch-btn.is-current {
+        background: rgba(255, 255, 255, 0.07);
+        border-color: rgba(255, 255, 255, 0.14);
+        color: #e2e8f0;
+      }
+
+      .mismatch-btn.is-current:hover:not(:disabled) {
+        background: rgba(255, 255, 255, 0.13);
+      }
+
+      /* Alternative Street Stops Switcher */
+      .street-stops-strip {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 0.35rem;
+        min-inline-size: 0;
+        max-inline-size: 100%;
+      }
+
+      .street-stops-head {
+        font-size: 0.7rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: #8b96a5;
+        padding-inline: 0.15rem;
+      }
+
+      .street-stops-pills {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.32rem;
+        min-inline-size: 0;
+      }
+
+      .street-stop-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+        max-inline-size: 100%;
+        min-inline-size: 0;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 999px;
+        padding: 0.24rem 0.58rem;
+        color: #cbd5e1;
+        font-size: 0.71rem;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      .street-stop-pill.is-active {
+        background: rgba(48, 135, 246, 0.22);
+        border-color: #3087f6;
+        color: #ffffff;
+      }
+
+      .pill-name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .pill-cnt {
+        color: #93c5fd;
+        flex-shrink: 0;
+      }
     `
   ]
 })
@@ -650,6 +919,8 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
   readonly isTripReversed = signal<boolean>(false);
   readonly originalDestination = signal<GeocodedDestination | null>(null);
   readonly hasExplicitDirection = signal(false);
+  readonly confirmedExplicitOrigin = signal<{ lat: number; lon: number; label: string; stop_id?: string } | null>(null);
+  readonly preferredDestStopId = signal<string | null>(null);
   readonly userId = signal<string>('');
   readonly returningRoutes = signal<ReturningRouteSuggestion[]>([]);
   readonly localLines = signal<LocalLineSuggestion[]>([]);
@@ -793,6 +1064,83 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
           resetTitle: 'Сбросить и вернуться на главный экран'
         };
     }
+  });
+
+  readonly extraLabels = computed(() => {
+    switch (this.lang()) {
+      case 'he':
+        return {
+          mismatchTitle: 'אי התאמה במיקום הנוכחי',
+          currentGpsLabel: 'מיקום GPS נוכחי',
+          requestedOriginLabel: 'מוצא מבוקש',
+          confirmProposedBtn: 'כן, חפש מנקודה זו',
+          useCurrentBtn: 'השתמש במיקום הנוכחי שלי',
+          noRouteTitle: 'לא נמצא מסלול מאומת',
+          routeToHubPrefix: 'מסלול למרכז הקרוב',
+          streetStopsTitle: 'תחנות מומלצות ברחוב (בחירה)'
+        };
+      case 'ar':
+        return {
+          mismatchTitle: 'عدم تطابق الموقع الحالي',
+          currentGpsLabel: 'موقع GPS الحالي',
+          requestedOriginLabel: 'نقطة الانطلاق المطلوبة',
+          confirmProposedBtn: 'نعم، ابحث من النقطة المحددة',
+          useCurrentBtn: 'استخدام موقعي الحالي',
+          noRouteTitle: 'لم يتم العثور على مسار مؤكد',
+          routeToHubPrefix: 'مسار إلى أقرب محطة رئيسية',
+          streetStopsTitle: 'محطات الشارع المتاحة'
+        };
+      case 'uk':
+        return {
+          mismatchTitle: 'Невідповідність поточної локації',
+          currentGpsLabel: 'Поточний GPS',
+          requestedOriginLabel: 'Вказана точка',
+          confirmProposedBtn: 'Так, шукати з вказаної точки',
+          useCurrentBtn: 'Використати мою поточну локацію',
+          noRouteTitle: 'Підтверджений маршрут не знайдено',
+          routeToHubPrefix: 'Маршрут до найближчого вузла',
+          streetStopsTitle: 'Ключові зупинки на вулиці'
+        };
+      case 'en':
+        return {
+          mismatchTitle: 'Current Location Mismatch',
+          currentGpsLabel: 'Your GPS location',
+          requestedOriginLabel: 'Requested origin',
+          confirmProposedBtn: 'Yes, search from the specified point',
+          useCurrentBtn: 'Use my current location',
+          noRouteTitle: 'No verified GTFS route found',
+          routeToHubPrefix: 'Route to nearest confirmed hub',
+          streetStopsTitle: 'Stops along this street'
+        };
+      default:
+        return {
+          mismatchTitle: 'Локация не совпадает с указанной точкой',
+          currentGpsLabel: 'Ваша текущая GPS-локация',
+          requestedOriginLabel: 'Указанная точка отправления',
+          confirmProposedBtn: 'Да, искать от указанной точки',
+          useCurrentBtn: 'Использовать мою текущую локацию',
+          noRouteTitle: 'Подтверждённый маршрут в базе не найден',
+          routeToHubPrefix: 'Маршрут до ближайшего узла',
+          streetStopsTitle: 'Остановки на этой улице'
+        };
+    }
+  });
+
+  readonly mismatchPromptText = computed(() => {
+    const state = this.busState();
+    const l = this.lang();
+    if (l === 'he') return state.confirmation_prompt_he || state.confirmation_prompt_en || '';
+    if (l === 'en') return state.confirmation_prompt_en || state.confirmation_prompt_ru || '';
+    return state.confirmation_prompt_ru || state.confirmation_prompt_en || '';
+  });
+
+  readonly routingNoticeText = computed(() => {
+    const notice = this.busState().routing_notice;
+    if (!notice) return '';
+    const l = this.lang();
+    if (l === 'he') return notice.message_he || notice.message_en;
+    if (l === 'en') return notice.message_en || notice.message_ru;
+    return notice.message_ru || notice.message_en;
   });
 
   readonly minShort = computed(() => {
@@ -1015,6 +1363,8 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
     this.isTripReversed.set(false);
     this.originalDestination.set(null);
     this.hasExplicitDirection.set(false);
+    this.confirmedExplicitOrigin.set(null);
+    this.preferredDestStopId.set(null);
     this.busState.set(EMPTY_INITIAL_STATE);
     if (this.entryContext() === 'standalone') {
       void this.loadLocalSuggestions();
@@ -1284,6 +1634,8 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
     this.selectedOptionIndex.set(0);
     this.isTripReversed.set(false);
     this.originalDestination.set(null);
+    this.confirmedExplicitOrigin.set(null);
+    this.preferredDestStopId.set(null);
 
     try {
       let coords = this.userCoords();
@@ -1328,8 +1680,12 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
         }
         this.selectedRouteId.set(data.route.route_id || null);
         this.selectedDirection.set(data.route.direction_id);
-        this.startPolling();
-        if (this.entryContext() === 'standalone') {
+        if (data.requires_confirmation || data.no_verified_route) {
+          this.stopPolling();
+        } else {
+          this.startPolling();
+        }
+        if (this.entryContext() === 'standalone' && !data.requires_confirmation) {
           void this.loadLocalSuggestions();
         }
       }
@@ -1340,12 +1696,153 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
     }
   }
 
+  async confirmLocationMismatch(): Promise<void> {
+    const prop = this.busState().proposed_origin;
+    if (!prop) return;
+
+    const retryQuery =
+      prop.original_query ||
+      this.activeSearchLabel() ||
+      (prop.line_number ? `bus ${prop.line_number}` : prop.destination_query || prop.label);
+
+    this.confirmedExplicitOrigin.set({
+      lat: prop.lat,
+      lon: prop.lon,
+      label: prop.label,
+      stop_id: prop.stop_id
+    });
+    this.isSearching.set(true);
+
+    try {
+      const gpsCoords = this.userCoords() ?? DEFAULT_COORDS;
+      const response = await fetch('/api/search-routes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: retryQuery,
+          user_location: { lat: gpsCoords.lat, lon: gpsCoords.lon },
+          user_id: this.userId() || undefined,
+          ignore_user_location: true,
+          explicit_origin: {
+            lat: prop.lat,
+            lon: prop.lon,
+            label: prop.label,
+            stop_id: prop.stop_id
+          },
+          include_nearby_places: this.viewMode() === 'interactive'
+        })
+      });
+      if (response.ok) {
+        const data = (await response.json()) as LiveBusStatusResponse;
+        this.busState.set(data);
+        if (data.destination) {
+          this.originalDestination.set(data.destination);
+        }
+        this.selectedRouteId.set(data.route.route_id || null);
+        this.selectedDirection.set(data.route.direction_id);
+        this.startPolling();
+      }
+    } catch {
+      // Keep confirmation card if network failed
+    } finally {
+      this.isSearching.set(false);
+    }
+  }
+
+  async useCurrentLocationInstead(): Promise<void> {
+    const prop = this.busState().proposed_origin;
+    this.confirmedExplicitOrigin.set(null);
+
+    const targetQuery =
+      prop?.destination_query?.trim() ||
+      prop?.line_number?.trim() ||
+      this.activeSearchLabel();
+
+    if (!targetQuery) {
+      this.resetSearch();
+      return;
+    }
+
+    this.isSearching.set(true);
+    try {
+      const coords = this.userCoords() ?? DEFAULT_COORDS;
+      const response = await fetch('/api/search-routes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: targetQuery,
+          user_location: { lat: coords.lat, lon: coords.lon },
+          user_id: this.userId() || undefined,
+          ignore_user_location: true,
+          include_nearby_places: this.viewMode() === 'interactive'
+        })
+      });
+      if (response.ok) {
+        const data = (await response.json()) as LiveBusStatusResponse;
+        this.busState.set(data);
+        if (data.destination) {
+          this.originalDestination.set(data.destination);
+        }
+        this.selectedRouteId.set(data.route.route_id || null);
+        this.selectedDirection.set(data.route.direction_id);
+        if (!data.requires_confirmation && !data.no_verified_route) {
+          this.startPolling();
+        }
+      }
+    } catch {
+      // Ignore transient error
+    } finally {
+      this.isSearching.set(false);
+    }
+  }
+
+  async onSelectStreetStop(stop: ResolvedStopOption): Promise<void> {
+    const dest = this.busState().destination;
+    if (!dest) return;
+    this.preferredDestStopId.set(stop.stop_id);
+    this.selectedOptionIndex.set(0);
+    const updatedDest: GeocodedDestination = {
+      ...dest,
+      lat: stop.lat,
+      lon: stop.lon,
+      place_name: stop.stop_name_he || stop.stop_name,
+      resolved_stop: stop
+    };
+    this.originalDestination.set(updatedDest);
+    await this.fetchLatestStatus(true);
+  }
+
+  async planToConfirmedHub(hub: UserStopInfo): Promise<void> {
+    const label = hub.stop_name_he || hub.stop_name;
+    this.preferredDestStopId.set(hub.stop_id);
+    this.originalDestination.set({
+      lat: hub.lat,
+      lon: hub.lon,
+      place_name: label,
+      formatted_address: label,
+      source: 'gtfs_db',
+      destination_granularity: 'poi',
+      resolved_stop: {
+        stop_id: hub.stop_id,
+        stop_code: hub.stop_code,
+        stop_name: hub.stop_name,
+        stop_name_he: hub.stop_name_he,
+        lat: hub.lat,
+        lon: hub.lon
+      }
+    });
+    this.selectedOptionIndex.set(0);
+    this.startPolling();
+    await this.fetchLatestStatus(true);
+  }
+
   private async fetchLatestStatus(bootstrapLine = false): Promise<void> {
     if (!this.hasActiveSearch()) return;
+    if (this.busState().requires_confirmation) return;
 
     try {
       const params = new URLSearchParams(window.location.search);
-      const coords = this.userCoords() ?? DEFAULT_COORDS;
+      const coords = this.confirmedExplicitOrigin() ?? this.userCoords() ?? DEFAULT_COORDS;
       const current = this.busState();
 
       const urlDestLat = params.get('dest_lat');
@@ -1376,6 +1873,10 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
           ? ''
           : (current.recommended_options ?? []).map((opt) => opt.route.route_id).join(',');
         const routeIdsParam = routeIds ? `&route_ids=${encodeURIComponent(routeIds)}` : '';
+        const prefStopParam =
+          !reversed && this.preferredDestStopId()
+            ? `&preferred_dest_stop_id=${encodeURIComponent(this.preferredDestStopId()!)}`
+            : '';
         const bootstrapParam = !current.destination || bootstrapLine ? '&bootstrap=true' : '';
 
         const tripUrl = `/api/live-status?lat=${encodeURIComponent(
@@ -1384,11 +1885,20 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
           toLat
         )}&dest_lon=${encodeURIComponent(toLon)}&dest_label=${encodeURIComponent(
           toLabel
-        )}&entry_context=${encodeURIComponent(this.entryContext())}${userParam}${routeIdsParam}${bootstrapParam}`;
+        )}&entry_context=${encodeURIComponent(this.entryContext())}${userParam}${routeIdsParam}${prefStopParam}${bootstrapParam}`;
 
         const response = await fetch(tripUrl);
         if (!response.ok) return;
         const data = (await response.json()) as LiveBusStatusResponse;
+        // Preserve street granularity & alternative street stops across live polling refreshes
+        if (!reversed && origDest?.alternative_street_stops?.length) {
+          data.destination = {
+            ...(data.destination ?? origDest),
+            destination_granularity: origDest.destination_granularity,
+            resolved_stop: origDest.resolved_stop,
+            alternative_street_stops: origDest.alternative_street_stops
+          };
+        }
         this.busState.set(data);
         if (!reversed && data.destination && !this.originalDestination()) {
           this.originalDestination.set(data.destination);
