@@ -28,16 +28,29 @@ import type {
       [attr.dir]="lang() === 'he' || lang() === 'ar' ? 'rtl' : 'ltr'"
       aria-label="Minimalist live bus status and stop timeline"
     >
-      <!-- 1. Hero Metrics Row (Route Number & Arrival Countdown) -->
+      <!-- 1. Redesigned Unified Route & Arrival Hero Card -->
       <header class="hero-metrics">
-        <div class="metric-col">
-          <div class="metric-main" [class.is-compact]="heroRouteDisplay().length > 4">
-            {{ heroRouteDisplay() }}
+        <div class="hero-route-group">
+          <div class="hero-line-badge" [class.is-compact]="heroRouteDisplay().length > 4">
+            <span aria-hidden="true">🚌</span>
+            <span>{{ heroRouteDisplay() }}</span>
           </div>
-          <div class="metric-caption">{{ labels().busRoute }}</div>
+          <div class="hero-route-meta">
+            <span class="metric-caption">{{ labels().busRoute }}</span>
+            @if (activeBus()) {
+              <div
+                class="eta-freshness-pill"
+                [class.is-realtime]="!isScheduledEta()"
+                [class.is-scheduled]="isScheduledEta()"
+              >
+                <span class="eta-dot" aria-hidden="true"></span>
+                <span>{{ etaStatusText() }}</span>
+              </div>
+            }
+          </div>
         </div>
 
-        <div class="metric-col" role="status" aria-live="polite">
+        <div class="hero-eta-box" role="status" aria-live="polite">
           <div class="metric-main">
             <span>{{ etaDigits() }}</span>
             @if (etaUnit()) {
@@ -46,27 +59,20 @@ import type {
           </div>
           <div class="metric-caption">{{ labels().arrivalCountdown }}</div>
         </div>
-
-        @if (activeBus()) {
-          <div
-            class="eta-freshness-pill"
-            [class.is-realtime]="!isScheduledEta()"
-            [class.is-scheduled]="isScheduledEta()"
-          >
-            <span class="eta-dot" aria-hidden="true"></span>
-            <span>{{ etaStatusText() }}</span>
-          </div>
-        }
       </header>
 
-      <!-- 2. Universal Direction / Reverse Route Bar (Line Lookup AND A⇄B Destination Trips) -->
-      @if (state().destination || activeRoute().available_directions.length > 1) {
+      <!-- 2. Clear Route Start & End Endpoints Card (Street / City) with Reverse Button -->
+      @if (state().destination || activeRoute().available_directions.length > 1 || activeTimelineStops().length > 1) {
         <div class="direction-bar">
-          <div class="dir-info">
-            <span class="dir-arrow" aria-hidden="true">{{ state().destination ? (isTripReversed() ? '↩' : '→') : '→' }}</span>
-            <span class="dir-label" dir="auto">
-              {{ state().destination ? tripDirectionText() : activeDirectionLabel() }}
-            </span>
+          <div class="dir-endpoints">
+            <div class="dir-point-row">
+              <span class="dir-point-tag is-start">{{ labels().fromWord }}</span>
+              <span class="dir-point-text" dir="auto">{{ directionStartText() }}</span>
+            </div>
+            <div class="dir-point-row">
+              <span class="dir-point-tag is-end">{{ labels().toWord }}</span>
+              <span class="dir-point-text" dir="auto">{{ directionEndText() }}</span>
+            </div>
           </div>
           <button
             type="button"
@@ -240,74 +246,112 @@ import type {
         padding-block: 0.35rem 0.25rem;
       }
 
-      /* 1. Hero Metrics */
+      /* 1. Unified Hero Summary Card */
       .hero-metrics {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        align-items: start;
-        text-align: center;
-        column-gap: 0.5rem;
-        row-gap: 0.4rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
         min-inline-size: 0;
         max-inline-size: 100%;
-        padding-block: 0.35rem 0.15rem;
+        padding: 0.75rem 0.9rem;
+        border-radius: 1.15rem;
+        background: linear-gradient(135deg, rgba(30, 41, 59, 0.78), rgba(15, 23, 34, 0.88));
+        border: 1px solid rgba(96, 165, 250, 0.24);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
       }
 
-      .metric-col {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr);
-        gap: 0.2rem;
-        justify-items: center;
+      .hero-route-group {
+        display: flex;
+        align-items: center;
+        gap: 0.65rem;
+        flex: 1 1 auto;
         min-inline-size: 0;
-        max-inline-size: 100%;
+      }
+
+      .hero-line-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.35rem;
+        padding: 0.45rem 0.78rem;
+        border-radius: 0.88rem;
+        background: linear-gradient(135deg, #3b82f6, #2563eb);
+        color: #ffffff;
+        font-size: clamp(1.35rem, 5.5vw, 1.85rem);
+        font-weight: 800;
+        line-height: 1;
+        letter-spacing: -0.02em;
+        white-space: nowrap;
+        flex-shrink: 0;
+        box-shadow: 0 6px 16px rgba(37, 99, 235, 0.38);
+      }
+
+      .hero-line-badge.is-compact {
+        font-size: clamp(1rem, 4.2vw, 1.3rem);
+        padding: 0.45rem 0.6rem;
+      }
+
+      .hero-route-meta {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.3rem;
+        min-inline-size: 0;
+      }
+
+      .hero-eta-box {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 0.16rem;
+        min-inline-size: 92px;
+        padding: 0.48rem 0.78rem;
+        border-radius: 0.95rem;
+        background: rgba(12, 18, 28, 0.78);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        text-align: center;
+        flex-shrink: 0;
       }
 
       .metric-main {
         display: inline-flex;
         align-items: baseline;
         justify-content: center;
-        block-size: clamp(2.35rem, 9vw, 3.25rem);
         color: #ffffff;
-        font-size: clamp(2.1rem, 8.5vw, 3.1rem);
-        font-weight: 700;
-        line-height: 1.05;
+        font-size: clamp(1.55rem, 6.2vw, 2.05rem);
+        font-weight: 800;
+        line-height: 1;
         letter-spacing: -0.03em;
         white-space: nowrap;
-        max-inline-size: 100%;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-
-      .metric-main.is-compact {
-        font-size: clamp(1.25rem, 5.5vw, 2rem);
       }
 
       .metric-unit {
-        font-size: clamp(0.95rem, 3.6vw, 1.35rem);
+        font-size: clamp(0.78rem, 3vw, 0.96rem);
         font-weight: 700;
         margin-inline-start: 0.2rem;
+        color: #93c5fd;
         letter-spacing: 0.02em;
       }
 
       .metric-caption {
-        font-size: 0.82rem;
-        color: #8b96a5;
-        font-weight: 400;
+        font-size: 0.72rem;
+        color: #94a3b8;
+        font-weight: 500;
         max-inline-size: 100%;
-        overflow-wrap: anywhere;
+        white-space: nowrap;
       }
 
       .eta-freshness-pill {
-        grid-column: 1 / -1;
-        justify-self: center;
         display: inline-flex;
         align-items: center;
         justify-content: center;
         gap: 0.3rem;
-        padding: 0.14rem 0.58rem;
+        padding: 0.14rem 0.52rem;
         border-radius: 999px;
-        font-size: 0.68rem;
-        font-weight: 600;
+        font-size: 0.66rem;
+        font-weight: 700;
         letter-spacing: 0.02em;
         max-inline-size: 100%;
         white-space: nowrap;
@@ -333,51 +377,65 @@ import type {
         background: currentColor;
       }
 
-      /* 2. Minimalist Direction Switch Bar */
+      /* 2. Clear Route Start / End Card */
       .direction-bar {
         display: flex;
         flex-wrap: wrap;
         align-items: center;
         justify-content: space-between;
-        gap: 0.5rem;
+        gap: 0.55rem;
         min-inline-size: 0;
         max-inline-size: 100%;
         background: rgba(255, 255, 255, 0.04);
         border: 1px solid rgba(255, 255, 255, 0.09);
-        border-radius: 0.9rem;
-        padding: 0.45rem 0.65rem;
+        border-radius: 0.95rem;
+        padding: 0.55rem 0.72rem;
       }
 
-      .dir-info {
+      .dir-endpoints {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 0.28rem;
+        flex: 1 1 180px;
+        min-inline-size: 0;
+      }
+
+      .dir-point-row {
         display: flex;
-        align-items: center;
-        gap: 0.35rem;
+        align-items: baseline;
+        gap: 0.4rem;
         min-inline-size: 0;
-        flex: 1 1 120px;
+        max-inline-size: 100%;
       }
 
-      .dir-arrow {
-        color: #60a5fa;
+      .dir-point-tag {
+        font-size: 0.66rem;
         font-weight: 700;
+        padding: 0.08rem 0.42rem;
+        border-radius: 999px;
         flex-shrink: 0;
+        letter-spacing: 0.02em;
       }
 
-      .dir-label {
+      .dir-point-tag.is-start {
+        background: rgba(59, 130, 246, 0.18);
+        color: #93c5fd;
+        border: 1px solid rgba(59, 130, 246, 0.35);
+      }
+
+      .dir-point-tag.is-end {
+        background: rgba(16, 185, 129, 0.16);
+        color: #6ee7b7;
+        border: 1px solid rgba(16, 185, 129, 0.35);
+      }
+
+      .dir-point-text {
         font-size: 0.78rem;
-        color: #cbd5e1;
-        font-weight: 500;
-        flex: 1 1 auto;
+        font-weight: 600;
+        color: #e2e8f0;
+        line-height: 1.25;
         min-inline-size: 0;
-        overflow-x: auto;
-        overflow-y: hidden;
-        scrollbar-width: none;
-        -webkit-overflow-scrolling: touch;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-
-      .dir-label::-webkit-scrollbar {
-        display: none;
+        overflow-wrap: anywhere;
       }
 
       .direction-switch-btn {
@@ -835,27 +893,68 @@ export class LiteTimelineViewComponent {
   readonly activeUserStop = computed(() => this.activeRecOption()?.origin_stop ?? this.state().user_stop);
   readonly activeBus = computed(() => this.activeRecOption()?.bus ?? this.state().nearest_bus);
 
-  readonly activeDirectionLabel = computed(() => {
+  formatClearEndpoint(raw: string): string {
+    const trimmed = raw.trim();
+    if (!trimmed) return '';
+    const parenMatch = trimmed.match(/^(.*?)\(([^)]+)\)\s*$/);
+    let place = parenMatch ? parenMatch[1].trim() : trimmed;
+    const city = parenMatch ? parenMatch[2].trim() : '';
+    place = place.replace(/\/(?:הורדה|רציפים\s*בינעירוני|איסוף)\b/g, '').trim();
+    if (city && !place.toLowerCase().includes(city.toLowerCase())) {
+      return `${place}, ${city}`;
+    }
+    return place;
+  }
+
+  private resolveEndpointPair(): { start: string; end: string } {
+    const isHe = this.lang() === 'he' || this.lang() === 'ar';
+    if (this.state().destination) {
+      const stopRaw = isHe
+        ? this.activeUserStop().stop_name_he
+        : this.activeUserStop().stop_name;
+      const startPoint =
+        this.formatClearEndpoint(stopRaw) || this.cleanStopName(this.originLabel() || '📍');
+      const destStop = this.activeRecOption()?.dest_stop;
+      const destRaw =
+        this.targetLabel() ||
+        this.state().destination?.place_name ||
+        (destStop ? (isHe ? destStop.stop_name_he : destStop.stop_name) : '') ||
+        '🏁';
+      const endPoint = this.formatClearEndpoint(destRaw);
+      return this.isTripReversed()
+        ? { start: endPoint, end: startPoint }
+        : { start: startPoint, end: endPoint };
+    }
+
+    const stops = this.activeTimelineStops();
+    if (stops.length >= 2) {
+      const firstRaw = isHe ? stops[0].stop_name_he : stops[0].stop_name;
+      const lastRaw = isHe
+        ? stops[stops.length - 1].stop_name_he
+        : stops[stops.length - 1].stop_name;
+      return {
+        start: this.formatClearEndpoint(firstRaw),
+        end: this.formatClearEndpoint(lastRaw)
+      };
+    }
+
     const route = this.activeRoute();
     const dir = route.available_directions.find((d) => d.direction_id === route.direction_id);
-    const raw =
-      this.lang() === 'he'
-        ? dir?.label_he ?? dir?.label ?? route.direction_label
-        : dir?.label ?? route.direction_label;
-    return raw
+    const raw = isHe
+      ? dir?.label_he ?? dir?.label ?? route.direction_label
+      : dir?.label ?? route.direction_label;
+    const parts = raw
       .split(/\s*(?:->|→)\s*/)
-      .map((part) => part.replace(/\s*\([^)]+\)\s*/g, '').trim())
-      .filter(Boolean)
-      .join(' → ');
-  });
+      .map((p) => this.formatClearEndpoint(p))
+      .filter(Boolean);
+    return {
+      start: parts[0] ?? '',
+      end: parts[parts.length - 1] ?? ''
+    };
+  }
 
-  readonly tripDirectionText = computed(() => {
-    const orig = this.cleanStopName(this.originLabel() || '📍');
-    const dest = this.cleanStopName(
-      this.targetLabel() || this.state().destination?.place_name || '🏁'
-    );
-    return this.isTripReversed() ? `${dest} → ${orig}` : `${orig} → ${dest}`;
-  });
+  readonly directionStartText = computed(() => this.resolveEndpointPair().start);
+  readonly directionEndText = computed(() => this.resolveEndpointPair().end);
 
   formatOptionRoute(opt: RecommendedBusOption): string {
     if (opt.is_transfer && opt.second_leg) {
@@ -994,7 +1093,9 @@ export class LiteTimelineViewComponent {
           collapse: 'צמצם',
           busHere: 'האוטובוס כאן',
           scheduledEta: 'לפי לו״ז',
-          secShort: 'ש׳'
+          secShort: 'ש׳',
+          fromWord: 'מוצא',
+          toWord: 'יעד'
         };
       case 'ar':
         return {
@@ -1011,7 +1112,9 @@ export class LiteTimelineViewComponent {
           collapse: 'تصغير',
           busHere: 'الحافلة هنا الآن',
           scheduledEta: 'حسب الجدول',
-          secShort: 'ث'
+          secShort: 'ث',
+          fromWord: 'من',
+          toWord: 'إلى'
         };
       case 'uk':
         return {
@@ -1028,7 +1131,9 @@ export class LiteTimelineViewComponent {
           collapse: 'Згорнути',
           busHere: 'Автобус зараз тут',
           scheduledEta: 'За розкладом',
-          secShort: 'с'
+          secShort: 'с',
+          fromWord: 'Звідки',
+          toWord: 'Куди'
         };
       case 'ru':
         return {
@@ -1045,7 +1150,9 @@ export class LiteTimelineViewComponent {
           collapse: 'Свернуть',
           busHere: 'Автобус сейчас здесь',
           scheduledEta: 'По расписанию',
-          secShort: 'с'
+          secShort: 'с',
+          fromWord: 'Откуда',
+          toWord: 'Куда'
         };
       default:
         return {
@@ -1062,7 +1169,9 @@ export class LiteTimelineViewComponent {
           collapse: 'Compact',
           busHere: 'Bus is here',
           scheduledEta: 'Scheduled',
-          secShort: 's'
+          secShort: 's',
+          fromWord: 'From',
+          toWord: 'To'
         };
     }
   });

@@ -33,16 +33,29 @@ import type {
       [attr.dir]="lang() === 'he' || lang() === 'ar' ? 'rtl' : 'ltr'"
       aria-label="Minimalist live map and route variants"
     >
-      <!-- 1. Hero Metrics Row (matching Lite View) -->
+      <!-- 1. Redesigned Unified Route & Arrival Hero Card -->
       <header class="nb-map-hero">
-        <div class="nb-map-metric-col">
-          <div class="nb-map-metric-main" [class.is-compact]="heroRouteDisplay().length > 4">
-            {{ heroRouteDisplay() }}
+        <div class="nb-hero-route-group">
+          <div class="nb-hero-line-badge" [class.is-compact]="heroRouteDisplay().length > 4">
+            <span aria-hidden="true">🚌</span>
+            <span>{{ heroRouteDisplay() }}</span>
           </div>
-          <div class="nb-map-metric-caption">{{ labels().busRoute }}</div>
+          <div class="nb-hero-route-meta">
+            <span class="nb-map-metric-caption">{{ labels().busRoute }}</span>
+            @if (activeBus()) {
+              <div
+                class="nb-map-freshness-pill"
+                [class.is-realtime]="!isScheduledEta()"
+                [class.is-scheduled]="isScheduledEta()"
+              >
+                <span class="nb-map-eta-dot" aria-hidden="true"></span>
+                <span>{{ etaStatusText() }}</span>
+              </div>
+            }
+          </div>
         </div>
 
-        <div class="nb-map-metric-col" role="status" aria-live="polite">
+        <div class="nb-hero-eta-box" role="status" aria-live="polite">
           <div class="nb-map-metric-main">
             <span>{{ etaDigits() }}</span>
             @if (etaUnit()) {
@@ -51,27 +64,20 @@ import type {
           </div>
           <div class="nb-map-metric-caption">{{ labels().arrivalCountdown }}</div>
         </div>
-
-        @if (activeBus()) {
-          <div
-            class="nb-map-freshness-pill"
-            [class.is-realtime]="!isScheduledEta()"
-            [class.is-scheduled]="isScheduledEta()"
-          >
-            <span class="nb-map-eta-dot" aria-hidden="true"></span>
-            <span>{{ etaStatusText() }}</span>
-          </div>
-        }
       </header>
 
-      <!-- 2. Universal Direction / Reverse Route Bar (Line Lookup AND A⇄B Destination Trips) -->
-      @if (state().destination || activeDisplayRoute().available_directions.length > 1) {
+      <!-- 2. Clear Route Start & End Endpoints Card (Street / City) with Reverse Button -->
+      @if (state().destination || activeDisplayRoute().available_directions.length > 1 || (activeOption()?.timeline_stops ?? state().timeline_stops).length > 1) {
         <div class="nb-map-dir-bar">
-          <div class="nb-map-dir-info">
-            <span class="nb-map-dir-arrow" aria-hidden="true">{{ state().destination ? (isTripReversed() ? '↩' : '→') : '→' }}</span>
-            <span class="nb-map-dir-label" dir="auto">
-              {{ state().destination ? tripDirectionText() : activeDirectionLabel() }}
-            </span>
+          <div class="nb-dir-endpoints">
+            <div class="nb-dir-point-row">
+              <span class="nb-dir-point-tag is-start">{{ labels().fromWord }}</span>
+              <span class="nb-dir-point-text" dir="auto">{{ directionStartText() }}</span>
+            </div>
+            <div class="nb-dir-point-row">
+              <span class="nb-dir-point-tag is-end">{{ labels().toWord }}</span>
+              <span class="nb-dir-point-text" dir="auto">{{ directionEndText() }}</span>
+            </div>
           </div>
           <button
             type="button"
@@ -120,15 +126,26 @@ import type {
       <div class="nb-map-viewport">
         <div #mapContainer class="nb-leaflet-host" aria-label="OpenStreetMap interactive map"></div>
 
-        <button
-          type="button"
-          class="nb-map-recenter-fab"
-          (click)="recenterMap()"
-          [title]="labels().recenter"
-          [attr.aria-label]="labels().recenter"
-        >
-          🎯
-        </button>
+        <div class="nb-map-fab-stack">
+          <button
+            type="button"
+            class="nb-map-fab"
+            (click)="zoomToUserLocation()"
+            [title]="labels().myLocation"
+            [attr.aria-label]="labels().myLocation"
+          >
+            📍
+          </button>
+          <button
+            type="button"
+            class="nb-map-fab"
+            (click)="recenterMap()"
+            [title]="labels().recenter"
+            [attr.aria-label]="labels().recenter"
+          >
+            🎯
+          </button>
+        </div>
 
         <div class="nb-map-hud">
           <span class="nb-hud-stop" dir="auto">
@@ -235,74 +252,112 @@ import type {
         color: #f8fafc;
       }
 
-      /* 1. Hero Metrics (identical proportions to Lite View) */
+      /* 1. Unified Hero Summary Card (identical to Lite View) */
       .nb-map-hero {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        align-items: start;
-        text-align: center;
-        column-gap: 0.5rem;
-        row-gap: 0.4rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
         min-inline-size: 0;
         max-inline-size: 100%;
-        padding-block: 0.25rem 0.1rem;
+        padding: 0.72rem 0.88rem;
+        border-radius: 1.15rem;
+        background: linear-gradient(135deg, rgba(30, 41, 59, 0.78), rgba(15, 23, 34, 0.88));
+        border: 1px solid rgba(96, 165, 250, 0.24);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
       }
 
-      .nb-map-metric-col {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr);
-        gap: 0.2rem;
-        justify-items: center;
+      .nb-hero-route-group {
+        display: flex;
+        align-items: center;
+        gap: 0.65rem;
+        flex: 1 1 auto;
         min-inline-size: 0;
-        max-inline-size: 100%;
+      }
+
+      .nb-hero-line-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.35rem;
+        padding: 0.45rem 0.78rem;
+        border-radius: 0.88rem;
+        background: linear-gradient(135deg, #3b82f6, #2563eb);
+        color: #ffffff;
+        font-size: clamp(1.35rem, 5.5vw, 1.85rem);
+        font-weight: 800;
+        line-height: 1;
+        letter-spacing: -0.02em;
+        white-space: nowrap;
+        flex-shrink: 0;
+        box-shadow: 0 6px 16px rgba(37, 99, 235, 0.38);
+      }
+
+      .nb-hero-line-badge.is-compact {
+        font-size: clamp(1rem, 4.2vw, 1.3rem);
+        padding: 0.45rem 0.6rem;
+      }
+
+      .nb-hero-route-meta {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.3rem;
+        min-inline-size: 0;
+      }
+
+      .nb-hero-eta-box {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 0.16rem;
+        min-inline-size: 92px;
+        padding: 0.48rem 0.78rem;
+        border-radius: 0.95rem;
+        background: rgba(12, 18, 28, 0.78);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        text-align: center;
+        flex-shrink: 0;
       }
 
       .nb-map-metric-main {
         display: inline-flex;
         align-items: baseline;
         justify-content: center;
-        block-size: clamp(2.35rem, 9vw, 3.2rem);
         color: #ffffff;
-        font-size: clamp(2.1rem, 8.5vw, 3rem);
-        font-weight: 700;
-        line-height: 1.05;
+        font-size: clamp(1.55rem, 6.2vw, 2.05rem);
+        font-weight: 800;
+        line-height: 1;
         letter-spacing: -0.03em;
         white-space: nowrap;
-        max-inline-size: 100%;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-
-      .nb-map-metric-main.is-compact {
-        font-size: clamp(1.25rem, 5.5vw, 2rem);
       }
 
       .nb-map-metric-unit {
-        font-size: clamp(0.95rem, 3.6vw, 1.3rem);
+        font-size: clamp(0.78rem, 3vw, 0.96rem);
         font-weight: 700;
         margin-inline-start: 0.2rem;
+        color: #93c5fd;
         letter-spacing: 0.02em;
       }
 
       .nb-map-metric-caption {
-        font-size: 0.82rem;
-        color: #8b96a5;
-        font-weight: 400;
+        font-size: 0.72rem;
+        color: #94a3b8;
+        font-weight: 500;
         max-inline-size: 100%;
-        overflow-wrap: anywhere;
+        white-space: nowrap;
       }
 
       .nb-map-freshness-pill {
-        grid-column: 1 / -1;
-        justify-self: center;
         display: inline-flex;
         align-items: center;
         justify-content: center;
         gap: 0.3rem;
-        padding: 0.14rem 0.58rem;
+        padding: 0.14rem 0.52rem;
         border-radius: 999px;
-        font-size: 0.68rem;
-        font-weight: 600;
+        font-size: 0.66rem;
+        font-weight: 700;
         letter-spacing: 0.02em;
         max-inline-size: 100%;
         white-space: nowrap;
@@ -328,51 +383,65 @@ import type {
         background: currentColor;
       }
 
-      /* 2. Direction Switch Bar */
+      /* 2. Clear Route Start / End Card */
       .nb-map-dir-bar {
         display: flex;
         flex-wrap: wrap;
         align-items: center;
         justify-content: space-between;
-        gap: 0.5rem;
+        gap: 0.55rem;
         min-inline-size: 0;
         max-inline-size: 100%;
         background: rgba(255, 255, 255, 0.04);
         border: 1px solid rgba(255, 255, 255, 0.09);
-        border-radius: 0.9rem;
-        padding: 0.45rem 0.65rem;
+        border-radius: 0.95rem;
+        padding: 0.55rem 0.72rem;
       }
 
-      .nb-map-dir-info {
+      .nb-dir-endpoints {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 0.28rem;
+        flex: 1 1 180px;
+        min-inline-size: 0;
+      }
+
+      .nb-dir-point-row {
         display: flex;
-        align-items: center;
-        gap: 0.35rem;
+        align-items: baseline;
+        gap: 0.4rem;
         min-inline-size: 0;
-        flex: 1 1 120px;
+        max-inline-size: 100%;
       }
 
-      .nb-map-dir-arrow {
-        color: #60a5fa;
+      .nb-dir-point-tag {
+        font-size: 0.66rem;
         font-weight: 700;
+        padding: 0.08rem 0.42rem;
+        border-radius: 999px;
         flex-shrink: 0;
+        letter-spacing: 0.02em;
       }
 
-      .nb-map-dir-label {
+      .nb-dir-point-tag.is-start {
+        background: rgba(59, 130, 246, 0.18);
+        color: #93c5fd;
+        border: 1px solid rgba(59, 130, 246, 0.35);
+      }
+
+      .nb-dir-point-tag.is-end {
+        background: rgba(16, 185, 129, 0.16);
+        color: #6ee7b7;
+        border: 1px solid rgba(16, 185, 129, 0.35);
+      }
+
+      .nb-dir-point-text {
         font-size: 0.78rem;
-        color: #cbd5e1;
-        font-weight: 500;
-        flex: 1 1 auto;
+        font-weight: 600;
+        color: #e2e8f0;
+        line-height: 1.25;
         min-inline-size: 0;
-        overflow-x: auto;
-        overflow-y: hidden;
-        scrollbar-width: none;
-        -webkit-overflow-scrolling: touch;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-
-      .nb-map-dir-label::-webkit-scrollbar {
-        display: none;
+        overflow-wrap: anywhere;
       }
 
       .nb-map-dir-btn {
@@ -521,26 +590,33 @@ import type {
         z-index: 1;
       }
 
-      .nb-map-recenter-fab {
+      .nb-map-fab-stack {
         position: absolute;
         top: 0.65rem;
         right: 0.65rem;
         left: auto;
         z-index: 450;
+        display: flex;
+        flex-direction: column;
+        gap: 0.45rem;
+      }
+
+      .nb-map-fab {
         display: grid;
         place-items: center;
-        inline-size: 2.15rem;
-        block-size: 2.15rem;
+        inline-size: 2.2rem;
+        block-size: 2.2rem;
         border-radius: 999px;
-        background: rgba(29, 35, 43, 0.9);
+        background: rgba(29, 35, 43, 0.92);
         color: #f8fafc;
-        border: 1px solid rgba(255, 255, 255, 0.2);
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.42);
+        font-size: 0.96rem;
         cursor: pointer;
         transition: all 0.15s ease;
       }
 
-      .nb-map-recenter-fab:hover {
+      .nb-map-fab:hover {
         background: #3087f6;
         border-color: #3087f6;
       }
@@ -882,27 +958,68 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
     () => this.activeOption()?.bus ?? this.state().nearest_bus
   );
 
-  readonly activeDirectionLabel = computed(() => {
+  formatClearEndpoint(raw: string): string {
+    const trimmed = raw.trim();
+    if (!trimmed) return '';
+    const parenMatch = trimmed.match(/^(.*?)\(([^)]+)\)\s*$/);
+    let place = parenMatch ? parenMatch[1].trim() : trimmed;
+    const city = parenMatch ? parenMatch[2].trim() : '';
+    place = place.replace(/\/(?:הורדה|רציפים\s*בינעירוני|איסוף)\b/g, '').trim();
+    if (city && !place.toLowerCase().includes(city.toLowerCase())) {
+      return `${place}, ${city}`;
+    }
+    return place;
+  }
+
+  private resolveEndpointPair(): { start: string; end: string } {
+    const isHe = this.lang() === 'he' || this.lang() === 'ar';
+    if (this.state().destination) {
+      const stopRaw = isHe
+        ? this.activeOriginStop().stop_name_he
+        : this.activeOriginStop().stop_name;
+      const startPoint =
+        this.formatClearEndpoint(stopRaw) || this.cleanStopName(this.originLabel() || '📍');
+      const destStop = this.activeOption()?.dest_stop;
+      const destRaw =
+        this.targetLabel() ||
+        this.state().destination?.place_name ||
+        (destStop ? (isHe ? destStop.stop_name_he : destStop.stop_name) : '') ||
+        '🏁';
+      const endPoint = this.formatClearEndpoint(destRaw);
+      return this.isTripReversed()
+        ? { start: endPoint, end: startPoint }
+        : { start: startPoint, end: endPoint };
+    }
+
+    const stops = this.activeOption()?.timeline_stops ?? this.state().timeline_stops;
+    if (stops.length >= 2) {
+      const firstRaw = isHe ? stops[0].stop_name_he : stops[0].stop_name;
+      const lastRaw = isHe
+        ? stops[stops.length - 1].stop_name_he
+        : stops[stops.length - 1].stop_name;
+      return {
+        start: this.formatClearEndpoint(firstRaw),
+        end: this.formatClearEndpoint(lastRaw)
+      };
+    }
+
     const route = this.activeDisplayRoute();
     const dir = route.available_directions.find((d) => d.direction_id === route.direction_id);
-    const raw =
-      this.lang() === 'he'
-        ? dir?.label_he ?? dir?.label ?? route.direction_label
-        : dir?.label ?? route.direction_label;
-    return raw
+    const raw = isHe
+      ? dir?.label_he ?? dir?.label ?? route.direction_label
+      : dir?.label ?? route.direction_label;
+    const parts = raw
       .split(/\s*(?:->|→)\s*/)
-      .map((part) => part.replace(/\s*\([^)]+\)\s*/g, '').trim())
-      .filter(Boolean)
-      .join(' → ');
-  });
+      .map((p) => this.formatClearEndpoint(p))
+      .filter(Boolean);
+    return {
+      start: parts[0] ?? '',
+      end: parts[parts.length - 1] ?? ''
+    };
+  }
 
-  readonly tripDirectionText = computed(() => {
-    const orig = this.cleanStopName(this.originLabel() || '📍');
-    const dest = this.cleanStopName(
-      this.targetLabel() || this.state().destination?.place_name || '🏁'
-    );
-    return this.isTripReversed() ? `${dest} → ${orig}` : `${orig} → ${dest}`;
-  });
+  readonly directionStartText = computed(() => this.resolveEndpointPair().start);
+  readonly directionEndText = computed(() => this.resolveEndpointPair().end);
 
   readonly heroRouteDisplay = computed(() => {
     const base = this.activeDisplayRoute().short_name || '—';
@@ -972,12 +1089,15 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
           minShort: 'דק׳',
           waitWord: 'המתנה',
           recenter: 'מרכז מסלול',
+          myLocation: 'התמקד במיקום שלי',
           offersTitle: 'בתי קפה בקרבת מקום',
           openMaps: 'פתח במפות',
           intercityAdvice:
             'היעד המבוקש נמצא מחוץ לרשת העירונית. מומלץ לקחת קו אקספרס 910/900 או רכבת ממרכזית חוף הכרמל.',
           scheduledEta: 'לפי לו״ז',
-          secShort: 'ש׳'
+          secShort: 'ש׳',
+          fromWord: 'מוצא',
+          toWord: 'יעד'
         };
       case 'ar':
         return {
@@ -990,12 +1110,15 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
           minShort: 'د',
           waitWord: 'انتظار',
           recenter: 'توسيط المسار',
+          myLocation: 'التقريب إلى موقعي',
           offersTitle: 'مقاهي قريبة أثناء الانتظار',
           openMaps: 'فتح في الخرائط',
           intercityAdvice:
             'الوجهة خارج الشبكة الحضرية المحلية. يُنصح بأخذ خط إكسبرس 900/910 أو القطار من محطة حوف هكرمل.',
           scheduledEta: 'حسب الجدول',
-          secShort: 'ث'
+          secShort: 'ث',
+          fromWord: 'من',
+          toWord: 'إلى'
         };
       case 'uk':
         return {
@@ -1008,12 +1131,15 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
           minShort: 'хв',
           waitWord: 'очік.',
           recenter: 'Центрувати маршрут',
+          myLocation: 'Наблизити до моєї локації',
           offersTitle: 'Кафе поруч на час очікування',
           openMaps: 'Відкрити на карті',
           intercityAdvice:
             'Пункт призначення за межами міської мережі. Рекомендуємо експрес №900/910 або потяг від Хоф ха-Кармель.',
           scheduledEta: 'За розкладом',
-          secShort: 'с'
+          secShort: 'с',
+          fromWord: 'Звідки',
+          toWord: 'Куди'
         };
       case 'en':
         return {
@@ -1026,12 +1152,15 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
           minShort: 'min',
           waitWord: 'wait',
           recenter: 'Center route',
+          myLocation: 'Zoom to my location',
           offersTitle: 'Cafes nearby while you wait',
           openMaps: 'Open in Maps',
           intercityAdvice:
             'Destination is outside the local urban corridor. Take Express 910/900 or rail from Hof HaCarmel Central.',
           scheduledEta: 'Scheduled',
-          secShort: 's'
+          secShort: 's',
+          fromWord: 'From',
+          toWord: 'To'
         };
       default:
         return {
@@ -1044,12 +1173,15 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
           minShort: 'мин',
           waitWord: 'ожид.',
           recenter: 'Центрировать маршрут',
+          myLocation: 'Приблизить к моему местоположению',
           offersTitle: 'Кафе рядом на время ожидания',
           openMaps: 'Открыть на карте',
           intercityAdvice:
             'Пункт назначения находится за пределами городской сети. Рекомендуем экспресс №910/900 или поезд от Хоф ха-Кармель.',
           scheduledEta: 'По расписанию',
-          secShort: 'с'
+          secShort: 'с',
+          fromWord: 'Откуда',
+          toWord: 'Куда'
         };
     }
   });
@@ -1114,6 +1246,13 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
 
   cleanStopName(name: string): string {
     return name.replace(/\s*\([^)]+\)\s*$/, '').trim() || name;
+  }
+
+  zoomToUserLocation(): void {
+    if (!this.map) return;
+    const data = this.state();
+    const target = data.user_location ?? this.activeOriginStop();
+    this.map.setView([target.lat, target.lon], 16, { animate: true });
   }
 
   recenterMap(): void {
