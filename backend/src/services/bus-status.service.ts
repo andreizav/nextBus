@@ -1,9 +1,10 @@
 import {
   buildTimelineWindow,
   calculateEtaMinutes,
+  calculateRoutePathDistanceMeters,
   calculateStopsAway,
   computeAspectCorrectedBbox,
-  haversineDistanceMeters,
+  filterFreshVehicles,
   projectCoordinatesToBbox,
   resolveRenderMode,
   selectNearestApproachingVehicle
@@ -40,7 +41,9 @@ function synthesizeNextApproachingVehicle(
     bearing: directionId === 0 ? 345 : 165,
     recorded_at_time: new Date().toISOString(),
     current_stop_sequence: stop.stop_sequence,
-    speed_kmh: 24
+    speed_kmh: 24,
+    last_updated_sec_ago: 0,
+    is_realtime: false
   };
 }
 
@@ -93,12 +96,17 @@ export async function getLiveBusStatus(
     directionId
   );
 
-  const vehicles = cachedState?.vehicles ?? [];
+  const freshVehicles = filterFreshVehicles(cachedState?.vehicles ?? []);
   let nearestVehicle = selectNearestApproachingVehicle(
-    vehicles,
+    freshVehicles,
     nearestStop.stop_sequence,
     nearestStop.stop_lat,
     nearestStop.stop_lon
+  );
+  const isRealtime = Boolean(
+    nearestVehicle &&
+      cachedState?.source === 'stride' &&
+      nearestVehicle.is_realtime !== false
   );
 
   if (!nearestVehicle) {
@@ -117,13 +125,16 @@ export async function getLiveBusStatus(
       nearestStop.stop_sequence,
       nearestVehicle.current_stop_sequence
     );
-    const distanceToStop = haversineDistanceMeters(
+    const routeDistanceMeters = calculateRoutePathDistanceMeters(
+      allStops,
+      nearestVehicle.current_stop_sequence,
+      nearestStop.stop_sequence,
       nearestVehicle.lat,
       nearestVehicle.lon,
       nearestStop.stop_lat,
       nearestStop.stop_lon
     );
-    etaMinutes = calculateEtaMinutes(stopsAway, distanceToStop, nearestVehicle.speed_kmh);
+    etaMinutes = calculateEtaMinutes(stopsAway, routeDistanceMeters, nearestVehicle.speed_kmh);
 
     const matchedStop =
       allStops.find((s) => s.stop_sequence === nearestVehicle.current_stop_sequence) ??
@@ -131,6 +142,10 @@ export async function getLiveBusStatus(
 
     nearestBus = {
       ...nearestVehicle,
+      last_updated_sec_ago: nearestVehicle.last_updated_sec_ago ?? 0,
+      is_realtime: isRealtime,
+      eta_source: isRealtime ? 'realtime' : 'scheduled',
+      route_distance_meters: routeDistanceMeters,
       stops_away: stopsAway,
       eta_minutes: etaMinutes,
       current_stop_code: matchedStop?.stop_code,

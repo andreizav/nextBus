@@ -45,6 +45,16 @@ import type {
             }
           </div>
           <div class="metric-caption">{{ labels().arrivalCountdown }}</div>
+          @if (activeBus()) {
+            <div
+              class="eta-freshness-pill"
+              [class.is-realtime]="!isScheduledEta()"
+              [class.is-scheduled]="isScheduledEta()"
+            >
+              <span class="eta-dot" aria-hidden="true"></span>
+              <span>{{ etaStatusText() }}</span>
+            </div>
+          }
         </div>
       </header>
 
@@ -279,6 +289,41 @@ import type {
         font-weight: 400;
         max-inline-size: 100%;
         overflow-wrap: anywhere;
+      }
+
+      .eta-freshness-pill {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.3rem;
+        margin-block-start: 0.15rem;
+        padding: 0.14rem 0.5rem;
+        border-radius: 999px;
+        font-size: 0.68rem;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        max-inline-size: 100%;
+        white-space: nowrap;
+      }
+
+      .eta-freshness-pill.is-realtime {
+        background: rgba(34, 197, 94, 0.14);
+        color: #86efac;
+        border: 1px solid rgba(34, 197, 94, 0.35);
+      }
+
+      .eta-freshness-pill.is-scheduled {
+        background: rgba(245, 158, 11, 0.14);
+        color: #fde68a;
+        border: 1px solid rgba(245, 158, 11, 0.35);
+      }
+
+      .eta-dot {
+        inline-size: 6px;
+        block-size: 6px;
+        border-radius: 50%;
+        flex-shrink: 0;
+        background: currentColor;
       }
 
       /* 2. Minimalist Direction Switch Bar */
@@ -821,6 +866,24 @@ export class LiteTimelineViewComponent {
     return 'MIN';
   });
 
+  readonly isScheduledEta = computed(() => {
+    const bus = this.activeBus();
+    return bus?.eta_source === 'scheduled' || bus?.is_realtime === false;
+  });
+
+  readonly etaStatusText = computed(() => {
+    const bus = this.activeBus();
+    if (!bus) return '';
+    if (this.isScheduledEta()) {
+      return this.labels().scheduledEta;
+    }
+    const sec = bus.last_updated_sec_ago;
+    if (sec !== undefined && sec > 0) {
+      return `LIVE GPS • ${sec}${this.labels().secShort}`;
+    }
+    return 'LIVE GPS';
+  });
+
   readonly activeTimelineStops = computed<StopTimelineItem[]>(
     () => this.activeRecOption()?.timeline_stops ?? this.state().timeline_stops
   );
@@ -903,7 +966,9 @@ export class LiteTimelineViewComponent {
           waitWord: 'המתנה',
           moreStops: 'כל התחנות',
           collapse: 'צמצם',
-          busHere: 'האוטובוס כאן'
+          busHere: 'האוטובוס כאן',
+          scheduledEta: 'לפי לו״ז',
+          secShort: 'ש׳'
         };
       case 'ar':
         return {
@@ -918,7 +983,9 @@ export class LiteTimelineViewComponent {
           waitWord: 'انتظار',
           moreStops: 'كل المحطات',
           collapse: 'تصغير',
-          busHere: 'الحافلة هنا الآن'
+          busHere: 'الحافلة هنا الآن',
+          scheduledEta: 'حسب الجدول',
+          secShort: 'ث'
         };
       case 'uk':
         return {
@@ -933,7 +1000,9 @@ export class LiteTimelineViewComponent {
           waitWord: 'очік.',
           moreStops: 'Усі зупинки',
           collapse: 'Згорнути',
-          busHere: 'Автобус зараз тут'
+          busHere: 'Автобус зараз тут',
+          scheduledEta: 'За розкладом',
+          secShort: 'с'
         };
       case 'ru':
         return {
@@ -948,7 +1017,9 @@ export class LiteTimelineViewComponent {
           waitWord: 'ожид.',
           moreStops: 'Все остановки',
           collapse: 'Свернуть',
-          busHere: 'Автобус сейчас здесь'
+          busHere: 'Автобус сейчас здесь',
+          scheduledEta: 'По расписанию',
+          secShort: 'с'
         };
       default:
         return {
@@ -963,7 +1034,9 @@ export class LiteTimelineViewComponent {
           waitWord: 'wait',
           moreStops: 'All stops',
           collapse: 'Compact',
-          busHere: 'Bus is here'
+          busHere: 'Bus is here',
+          scheduledEta: 'Scheduled',
+          secShort: 's'
         };
     }
   });

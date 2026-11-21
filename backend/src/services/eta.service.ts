@@ -11,6 +11,7 @@ const EARTH_RADIUS_METERS = 6_371_000;
 const AVG_URBAN_SPEED_KMH = 24;
 const DWELL_MINUTES_PER_STOP = 0.6;
 const LITE_MODE_MAX_ETA_MINUTES = 8;
+export const MAX_VEHICLE_STALE_SECONDS = 300;
 
 function toRadians(degrees: number): number {
   return (degrees * Math.PI) / 180;
@@ -32,6 +33,134 @@ export function haversineDistanceMeters(
     Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) * Math.sin(dLon / 2) ** 2;
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return EARTH_RADIUS_METERS * c;
+}
+
+/**
+ * Computes age in seconds of a telemetry timestamp relative to `nowMs`.
+ * Returns 0 if the timestamp is absent or unparseable.
+ */
+export function calculateTelemetryAgeSeconds(
+  recordedAtTime?: string,
+  nowMs: number = Date.now()
+): number {
+  if (!recordedAtTime) return 0;
+  const parsedMs = Date.parse(recordedAtTime);
+  if (Number.isNaN(parsedMs)) return 0;
+  return Math.max(0, Math.round((nowMs - parsedMs) / 1000));
+}
+
+/**
+ * Filters out stale ("ghost") vehicle telemetry older than `maxStaleSeconds`
+ * and annotates each surviving vehicle with `last_updated_sec_ago`.
+ * When `nowMs` is omitted and the freshest vehicle in the batch is >1h in the past
+ * (e.g. deterministic unit test fixtures), anchors relative staleness to the freshest vehicle.
+ */
+export function filterFreshVehicles(
+  vehicles: VehicleTelemetry[],
+  maxStaleSeconds: number = MAX_VEHICLE_STALE_SECONDS,
+  nowMs?: number
+): VehicleTelemetry[] {
+  if (vehicles.length === 0) return [];
+
+  let effectiveNowMs = nowMs;
+  if (effectiveNowMs === undefined) {
+    const realNow = Date.now();
+    let maxRecordedMs = -Infinity;
+    for (const v of vehicles) {
+      if (!v.recorded_at_time) continue;
+      const ms = Date.parse(v.recorded_at_time);
+      if (!Number.isNaN(ms) && ms > maxRecordedMs) {
+        maxRecordedMs = ms;
+      }
+    }
+    if (Number.isFinite(maxRecordedMs) && realNow - maxRecordedMs > 3_600_000) {
+      effectiveNowMs = maxRecordedMs;
+    } else {
+      effectiveNowMs = realNow;
+    }
+  }
+
+  const fresh: VehicleTelemetry[] = [];
+  for (const v of vehicles) {
+    const ageSec = calculateTelemetryAgeSeconds(v.recorded_at_time, effectiveNowMs);
+    if (ageSec <= maxStaleSeconds) {
+      fresh.push({
+        ...v,
+        last_updated_sec_ago: ageSec
+      });
+    }
+  }
+  return fresh;
+}
+
+/**
+ * Computes total path distance along the ordered route stops from `busStopSequence`
+ * to `targetStopSequence`, avoiding straight-line shortcuts on winding roads.
+ */
+export function calculateRoutePathDistanceMeters(
+  stops: Array<{ stop_sequence: number; lat: number; lon: number }>,
+  busStopSequence: number,
+  targetStopSequence: number,
+  busLat?: number,
+  busLon?: number,
+  targetLat?: number,
+  targetLon?: number
+): number {
+  if (stops.length === 0) {
+    if (
+      busLat !== undefined &&
+      busLon !== undefined &&
+      targetLat !== undefined &&
+      targetLon !== undefined
+    ) {
+      return Math.round(haversineDistanceMeters(busLat, busLon, targetLat, targetLon));
+    }
+    return 0;
+  }
+
+  const sorted = [...stops].sort((a, b) => a.stop_sequence - b.stop_sequence);
+  const chain = sorted.filter(
+    (s) => s.stop_sequence >= busStopSequence && s.stop_sequence <= targetStopSequence
+  );
+
+  if (targetStopSequence <= busStopSequence || chain.length < 2) {
+    const targetStop = sorted.find((s) => s.stop_sequence === targetStopSequence);
+    const startLat = busLat ?? chain[0]?.lat ?? targetLat ?? 0;
+    const startLon = busLon ?? chain[0]?.lon ?? targetLon ?? 0;
+    const endLat = targetLat ?? targetStop?.lat ?? chain[chain.length - 1]?.lat ?? startLat;
+    const endLon = targetLon ?? targetStop?.lon ?? chain[chain.length - 1]?.lon ?? startLon;
+    return Math.round(haversineDistanceMeters(startLat, startLon, endLat, endLon));
+  }
+
+  let totalMeters = 0;
+  const firstStartLat = busLat ?? chain[0].lat;
+  const firstStartLon = busLon ?? chain[0].lon;
+  totalMeters += haversineDistanceMeters(firstStartLat, firstStartLon, chain[1].lat, chain[1].lon);
+
+  for (let i = 1; i < chain.length - 1; i++) {
+    totalMeters += haversineDistanceMeters(
+      chain[i].lat,
+      chain[i].lon,
+      chain[i + 1].lat,
+      chain[i + 1].lon
+    );
+  }
+
+  const lastChainStop = chain[chain.length - 1];
+  if (
+    lastChainStop.stop_sequence !== targetStopSequence &&
+    targetLat !== undefined &&
+    targetLon !== undefined
+  ) {
+    totalMeters += haversineDistanceMeters(
+      lastChainStop.lat,
+      lastChainStop.lon,
+      targetLat,
+      targetLon
+    );
+  }
+
+  return Math.round(totalMeters);
 }
 
 /**
@@ -102,8 +231,9 @@ export function projectCoordinatesToBbox(
 }
 
 /**
- * Selects the closest approaching bus at or before userStopSequence.
- * Returns null if no live vehicle is approaching (e.g. all buses already passed userStopSequence).
+ * Selects the closest fresh approaching bus at or before userStopSequence.
+ * Excludes stale ("ghost") telemetry older than MAX_VEHICLE_STALE_SECONDS.
+ * Returns null if no live vehicle is approaching.
  */
 export function selectNearestApproachingVehicle(
   vehicles: VehicleTelemetry[],
@@ -111,7 +241,8 @@ export function selectNearestApproachingVehicle(
   userStopLat: number,
   userStopLon: number
 ): VehicleTelemetry | null {
-  const approaching = vehicles.filter((v) => v.current_stop_sequence <= userStopSequence);
+  const fresh = filterFreshVehicles(vehicles);
+  const approaching = fresh.filter((v) => v.current_stop_sequence <= userStopSequence);
   if (approaching.length === 0) {
     return null;
   }

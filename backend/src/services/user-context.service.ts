@@ -1,6 +1,8 @@
 import {
   calculateEtaMinutes,
+  calculateRoutePathDistanceMeters,
   calculateStopsAway,
+  filterFreshVehicles,
   haversineDistanceMeters,
   selectNearestApproachingVehicle
 } from './eta.service.js';
@@ -8,6 +10,7 @@ import { redisService } from './redis.service.js';
 import {
   supabaseService,
   type NearbyLineTerminusRow,
+  type RouteStopCoord,
   type UserRouteHistoryRow
 } from './supabase.service.js';
 import type {
@@ -90,10 +93,11 @@ async function computeLiveEtaForRoute(params: {
   let resolvedSeq = stopSequence;
   let resolvedLat = stopLat;
   let resolvedLon = stopLon;
+  let loadedStops: RouteStopCoord[] | undefined;
 
   if (resolvedSeq === undefined && originStopId) {
-    const stops = await supabaseService.getDirectionStopCoords(routeId, directionId);
-    const matched = stops.find((s) => s.stop_id === originStopId);
+    loadedStops = await supabaseService.getDirectionStopCoords(routeId, directionId);
+    const matched = loadedStops.find((s) => s.stop_id === originStopId);
     if (matched) {
       resolvedSeq = matched.stop_sequence;
       resolvedLat = matched.lat;
@@ -102,8 +106,9 @@ async function computeLiveEtaForRoute(params: {
   }
 
   const targetSeq = resolvedSeq ?? 1;
+  const freshVehicles = filterFreshVehicles(cached.vehicles);
   const approaching = selectNearestApproachingVehicle(
-    cached.vehicles,
+    freshVehicles,
     targetSeq,
     resolvedLat,
     resolvedLon
@@ -113,7 +118,18 @@ async function computeLiveEtaForRoute(params: {
   }
 
   const stopsAway = calculateStopsAway(targetSeq, approaching.current_stop_sequence);
-  const distM = haversineDistanceMeters(approaching.lat, approaching.lon, resolvedLat, resolvedLon);
+  const distM =
+    loadedStops && loadedStops.length > 0
+      ? calculateRoutePathDistanceMeters(
+          loadedStops,
+          approaching.current_stop_sequence,
+          targetSeq,
+          approaching.lat,
+          approaching.lon,
+          resolvedLat,
+          resolvedLon
+        )
+      : haversineDistanceMeters(approaching.lat, approaching.lon, resolvedLat, resolvedLon);
   return calculateEtaMinutes(stopsAway, distM, approaching.speed_kmh);
 }
 

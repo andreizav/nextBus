@@ -50,6 +50,16 @@ import type {
             }
           </div>
           <div class="nb-map-metric-caption">{{ labels().arrivalCountdown }}</div>
+          @if (activeBus()) {
+            <div
+              class="nb-map-freshness-pill"
+              [class.is-realtime]="!isScheduledEta()"
+              [class.is-scheduled]="isScheduledEta()"
+            >
+              <span class="nb-map-eta-dot" aria-hidden="true"></span>
+              <span>{{ etaStatusText() }}</span>
+            </div>
+          }
         </div>
       </header>
 
@@ -274,6 +284,41 @@ import type {
         font-weight: 400;
         max-inline-size: 100%;
         overflow-wrap: anywhere;
+      }
+
+      .nb-map-freshness-pill {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.3rem;
+        margin-block-start: 0.15rem;
+        padding: 0.14rem 0.5rem;
+        border-radius: 999px;
+        font-size: 0.68rem;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        max-inline-size: 100%;
+        white-space: nowrap;
+      }
+
+      .nb-map-freshness-pill.is-realtime {
+        background: rgba(34, 197, 94, 0.14);
+        color: #86efac;
+        border: 1px solid rgba(34, 197, 94, 0.35);
+      }
+
+      .nb-map-freshness-pill.is-scheduled {
+        background: rgba(245, 158, 11, 0.14);
+        color: #fde68a;
+        border: 1px solid rgba(245, 158, 11, 0.35);
+      }
+
+      .nb-map-eta-dot {
+        inline-size: 6px;
+        block-size: 6px;
+        border-radius: 50%;
+        flex-shrink: 0;
+        background: currentColor;
       }
 
       /* 2. Direction Switch Bar */
@@ -528,6 +573,15 @@ import type {
         border: 2px solid #ffffff;
         box-shadow: 0 3px 10px rgba(0, 0, 0, 0.55);
         white-space: nowrap;
+      }
+
+      .nb-smooth-marker {
+        transition: transform 0.85s cubic-bezier(0.22, 1, 0.36, 1);
+        will-change: transform;
+      }
+
+      .leaflet-zoom-anim .nb-smooth-marker {
+        transition: none;
       }
 
       .nb-pin-bus-pill.is-primary {
@@ -839,6 +893,24 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
     return 'MIN';
   });
 
+  readonly isScheduledEta = computed(() => {
+    const bus = this.activeBus();
+    return bus?.eta_source === 'scheduled' || bus?.is_realtime === false;
+  });
+
+  readonly etaStatusText = computed(() => {
+    const bus = this.activeBus();
+    if (!bus) return '';
+    if (this.isScheduledEta()) {
+      return this.labels().scheduledEta;
+    }
+    const sec = bus.last_updated_sec_ago;
+    if (sec !== undefined && sec > 0) {
+      return `LIVE GPS • ${sec}${this.labels().secShort}`;
+    }
+    return 'LIVE GPS';
+  });
+
   readonly stopsAwayText = computed(() => {
     const stops = this.activeBus()?.stops_away ?? 0;
     if (this.lang() === 'he') return `${stops} תחנות ממך`;
@@ -864,7 +936,9 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
           offersTitle: 'בתי קפה בקרבת מקום',
           openMaps: 'פתח במפות',
           intercityAdvice:
-            'היעד המבוקש נמצא מחוץ לרשת העירונית. מומלץ לקחת קו אקספרס 910/900 או רכבת ממרכזית חוף הכרמל.'
+            'היעד המבוקש נמצא מחוץ לרשת העירונית. מומלץ לקחת קו אקספרס 910/900 או רכבת ממרכזית חוף הכרמל.',
+          scheduledEta: 'לפי לו״ז',
+          secShort: 'ש׳'
         };
       case 'ar':
         return {
@@ -880,7 +954,9 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
           offersTitle: 'مقاهي قريبة أثناء الانتظار',
           openMaps: 'فتح في الخرائط',
           intercityAdvice:
-            'الوجهة خارج الشبكة الحضرية المحلية. يُنصح بأخذ خط إكسبرس 900/910 أو القطار من محطة حوف هكرمل.'
+            'الوجهة خارج الشبكة الحضرية المحلية. يُنصح بأخذ خط إكسبرس 900/910 أو القطار من محطة حوف هكرمل.',
+          scheduledEta: 'حسب الجدول',
+          secShort: 'ث'
         };
       case 'uk':
         return {
@@ -896,7 +972,9 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
           offersTitle: 'Кафе поруч на час очікування',
           openMaps: 'Відкрити на карті',
           intercityAdvice:
-            'Пункт призначення за межами міської мережі. Рекомендуємо експрес №900/910 або потяг від Хоф ха-Кармель.'
+            'Пункт призначення за межами міської мережі. Рекомендуємо експрес №900/910 або потяг від Хоф ха-Кармель.',
+          scheduledEta: 'За розкладом',
+          secShort: 'с'
         };
       case 'en':
         return {
@@ -912,7 +990,9 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
           offersTitle: 'Cafes nearby while you wait',
           openMaps: 'Open in Maps',
           intercityAdvice:
-            'Destination is outside the local urban corridor. Take Express 910/900 or rail from Hof HaCarmel Central.'
+            'Destination is outside the local urban corridor. Take Express 910/900 or rail from Hof HaCarmel Central.',
+          scheduledEta: 'Scheduled',
+          secShort: 's'
         };
       default:
         return {
@@ -928,7 +1008,9 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
           offersTitle: 'Кафе рядом на время ожидания',
           openMaps: 'Открыть на карте',
           intercityAdvice:
-            'Пункт назначения находится за пределами городской сети. Рекомендуем экспресс №910/900 или поезд от Хоф ха-Кармель.'
+            'Пункт назначения находится за пределами городской сети. Рекомендуем экспресс №910/900 или поезд от Хоф ха-Кармель.',
+          scheduledEta: 'По расписанию',
+          secShort: 'с'
         };
     }
   });
@@ -1158,7 +1240,7 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
 
     if (activeOpt) {
       busEntries.push({
-        key: `${activeOpt.route.route_id}:${activeOpt.bus.vehicle_id}`,
+        key: `leg1:${activeOpt.route.route_id}:${activeOpt.route.direction_id}`,
         lat: activeOpt.bus.lat,
         lon: activeOpt.bus.lon,
         shortName: activeOpt.route.short_name,
@@ -1170,7 +1252,7 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
       });
       if (activeOpt.is_transfer && activeOpt.second_leg) {
         busEntries.push({
-          key: `leg2:${activeOpt.second_leg.route.route_id}:${activeOpt.second_leg.bus.vehicle_id}`,
+          key: `leg2:${activeOpt.second_leg.route.route_id}:${activeOpt.second_leg.route.direction_id}`,
           lat: activeOpt.second_leg.bus.lat,
           lon: activeOpt.second_leg.bus.lon,
           shortName: `${activeOpt.second_leg.route.short_name} (2)`,
@@ -1183,7 +1265,7 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
       }
     } else if (data.nearest_bus) {
       busEntries.push({
-        key: `${data.route.route_id}:${data.nearest_bus.vehicle_id}`,
+        key: `line:${data.route.route_id}:${data.route.direction_id}`,
         lat: data.nearest_bus.lat,
         lon: data.nearest_bus.lon,
         shortName: data.route.short_name,

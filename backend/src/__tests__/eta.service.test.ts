@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   buildTimelineWindow,
   calculateEtaMinutes,
+  calculateRoutePathDistanceMeters,
   calculateStopsAway,
+  calculateTelemetryAgeSeconds,
+  filterFreshVehicles,
+  haversineDistanceMeters,
   projectCoordinatesToBbox,
   resolveRenderMode,
   selectNearestApproachingVehicle
@@ -150,6 +154,53 @@ describe('ETA and Hybrid Rendering calculations', () => {
       expect(win.compact_stops.length + win.hidden_past_count + win.hidden_upcoming_count).toBe(30);
       expect(win.hidden_past_count).toBe(16);
       expect(win.hidden_upcoming_count).toBe(7);
+    });
+  });
+
+  describe('calculateTelemetryAgeSeconds & filterFreshVehicles', () => {
+    it('filters out stale ghost vehicles older than 300s and keeps fresh ones with age metadata', () => {
+      const nowMs = Date.parse('2026-11-21T18:00:00.000Z');
+      const mixed: VehicleTelemetry[] = [
+        {
+          vehicle_id: 'ghost-old',
+          lat: 32.78,
+          lon: 34.96,
+          bearing: 0,
+          recorded_at_time: '2026-11-21T17:50:00.000Z', // 600s ago -> stale
+          current_stop_sequence: 4
+        },
+        {
+          vehicle_id: 'live-fresh',
+          lat: 32.77,
+          lon: 34.97,
+          bearing: 0,
+          recorded_at_time: '2026-11-21T17:59:15.000Z', // 45s ago -> fresh
+          current_stop_sequence: 2
+        }
+      ];
+
+      expect(calculateTelemetryAgeSeconds('2026-11-21T17:59:15.000Z', nowMs)).toBe(45);
+      const fresh = filterFreshVehicles(mixed, 300, nowMs);
+      expect(fresh).toHaveLength(1);
+      expect(fresh[0].vehicle_id).toBe('live-fresh');
+      expect(fresh[0].last_updated_sec_ago).toBe(45);
+    });
+  });
+
+  describe('calculateRoutePathDistanceMeters', () => {
+    it('sums distances along curved route segments instead of straight-line haversine', () => {
+      const curvedStops = [
+        { stop_sequence: 1, lat: 32.7500, lon: 34.9600 },
+        { stop_sequence: 2, lat: 32.7600, lon: 34.9800 }, // wide detour east
+        { stop_sequence: 3, lat: 32.7700, lon: 34.9600 }
+      ];
+
+      const straightLineMeters = Math.round(
+        haversineDistanceMeters(32.7500, 34.9600, 32.7700, 34.9600)
+      );
+      const pathMeters = calculateRoutePathDistanceMeters(curvedStops, 1, 3);
+
+      expect(pathMeters).toBeGreaterThan(straightLineMeters * 1.5);
     });
   });
 });

@@ -126,6 +126,8 @@ export interface UserStopInfo {
   distance_meters?: number;
 }
 
+export type EtaSource = 'realtime' | 'scheduled';
+
 export interface NearestBusInfo {
   vehicle_id: string;
   lat: number;
@@ -134,8 +136,12 @@ export interface NearestBusInfo {
   recorded_at_time: string;
   current_stop_sequence: number;
   speed_kmh?: number;
+  last_updated_sec_ago?: number;
+  is_realtime?: boolean;
   stops_away: number;
   eta_minutes: number;
+  eta_source?: EtaSource;
+  route_distance_meters?: number;
   current_stop_code?: string;
   current_stop_name?: string;
   current_stop_name_he?: string;

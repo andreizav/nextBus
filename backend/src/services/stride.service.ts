@@ -1,4 +1,8 @@
-import { haversineDistanceMeters } from './eta.service.js';
+import {
+  calculateTelemetryAgeSeconds,
+  haversineDistanceMeters,
+  MAX_VEHICLE_STALE_SECONDS
+} from './eta.service.js';
 import { supabaseService, type RouteStopCoord } from './supabase.service.js';
 import type { CachedRouteState, VehicleTelemetry } from '../types/bus.types.js';
 
@@ -96,7 +100,9 @@ function buildFallbackVehicles(
       bearing: directionId === 0 ? 95 : 275,
       recorded_at_time: nowIso,
       current_stop_sequence: sampleStop?.stop_sequence ?? 2,
-      speed_kmh: speed
+      speed_kmh: speed,
+      last_updated_sec_ago: 0,
+      is_realtime: false
     }
   ];
 }
@@ -110,7 +116,8 @@ export async function fetchLiveVehiclesFromStride(
   directionId: 0 | 1
 ): Promise<CachedRouteState> {
   const lineRef = resolveStrideLineRef(routeId, directionId);
-  const nowIso = new Date().toISOString();
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
   const routeStops = await supabaseService.getDirectionStopCoords(routeId, directionId);
 
   let vehicles: VehicleTelemetry[] = [];
@@ -125,6 +132,9 @@ export async function fetchLiveVehiclesFromStride(
       const seenVehicles = new Set<string>();
       for (const loc of locations) {
         if (typeof loc.lat !== 'number' || typeof loc.lon !== 'number') continue;
+        const ageSec = calculateTelemetryAgeSeconds(loc.recorded_at_time, nowMs);
+        if (loc.recorded_at_time && ageSec > MAX_VEHICLE_STALE_SECONDS) continue;
+
         const vehicleId = String(loc.siri_ride__vehicle_ref ?? `siri-${loc.siri_ride__id ?? loc.id}`);
         if (seenVehicles.has(vehicleId)) continue;
         seenVehicles.add(vehicleId);
@@ -138,7 +148,9 @@ export async function fetchLiveVehiclesFromStride(
           bearing: typeof loc.bearing === 'number' ? loc.bearing : directionId === 0 ? 345 : 165,
           recorded_at_time: loc.recorded_at_time ?? nowIso,
           current_stop_sequence: matchedSequence,
-          speed_kmh: typeof loc.velocity === 'number' && loc.velocity > 0 ? loc.velocity : 25
+          speed_kmh: typeof loc.velocity === 'number' && loc.velocity > 0 ? loc.velocity : 25,
+          last_updated_sec_ago: ageSec,
+          is_realtime: true
         });
 
         if (vehicles.length >= 4) break;

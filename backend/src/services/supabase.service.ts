@@ -174,24 +174,118 @@ const LINE_49_FALLBACK_STOPS: RouteStopCoord[] = [
     lon: 34.974635
   },
   {
+    stop_id: 'stop-40958',
+    stop_code: '40958',
+    stop_name: 'תעש טירה (טירת כרמל)',
+    stop_name_he: 'תעש טירה (טירת כרמל)',
+    stop_sequence: 2,
+    lat: 32.781207,
+    lon: 34.962876
+  },
+  {
+    stop_id: 'stop-40965',
+    stop_code: '40965',
+    stop_name: 'ההגנה/רוטנברג (חיפה)',
+    stop_name_he: 'ההגנה/רוטנברג (חיפה)',
+    stop_sequence: 3,
+    lat: 32.785647,
+    lon: 34.962823
+  },
+  {
+    stop_id: 'stop-42362',
+    stop_code: '42362',
+    stop_name: "מת''מ/ההגנה (חיפה)",
+    stop_name_he: "מת''מ/ההגנה (חיפה)",
+    stop_sequence: 4,
+    lat: 32.789609,
+    lon: 34.962117
+  },
+  {
     stop_id: 'stop-42656',
     stop_code: '42656',
     stop_name: "מת''מ (חיפה)",
     stop_name_he: "מת''מ (חיפה)",
-    stop_sequence: 34,
+    stop_sequence: 5,
     lat: 32.790385,
     lon: 34.96134
   },
   {
-    stop_id: 'stop-42600',
-    stop_code: '42600',
+    stop_id: 'stop-42502',
+    stop_code: '42502',
+    stop_name: 'סחרוב (חיפה)',
+    stop_name_he: 'סחרוב (חיפה)',
+    stop_sequence: 6,
+    lat: 32.790059,
+    lon: 34.959315
+  },
+  {
+    stop_id: 'stop-42657',
+    stop_code: '42657',
     stop_name: 'ת. מרכזית חוף הכרמל/הורדה (חיפה)',
     stop_name_he: 'ת. מרכזית חוף הכרמל/הורדה (חיפה)',
-    stop_sequence: 36,
-    lat: 32.7938,
-    lon: 34.9591
+    stop_sequence: 7,
+    lat: 32.793368,
+    lon: 34.959587
+  },
+  {
+    stop_id: 'stop-42658',
+    stop_code: '42658',
+    stop_name: 'ת. מרכזית חוף הכרמל/רציפים בינעירוני (חיפה)',
+    stop_name_he: 'ת. מרכזית חוף הכרמל/רציפים בינעירוני (חיפה)',
+    stop_sequence: 8,
+    lat: 32.793372,
+    lon: 34.958985
   }
 ];
+
+function getFallbackStopsForDirection(directionId: 0 | 1): RouteStopCoord[] {
+  if (directionId === 0) {
+    return LINE_49_FALLBACK_STOPS;
+  }
+  return [...LINE_49_FALLBACK_STOPS]
+    .reverse()
+    .map((stop, idx) => ({
+      ...stop,
+      stop_sequence: idx + 1
+    }));
+}
+
+function parsePostgisPoint(location: unknown): { lat: number; lon: number } | null {
+  if (
+    location &&
+    typeof location === 'object' &&
+    'coordinates' in location &&
+    Array.isArray((location as { coordinates?: unknown }).coordinates)
+  ) {
+    const coords = (location as { coordinates: number[] }).coordinates;
+    if (coords.length >= 2 && Number.isFinite(coords[0]) && Number.isFinite(coords[1])) {
+      return { lat: Number(coords[1]), lon: Number(coords[0]) };
+    }
+  }
+
+  if (typeof location === 'string' && /^[0-9a-fA-F]+$/.test(location) && location.length >= 42) {
+    try {
+      const buf = Buffer.from(location, 'hex');
+      const littleEndian = buf.readUInt8(0) === 1;
+      const geomType = littleEndian ? buf.readUInt32LE(1) : buf.readUInt32BE(1);
+      const hasSrid = (geomType & 0x20000000) !== 0;
+      const coordOffset = hasSrid ? 9 : 5;
+      if (buf.length >= coordOffset + 16) {
+        const lon = littleEndian ? buf.readDoubleLE(coordOffset) : buf.readDoubleBE(coordOffset);
+        const lat = littleEndian
+          ? buf.readDoubleLE(coordOffset + 8)
+          : buf.readDoubleBE(coordOffset + 8);
+        if (Number.isFinite(lat) && Number.isFinite(lon)) {
+          return { lat, lon };
+        }
+      }
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+}
 
 class SupabaseService {
   private client: SupabaseClient | null = null;
@@ -397,9 +491,10 @@ class SupabaseService {
           ? 1
           : 0;
 
-    let bestStop = LINE_49_FALLBACK_STOPS[0];
+    const fallbackStops = getFallbackStopsForDirection(inferredDir);
+    let bestStop = fallbackStops[0];
     let minDist = Infinity;
-    for (const stop of LINE_49_FALLBACK_STOPS) {
+    for (const stop of fallbackStops) {
       const dist = haversineDistanceMeters(userLat, userLon, stop.lat, stop.lon);
       if (dist < minDist) {
         minDist = dist;
@@ -436,15 +531,17 @@ class SupabaseService {
           p_direction_id: directionId
         });
         if (!error && Array.isArray(data) && data.length > 0) {
-          return data.map((r: Record<string, unknown>) => ({
-            stop_id: String(r.stop_id),
-            stop_code: String(r.stop_code),
-            stop_name: String(r.stop_name),
-            stop_name_he: String(r.stop_name_he ?? r.stop_name),
-            stop_sequence: Number(r.stop_sequence),
-            lat: Number(r.lat),
-            lon: Number(r.lon)
-          }));
+          return data
+            .map((r: Record<string, unknown>) => ({
+              stop_id: String(r.stop_id),
+              stop_code: String(r.stop_code),
+              stop_name: String(r.stop_name),
+              stop_name_he: String(r.stop_name_he ?? r.stop_name),
+              stop_sequence: Number(r.stop_sequence),
+              lat: Number(r.lat),
+              lon: Number(r.lon)
+            }))
+            .sort((a, b) => a.stop_sequence - b.stop_sequence);
         }
       } catch (err) {
         console.warn('[Supabase] get_direction_stop_coords RPC fallback:', (err as Error).message);
@@ -469,22 +566,62 @@ class SupabaseService {
           [routeId, directionId]
         );
         if (res.rows.length > 0) {
-          return res.rows.map((r) => ({
-            stop_id: String(r.stop_id),
-            stop_code: String(r.stop_code),
-            stop_name: String(r.stop_name),
-            stop_name_he: String(r.stop_name_he),
-            stop_sequence: Number(r.stop_sequence),
-            lat: Number(r.lat),
-            lon: Number(r.lon)
-          }));
+          return res.rows
+            .map((r) => ({
+              stop_id: String(r.stop_id),
+              stop_code: String(r.stop_code),
+              stop_name: String(r.stop_name),
+              stop_name_he: String(r.stop_name_he),
+              stop_sequence: Number(r.stop_sequence),
+              lat: Number(r.lat),
+              lon: Number(r.lon)
+            }))
+            .sort((a, b) => a.stop_sequence - b.stop_sequence);
         }
       } catch (err) {
         console.warn('[PostgreSQL] Stop list query error:', (err as Error).message);
       }
     }
 
-    return LINE_49_FALLBACK_STOPS;
+    // PostgREST direct route_stops + stops join fallback when RPC isn't loaded
+    if (this.client) {
+      try {
+        const { data: rows, error } = await this.client
+          .from('route_stops')
+          .select('stop_sequence, stops(stop_id, stop_code, stop_name, stop_name_he, location)')
+          .eq('route_id', routeId)
+          .eq('direction_id', directionId)
+          .order('stop_sequence', { ascending: true });
+
+        if (!error && Array.isArray(rows) && rows.length > 0) {
+          const parsed: RouteStopCoord[] = [];
+          for (const row of rows as Array<Record<string, unknown>>) {
+            const stopObj = Array.isArray(row.stops)
+              ? (row.stops[0] as Record<string, unknown> | undefined)
+              : (row.stops as Record<string, unknown> | undefined);
+            if (!stopObj) continue;
+            const coords = parsePostgisPoint(stopObj.location);
+            if (!coords) continue;
+            parsed.push({
+              stop_id: String(stopObj.stop_id),
+              stop_code: String(stopObj.stop_code ?? stopObj.stop_id),
+              stop_name: String(stopObj.stop_name ?? stopObj.stop_id),
+              stop_name_he: String(stopObj.stop_name_he ?? stopObj.stop_name ?? stopObj.stop_id),
+              stop_sequence: Number(row.stop_sequence),
+              lat: coords.lat,
+              lon: coords.lon
+            });
+          }
+          if (parsed.length > 0) {
+            return parsed.sort((a, b) => a.stop_sequence - b.stop_sequence);
+          }
+        }
+      } catch (err) {
+        console.warn('[Supabase] PostgREST route_stops table fallback error:', (err as Error).message);
+      }
+    }
+
+    return getFallbackStopsForDirection(directionId);
   }
 
   async getRouteStopsTimeline(

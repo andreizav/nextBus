@@ -1,8 +1,10 @@
 import {
   buildTimelineWindow,
   calculateEtaMinutes,
+  calculateRoutePathDistanceMeters,
   calculateStopsAway,
   computeAspectCorrectedBbox,
+  filterFreshVehicles,
   haversineDistanceMeters,
   projectCoordinatesToBbox,
   selectNearestApproachingVehicle
@@ -503,7 +505,9 @@ function synthesizeNextApproach(
     bearing: directionId === 0 ? 95 : 275,
     recorded_at_time: new Date().toISOString(),
     current_stop_sequence: stop?.stop_sequence ?? targetSeq,
-    speed_kmh: shortName === '24' ? 28 : shortName === '11' || shortName === '37' ? 24 : 21
+    speed_kmh: shortName === '24' ? 28 : shortName === '11' || shortName === '37' ? 24 : 21,
+    last_updated_sec_ago: 0,
+    is_realtime: false
   };
 }
 
@@ -534,19 +538,27 @@ function buildBusInfoForStop(
   shortName: string,
   directionId: 0 | 1
 ): { busInfo: NearestBusInfo; etaMinutes: number } {
-  const approaching = filterApproachingVehicles(cached?.vehicles ?? [], boardStopSeq);
+  const freshVehicles = filterFreshVehicles(cached?.vehicles ?? []);
+  const approaching = filterApproachingVehicles(freshVehicles, boardStopSeq);
+  const liveMatch = selectNearestApproachingVehicle(approaching, boardStopSeq, boardLat, boardLon);
+  const isRealtime = Boolean(
+    liveMatch && cached?.source === 'stride' && liveMatch.is_realtime !== false
+  );
   const chosenVehicle =
-    selectNearestApproachingVehicle(approaching, boardStopSeq, boardLat, boardLon) ??
+    liveMatch ??
     synthesizeNextApproach(allStops, boardStopSeq, boardLat, boardLon, shortName, directionId);
 
   const stopsAway = calculateStopsAway(boardStopSeq, chosenVehicle.current_stop_sequence);
-  const distanceMeters = haversineDistanceMeters(
+  const routeDistanceMeters = calculateRoutePathDistanceMeters(
+    allStops,
+    chosenVehicle.current_stop_sequence,
+    boardStopSeq,
     chosenVehicle.lat,
     chosenVehicle.lon,
     boardLat,
     boardLon
   );
-  const etaMinutes = calculateEtaMinutes(stopsAway, distanceMeters, chosenVehicle.speed_kmh);
+  const etaMinutes = calculateEtaMinutes(stopsAway, routeDistanceMeters, chosenVehicle.speed_kmh);
 
   const matchedCurrentStop =
     allStops.find((s) => s.stop_sequence === chosenVehicle.current_stop_sequence) ??
@@ -555,6 +567,10 @@ function buildBusInfoForStop(
   return {
     busInfo: {
       ...chosenVehicle,
+      last_updated_sec_ago: chosenVehicle.last_updated_sec_ago ?? 0,
+      is_realtime: isRealtime,
+      eta_source: isRealtime ? 'realtime' : 'scheduled',
+      route_distance_meters: routeDistanceMeters,
       stops_away: stopsAway,
       eta_minutes: etaMinutes,
       current_stop_code: matchedCurrentStop?.stop_code,
@@ -595,17 +611,15 @@ async function buildLegTimelineSlice(
   routeId: string,
   directionId: 0 | 1,
   startSequence: number,
-  endSequence: number,
+  _endSequence: number,
   busSequence: number,
   loadStops: (r: string, d: 0 | 1) => Promise<RouteStopCoord[]> = (r, d) =>
     supabaseService.getDirectionStopCoords(r, d)
 ) {
   const allStops = await loadStops(routeId, directionId);
-  const minSeq = Math.max(1, Math.min(busSequence, startSequence));
-  const slice = allStops.filter((s) => s.stop_sequence >= minSeq && s.stop_sequence <= endSequence);
-  const chosen = slice.length > 0 ? slice : allStops;
+  const orderedStops = [...allStops].sort((a, b) => a.stop_sequence - b.stop_sequence);
 
-  return chosen.map((stop) => {
+  return orderedStops.map((stop) => {
     let status: 'passed' | 'approaching' | 'user_stop' | 'upcoming' = 'upcoming';
     if (stop.stop_sequence < busSequence) {
       status = 'passed';
@@ -868,7 +882,15 @@ export async function planBestBusesToDestination(
       haversineDistanceMeters(userLocation.lat, userLocation.lon, originLat, originLon)
     );
     const walkToOriginMin = originDistMeters > 200 ? Math.round(originDistMeters / 75) : 0;
-    const distM = haversineDistanceMeters(originLat, originLon, match.dest_lat, match.dest_lon);
+    const distM = calculateRoutePathDistanceMeters(
+      allStops,
+      originSeq,
+      match.dest_stop_sequence,
+      originLat,
+      originLon,
+      match.dest_lat,
+      match.dest_lon
+    );
     const metrics = calculateTripMetrics(Math.max(etaMinutes, walkToOriginMin), stopsBetween, now, distM);
     const timelineStops = await buildLegTimelineSlice(
       match.route_id,
@@ -989,8 +1011,24 @@ export async function planBestBusesToDestination(
     );
     const walkToOriginMin = originDistMeters > 200 ? Math.round(originDistMeters / 75) : 0;
 
-    const leg1DistM = haversineDistanceMeters(originLat, originLon, match.xfer_alight_lat, match.xfer_alight_lon);
-    const leg2DistM = haversineDistanceMeters(match.xfer_board_lat, match.xfer_board_lon, match.dest_lat, match.dest_lon);
+    const leg1DistM = calculateRoutePathDistanceMeters(
+      leg1AllStops,
+      originSeq,
+      match.xfer_alight_stop_sequence,
+      originLat,
+      originLon,
+      match.xfer_alight_lat,
+      match.xfer_alight_lon
+    );
+    const leg2DistM = calculateRoutePathDistanceMeters(
+      leg2AllStops,
+      match.xfer_board_stop_sequence,
+      match.dest_stop_sequence,
+      match.xfer_board_lat,
+      match.xfer_board_lon,
+      match.dest_lat,
+      match.dest_lon
+    );
 
     const metrics = calculateTransferTripMetrics({
       etaToBoardingMin: Math.max(leg1Bus.etaMinutes, walkToOriginMin),
