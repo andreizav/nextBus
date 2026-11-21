@@ -3,15 +3,26 @@
 ## 1. Overview
 **nextBus** is a Cloud-Native real-time Israeli public transit tracking service integrated with **Google Connected Apps** (Google Search & Gemini) via the **Model Context Protocol (MCP)** as well as direct standalone web/mobile usage.
 
+### Three-Layer Data & Lookup Architecture
+1. **Layer 1 — Primary GTFS Database (Supabase PostgreSQL + PostGIS):**
+   All stops, routes, city central hubs (`find_central_stop_for_city` including **Be'er Sheva / באר שבע** and **Eilat / אילת**), popular street corridors (`find_popular_stop_on_street`), and A→B direct/transfer connections (`find_direct_trips`, `find_transfer_trips`) are queried from our own PostGIS database first, strictly ordered by `(route_id, direction_id, stop_sequence ASC)`.
+2. **Layer 2 — Two-Tier Upstash Redis Cache:**
+   - **`route:pair:{origin_grid}:{dest_grid}` (`TTL = 10800s` / 3h, ~150m grid `0.0015°`):** Caches static route & boarding/alighting/transfer stop topology **without** baked-in bus waiting `eta_minutes`.
+   - **`bus:state:{route_id}:{direction_id}` (`TTL = 60s`) & `bus:active_routes` (sliding `15m` ZSET, refreshed every `15s`):** Background polling worker keeps live SIRI telemetry fresh. Every `CACHE HIT` on `route:pair:...` immediately mixes fresh ETAs from `bus:state:...`, or falls back explicitly to scheduled GTFS estimates (`eta_source: "scheduled"`, `is_realtime: false`) when no live GPS bus is transmitting.
+3. **Layer 3 — Fallback Geocoder (`geo:cache:{hash}`, `TTL = 86400s` / 24h):**
+   Invoked ONLY when a free-form destination text (address/POI) is not resolved in Layer 1 (Supabase GTFS + built-in Israel Gazetteer) or Layer 2 (`geo:cache:{hash}`): queries free **OpenStreetMap Nominatim** first (with `User-Agent`) and optionally `GOOGLE_MAPS_API_KEY` if configured, caching the resolved coordinates and snapped GTFS stop in Redis for 24 hours.
+
 ```mermaid
 flowchart LR
     User["Google Search / Gemini or Standalone Web"] -->|MCP POST /mcp or POST /api/search-routes| Backend["Node.js + Express + Intent Router"]
     Widget["Angular 20 Widget"] -->|GET /api/live-status (15s)| Backend
-    Backend -->|1. Geo RPC| Supabase["Supabase (PostgreSQL + PostGIS)"]
-    Backend -->|2. Read State 1-2ms| Redis["Redis (bus:state & bus:active_routes)"]
-    Worker["Polling Worker (15s)"] -->|3. Active Routes ZSET| Redis
-    Worker -->|4. Batch Telemetry| Stride["Open Bus Stride API (SIRI)"]
-    Worker -->|5. Update Cache TTL 60s| Redis
+    Backend -->|Layer 1: City / Street / A->B GTFS RPC| Supabase["Supabase (PostgreSQL + PostGIS GTFS)"]
+    Backend -->|Layer 2a: route:pair TTL 3h| Redis["Upstash Redis"]
+    Backend -->|Layer 2b: bus:state TTL 60s + Geo Cache 24h| Redis
+    Backend -.->|Layer 3: Fallback only on Cache/DB Miss| Geo["OSM Nominatim (+ optional Google Places)"]
+    Worker["Polling Worker (15s)"] -->|Active Routes ZSET| Redis
+    Worker -->|Batch SIRI Telemetry| Stride["Open Bus Stride API (SIRI)"]
+    Worker -->|Update bus:state TTL 60s| Redis
 ```
 
 ---
@@ -21,7 +32,7 @@ flowchart LR
 ### Extensions
 - `postgis`
 
-### Tables
+### Tables (Full-Country Israel GTFS Coverage)
 1. **`routes`**:
    - `route_id TEXT PRIMARY KEY`
    - `agency_id TEXT NOT NULL`
@@ -40,6 +51,9 @@ flowchart LR
    - `direction_id SMALLINT NOT NULL`
    - `stop_id TEXT NOT NULL REFERENCES stops(stop_id) ON DELETE CASCADE`
    - `stop_sequence INT NOT NULL`
+   - Always queried with strict `(route_id, direction_id)` filter and `ORDER BY stop_sequence ASC`.
+
+Nationwide coverage includes Southern Israel hubs & corridors (**Be'er Sheva / באר שבע**, **Eilat / אילת**, Dimona, Mitzpe Ramon, Ashkelon, Ashdod, Kiryat Gat) in addition to Tel Aviv, Jerusalem, Haifa, Tirat Carmel, Netanya, Acre, and Nahariya. Full Ministry of Transport GTFS dumps (`israel-public-transportation.zip`) are imported in batches via `database/import-full-gtfs.ts`.
 
 ### RPC Functions
 1. `find_nearest_stop_for_line(line_num TEXT, user_lat FLOAT, user_lon FLOAT, preferred_dir SMALLINT DEFAULT NULL)`
@@ -51,7 +65,7 @@ flowchart LR
 4. `find_transfer_trips(origin_lat FLOAT, origin_lon FLOAT, dest_lat FLOAT, dest_lon FLOAT, radius_meters INT DEFAULT 500, max_transfers INT DEFAULT 2)`
    Finds connecting transfer journeys (1 or 2 transfers) via shared hubs or nearby stops (`ST_DWithin`), enforcing `seq_board < seq_alight` on every leg.
 5. `find_central_stop_for_city(city_name TEXT)`
-   Resolves a city-only query (e.g., `"Кирьят-Гат"`, `"Хайфа"`, `"Ashdod"`) to its primary central bus station or highest-connectivity transit hub (`מרכזית`, `רכבת מרכז`, `מסוף`) in GTFS/PostGIS.
+   Resolves a city-only query (e.g., `"Эйлат"`, `"Беэр-Шева"`, `"Кирьят-Гат"`, `"Хайфа"`, `"Ashdod"`) to its primary central bus station or highest-connectivity transit hub (`תחנה מרכזית`, `רכבת מרכז`, `מסוף`) in GTFS/PostGIS across Hebrew, Russian, and English aliases.
 6. `find_popular_stop_on_street(street_name TEXT, city_hint TEXT DEFAULT NULL, near_lat FLOAT DEFAULT NULL, near_lon FLOAT DEFAULT NULL)`
    Resolves street-only queries (without a house number or POI) to stops along the matching street corridor, ordered by route count (`COUNT(DISTINCT route_id)` in `route_stops`) and proximity, returning the main popular hub stop first plus alternatives.
 
@@ -61,9 +75,14 @@ flowchart LR
 
 | Key Pattern | Type | TTL | Description |
 | :--- | :--- | :--- | :--- |
-| `bus:state:{route_id}:{direction_id}` | String (JSON) | `60s` | Cached SIRI telemetry array (`vehicles[]`, `updated_at`, `source`) for a route & direction. |
+| `bus:state:{route_id}:{direction_id}` | String (JSON) | `60s` | Cached SIRI telemetry array (`vehicles[]`, `updated_at`, `source`) for a route & direction, discarding stale GPS telemetry (`>300s`). |
 | `bus:active_routes` | Sorted Set (ZSET) | Sliding `15m` score | Members formatted as `"{route_id}:{direction_id}"`; score is `Date.now() + 15 * 60 * 1000`. |
-| `geo:cache:{query_hash}` | String (JSON) | `86400s` (24h) | Cached Google Places / Geocoding result (`lat`, `lon`, `formatted_address`, `place_name`). |
+| `route:pair:{origin_grid}:{dest_grid}` | String (JSON) | `10800s` (3h) | Static route-pair topology (`direct_matches`, `transfer_matches`, `two_transfer_matches`, `direction_stops_cache`) quantized to ~`0.0015°` (~150m grid). Never stores baked-in waiting `eta_minutes`. |
+| `geo:cache:{query_hash}` | String (JSON) | `86400s` (24h) | Cached fallback geocoder result (`lat`, `lon`, `formatted_address`, `place_name`, snapped GTFS stop). |
+| `bus:cafes:v3:{lat}:{lon}` | String (JSON) | `3600s` (1h) | Cached nearby cafes strictly within `400m` when waiting `>10 min`. |
+
+### Scheduled GTFS Fallback When No Live SIRI Vehicle Exists
+When Redis `bus:state:{route_id}:{direction_id}` has no active live vehicle (e.g. a secondary transfer leg, off-peak schedule, or Eilat / Be'er Sheva regional line), the planner synthesizes an estimated schedule entry from GTFS `route_stops` / `stop_times` and explicitly labels it with `eta_source: "scheduled"` and `is_realtime: false` instead of returning an empty screen. Live SIRI-backed results carry `eta_source: "realtime"`, `is_realtime: true`, and `last_updated_sec_ago`.
 
 ---
 
@@ -175,8 +194,8 @@ Returned for A-to-B destination queries (up to 3 options, supporting 0, 1, or 2 
 }
 ```
 
-### 4.4 Compact Stop Timeline (`timeline_window`)
-Enforces the "3-second rule" on mobile screens by slicing full route stop lists into a compact window around the approaching bus and the user's boarding stop (2–3 stops before and 2–3 stops ahead):
+### 4.4 Full Stop Sequence (`timeline_stops`) & Compact Window (`timeline_window`)
+The backend returns the complete ordered sequence of `(route_id, direction_id)` stops in `timeline_stops` (`ORDER BY stop_sequence ASC`) so polylines and full stop expansion always work, while `timeline_window` enforces the "3-second rule" on mobile screens with a compact slice around the bus & boarding stop:
 ```json
 {
   "timeline_window": {
@@ -194,7 +213,7 @@ Enforces the "3-second rule" on mobile screens by slicing full route stop lists 
 
 ### 4.5 Destination Granularity Classification (`destination_granularity`)
 Every resolved destination carries `destination_granularity: "city" | "address" | "street" | "poi"` and selects the target stop as follows:
-- **`"city"`** (city name only, no street, house number, or POI — e.g., *"в Хайфу"*, *"в Кирьят-Гат"*): Resolves via `find_central_stop_for_city(city_name)` to the central bus station / main transit hub (`resolved_stop`).
+- **`"city"`** (city name only, no street, house number, or POI — e.g., *"в Эйлат"*, *"в Беэр-Шеву"*, *"в Хайфу"*, *"в Кирьят-Гат"*): Resolves via `find_central_stop_for_city(city_name)` to the central bus station / main transit hub (`resolved_stop`) in GTFS/Supabase without emitting empty results.
 - **`"address"` / `"poi"`** (specific street + house number or specific landmark/facility — e.g., *"Хорев 12, Хайфа"*, *"больница Рамбам"*): Geocodes exact coordinates and uses PostGIS `ST_DWithin` (~400–500 m, expanding if needed) to snap `resolved_stop` to the nearest physical bus stop.
 - **`"street"`** (street name only without house number or POI — e.g., *"на улицу Хорев"*): Resolves via `find_popular_stop_on_street(...)`, selecting the highest-connectivity hub/junction stop on that corridor as `resolved_stop` and returning up to 6 `alternative_street_stops[]` so the rider can switch to another stop on the same street.
 
