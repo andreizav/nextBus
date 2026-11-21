@@ -53,22 +53,24 @@ import type {
         </div>
       </header>
 
-      <!-- 2. Direction Switch Bar (when searching by bus line number) -->
-      @if (!state().destination && activeDisplayRoute().available_directions.length > 1) {
+      <!-- 2. Universal Direction / Reverse Route Bar (Line Lookup AND A⇄B Destination Trips) -->
+      @if (state().destination || activeDisplayRoute().available_directions.length > 1) {
         <div class="nb-map-dir-bar">
           <div class="nb-map-dir-info">
-            <span class="nb-map-dir-arrow" aria-hidden="true">→</span>
-            <span class="nb-map-dir-label" dir="auto">{{ activeDirectionLabel() }}</span>
+            <span class="nb-map-dir-arrow" aria-hidden="true">{{ state().destination ? (isTripReversed() ? '↩' : '→') : '→' }}</span>
+            <span class="nb-map-dir-label" dir="auto">
+              {{ state().destination ? tripDirectionText() : activeDirectionLabel() }}
+            </span>
           </div>
           <button
             type="button"
             class="nb-map-dir-btn"
-            (click)="onSwitchDirection()"
-            [title]="labels().switchDir"
-            [attr.aria-label]="labels().switchDir"
+            (click)="state().destination ? reverseTrip.emit() : onSwitchDirection()"
+            [title]="state().destination ? labels().reverseRoute : labels().switchDir"
+            [attr.aria-label]="state().destination ? labels().reverseRoute : labels().switchDir"
           >
             <span aria-hidden="true">⇄</span>
-            <span>{{ labels().switchDir }}</span>
+            <span>{{ state().destination ? labels().reverseRoute : labels().switchDir }}</span>
           </button>
         </div>
       }
@@ -672,9 +674,13 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
   readonly state = input.required<LiveBusStatusResponse>();
   readonly lang = input<WidgetLang>('ru');
   readonly selectedOptionIndex = input<number>(0);
+  readonly isTripReversed = input<boolean>(false);
+  readonly originLabel = input<string>('');
+  readonly targetLabel = input<string>('');
 
   readonly selectOptionIndex = output<number>();
   readonly switchDirection = output<0 | 1>();
+  readonly reverseTrip = output<void>();
 
   private readonly mapEl = viewChild<ElementRef<HTMLDivElement>>('mapContainer');
 
@@ -730,6 +736,14 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
     return raw.replace(/\s*->\s*/g, ' → ');
   });
 
+  readonly tripDirectionText = computed(() => {
+    const orig = this.cleanStopName(this.originLabel() || '📍');
+    const dest = this.cleanStopName(
+      this.targetLabel() || this.state().destination?.place_name || '🏁'
+    );
+    return this.isTripReversed() ? `${dest} → ${orig}` : `${orig} → ${dest}`;
+  });
+
   readonly heroRouteDisplay = computed(() => {
     const base = this.activeDisplayRoute().short_name || '—';
     const trip = this.activeTripOption();
@@ -770,6 +784,7 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
           busRoute: 'קו אוטובוס',
           arrivalCountdown: 'זמן הגעה',
           switchDir: 'החלף כיוון',
+          reverseRoute: 'מסלול הפוך',
           optionWord: 'אפשרות',
           variantsAria: 'בחר אפשרות נסיעה',
           minShort: 'דק׳',
@@ -785,6 +800,7 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
           busRoute: 'bus route',
           arrivalCountdown: 'arrival countdown',
           switchDir: 'Switch direction',
+          reverseRoute: 'Reverse route',
           optionWord: 'Option',
           variantsAria: 'Select trip option',
           minShort: 'min',
@@ -800,6 +816,7 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
           busRoute: 'маршрут',
           arrivalCountdown: 'до прибытия',
           switchDir: 'Сменить направление',
+          reverseRoute: 'Обратный маршрут',
           optionWord: 'Вариант',
           variantsAria: 'Выбор варианта маршрута',
           minShort: 'мин',

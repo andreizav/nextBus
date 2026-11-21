@@ -48,22 +48,24 @@ import type {
         </div>
       </header>
 
-      <!-- 2. Direction Switch Bar (when searching by bus line number) -->
-      @if (!state().destination && activeRoute().available_directions.length > 1) {
+      <!-- 2. Universal Direction / Reverse Route Bar (Line Lookup AND A⇄B Destination Trips) -->
+      @if (state().destination || activeRoute().available_directions.length > 1) {
         <div class="direction-bar">
           <div class="dir-info">
-            <span class="dir-arrow" aria-hidden="true">→</span>
-            <span class="dir-label" dir="auto">{{ activeDirectionLabel() }}</span>
+            <span class="dir-arrow" aria-hidden="true">{{ state().destination ? (isTripReversed() ? '↩' : '→') : '→' }}</span>
+            <span class="dir-label" dir="auto">
+              {{ state().destination ? tripDirectionText() : activeDirectionLabel() }}
+            </span>
           </div>
           <button
             type="button"
             class="direction-switch-btn"
-            (click)="onSwitchDirection()"
-            [title]="labels().switchDir"
-            [attr.aria-label]="labels().switchDir"
+            (click)="state().destination ? reverseTrip.emit() : onSwitchDirection()"
+            [title]="state().destination ? labels().reverseRoute : labels().switchDir"
+            [attr.aria-label]="state().destination ? labels().reverseRoute : labels().switchDir"
           >
             <span aria-hidden="true">⇄</span>
-            <span>{{ labels().switchDir }}</span>
+            <span>{{ state().destination ? labels().reverseRoute : labels().switchDir }}</span>
           </button>
         </div>
       }
@@ -658,8 +660,12 @@ export class LiteTimelineViewComponent {
   readonly state = input.required<LiveBusStatusResponse>();
   readonly lang = input<WidgetLang>('ru');
   readonly selectedOptionIndex = input<number>(0);
+  readonly isTripReversed = input<boolean>(false);
+  readonly originLabel = input<string>('');
+  readonly targetLabel = input<string>('');
   readonly selectOptionIndex = output<number>();
   readonly switchDirection = output<0 | 1>();
+  readonly reverseTrip = output<void>();
   readonly selectCandidate = output<LineCandidate>();
   readonly openMap = output<void>();
 
@@ -708,6 +714,14 @@ export class LiteTimelineViewComponent {
         ? dir?.label_he ?? dir?.label ?? route.direction_label
         : dir?.label ?? route.direction_label;
     return raw.replace(/\s*->\s*/g, ' → ');
+  });
+
+  readonly tripDirectionText = computed(() => {
+    const orig = this.cleanStopName(this.originLabel() || '📍');
+    const dest = this.cleanStopName(
+      this.targetLabel() || this.state().destination?.place_name || '🏁'
+    );
+    return this.isTripReversed() ? `${dest} → ${orig}` : `${orig} → ${dest}`;
   });
 
   formatOptionRoute(opt: RecommendedBusOption): string {
@@ -818,6 +832,7 @@ export class LiteTimelineViewComponent {
           arrivalCountdown: 'זמן הגעה',
           nearYou: 'קרוב אליך',
           switchDir: 'החלף כיוון',
+          reverseRoute: 'מסלול הפוך',
           optionWord: 'אפשרות',
           variantsAria: 'בחר אפשרות נסיעה',
           minShort: 'דק׳',
@@ -832,6 +847,7 @@ export class LiteTimelineViewComponent {
           arrivalCountdown: 'до прибытия',
           nearYou: 'Рядом с вами',
           switchDir: 'Сменить направление',
+          reverseRoute: 'Обратный маршрут',
           optionWord: 'Вариант',
           variantsAria: 'Выбор варианта маршрута',
           minShort: 'мин',
@@ -846,6 +862,7 @@ export class LiteTimelineViewComponent {
           arrivalCountdown: 'arrival countdown',
           nearYou: 'Near You',
           switchDir: 'Switch direction',
+          reverseRoute: 'Reverse route',
           optionWord: 'Option',
           variantsAria: 'Select trip option',
           minShort: 'min',

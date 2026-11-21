@@ -507,6 +507,582 @@ function findClosestValidOriginStop(
   return best;
 }
 
+const HOF_HACARMEL_HUB = {
+  stop_id: 'stop-42658',
+  stop_code: '42658',
+  stop_name: 'ת. מרכזית חוף הכרמל/רציפים בינעירוני (חיפה)',
+  stop_name_he: 'ת. מרכזית חוף הכרמל/רציפים בינעירוני (חיפה)',
+  lat: 32.793372,
+  lon: 34.958985
+};
+
+function buildHighwayWaypoints(params: {
+  isJerusalem: boolean;
+  farLat: number;
+  farLon: number;
+  farLabel: string;
+  hubFirst: boolean;
+}): Array<{
+  stop_id: string;
+  stop_code: string;
+  stop_name: string;
+  stop_name_he: string;
+  lat: number;
+  lon: number;
+}> {
+  const { isJerusalem, farLat, farLon, farLabel, hubFirst } = params;
+  const base = isJerusalem
+    ? [
+        { stop_id: 'stop-42658', stop_code: '42658', stop_name: 'ת. מרכזית חוף הכרמל', stop_name_he: 'ת. מרכזית חוף הכרמל', lat: 32.793372, lon: 34.958985 },
+        { stop_id: 'stop-hwy-atlit', stop_code: '45101', stop_name: 'מחלף עתלית / כביש 2', stop_name_he: 'מחלף עתלית / כביש 2', lat: 32.7050, lon: 34.9520 },
+        { stop_id: 'stop-hwy-zikhron', stop_code: '45102', stop_name: 'מחלף זכרון יעקב / כביש 2', stop_name_he: 'מחלף זכרון יעקב / כביש 2', lat: 32.5710, lon: 34.9310 },
+        { stop_id: 'stop-hwy-hadera', stop_code: '45103', stop_name: 'מחלף אולגה / חדרה', stop_name_he: 'מחלף אולגה / חדרה', lat: 32.4410, lon: 34.8920 },
+        { stop_id: 'stop-45001', stop_code: '45001', stop_name: 'מחלף נתניה / כביש 2', stop_name_he: 'מחלף נתניה / כביש 2', lat: 32.3275, lon: 34.8565 },
+        { stop_id: 'stop-hwy-bengurion', stop_code: '46101', stop_name: 'מחלף נתב"ג / כביש 1', stop_name_he: 'מחלף נתב"ג / כביש 1', lat: 32.0080, lon: 34.8870 },
+        { stop_id: 'stop-hwy-latrun', stop_code: '46102', stop_name: 'מחלף לטרון / שער הגיא', stop_name_he: 'מחלף לטרון / שער הגיא', lat: 31.8340, lon: 34.9860 },
+        { stop_id: 'stop-hwy-mevaseret', stop_code: '46103', stop_name: 'מחלף הראל / מבשרת ציון', stop_name_he: 'מחלף הראל / מבשרת ציון', lat: 31.7990, lon: 35.1520 }
+      ]
+    : [
+        { stop_id: 'stop-42658', stop_code: '42658', stop_name: 'ת. מרכזית חוף הכרמל', stop_name_he: 'ת. מרכזית חוף הכרמל', lat: 32.793372, lon: 34.958985 },
+        { stop_id: 'stop-hwy-atlit', stop_code: '45101', stop_name: 'מחלף עתלית / כביש 2', stop_name_he: 'מחלף עתלית / כביש 2', lat: 32.7050, lon: 34.9520 },
+        { stop_id: 'stop-hwy-zikhron', stop_code: '45102', stop_name: 'מחלף זכרון יעקב / כביש 2', stop_name_he: 'מחלף זכרון יעקב / כביש 2', lat: 32.5710, lon: 34.9310 },
+        { stop_id: 'stop-hwy-hadera', stop_code: '45103', stop_name: 'מחלף אולגה / חדרה', stop_name_he: 'מחלף אולגה / חדרה', lat: 32.4410, lon: 34.8920 },
+        { stop_id: 'stop-45001', stop_code: '45001', stop_name: 'מחלף נתניה / כביש 2', stop_name_he: 'מחלף נתניה / כביש 2', lat: 32.3275, lon: 34.8565 },
+        { stop_id: 'stop-45002', stop_code: '45002', stop_name: 'מחלף גלילות / סינמה סיטי', stop_name_he: 'מחלף גלילות / סינמה סיטי', lat: 32.1465, lon: 34.7995 },
+        ...(farLat < 32.02
+          ? [
+              {
+                stop_id: 'stop-hwy-holon',
+                stop_code: '45010',
+                stop_name: 'מחלף חולון / כביש 4',
+                stop_name_he: 'מחלף חולון / כביש 4',
+                lat: 32.0190,
+                lon: 34.8010
+              }
+            ]
+          : [])
+      ];
+
+  const farNode = {
+    stop_id: isJerusalem ? 'stop-46001' : 'stop-dest-intercity',
+    stop_code: isJerusalem ? '46001' : 'DEST',
+    stop_name: farLabel,
+    stop_name_he: farLabel,
+    lat: farLat,
+    lon: farLon
+  };
+
+  return hubFirst ? [...base, farNode] : [farNode, ...base.slice().reverse()];
+}
+
+async function synthesizeIntercityWithFeeders(params: {
+  userLocation: { lat: number; lon: number };
+  destination: GeocodedDestination;
+  distToDestKm: number;
+  now: Date;
+  allowColdBootstrap: boolean;
+}): Promise<RecommendedBusOption[]> {
+  const { userLocation, destination, distToDestKm, now, allowColdBootstrap } = params;
+
+  const distOriginToHofM = haversineDistanceMeters(
+    userLocation.lat,
+    userLocation.lon,
+    HOF_HACARMEL_HUB.lat,
+    HOF_HACARMEL_HUB.lon
+  );
+  const distDestToHofM = haversineDistanceMeters(
+    destination.lat,
+    destination.lon,
+    HOF_HACARMEL_HUB.lat,
+    HOF_HACARMEL_HUB.lon
+  );
+
+  const isJerusalem =
+    /jerusalem|ירושלים|иерусалим/i.test(destination.place_name) ||
+    haversineDistanceMeters(userLocation.lat, userLocation.lon, 31.789, 35.203) < 12000;
+  const intercityShortName = isJerusalem ? '940' : '900';
+  const intercityRouteId = isJerusalem ? 'stride-10940' : 'stride-10900';
+  const isAtHofDirect = (m: DirectRouteMatch) =>
+    ['stop-42657', 'stop-42658', 'stop-42659'].includes(m.dest_stop_id) ||
+    /חוף\s*הכרמל|hof\s*ha?carmel/i.test(m.dest_stop_name);
+
+  // Case A: Local origin (e.g. Tirat Carmel) -> Intercity destination (e.g. Ashdod) via Bus 49 + 900/940
+  if (distOriginToHofM > 450 && distOriginToHofM <= 15000) {
+    const rawFeeders = filterValidDirectionMatches(
+      await supabaseService.findDirectTrips(
+        userLocation.lat,
+        userLocation.lon,
+        HOF_HACARMEL_HUB.lat,
+        HOF_HACARMEL_HUB.lon,
+        650
+      )
+    );
+
+    const uniqueByRoute = new Map<string, DirectRouteMatch>();
+    for (const m of rawFeeders) {
+      if (!uniqueByRoute.has(m.route_id)) {
+        uniqueByRoute.set(m.route_id, m);
+      }
+    }
+
+    const sortedFeeders = Array.from(uniqueByRoute.values())
+      .sort((a, b) => {
+        const aHof = isAtHofDirect(a) ? 0 : 1;
+        const bHof = isAtHofDirect(b) ? 0 : 1;
+        if (aHof !== bHof) return aHof - bHof;
+        const distA = haversineDistanceMeters(userLocation.lat, userLocation.lon, a.origin_lat, a.origin_lon);
+        const distB = haversineDistanceMeters(userLocation.lat, userLocation.lon, b.origin_lat, b.origin_lon);
+        return distA - distB;
+      })
+      .slice(0, 3);
+
+    if (sortedFeeders.length > 0) {
+      const waypoints = buildHighwayWaypoints({
+        isJerusalem,
+        farLat: destination.lat,
+        farLon: destination.lon,
+        farLabel: destination.place_name,
+        hubFirst: true
+      });
+
+      const intercityTimeline = waypoints.map((w, idx) => ({
+        stop_id: w.stop_id,
+        stop_code: w.stop_code,
+        stop_name: w.stop_name,
+        stop_name_he: w.stop_name_he,
+        stop_sequence: idx + 1,
+        lat: w.lat,
+        lon: w.lon,
+        status: idx === 0 ? ('user_stop' as const) : ('upcoming' as const)
+      }));
+
+      const options: RecommendedBusOption[] = [];
+      for (const match of sortedFeeders) {
+        const allStops = await supabaseService.getDirectionStopCoords(match.route_id, match.direction_id);
+        const closestOrigin = findClosestValidOriginStop(
+          allStops,
+          userLocation.lat,
+          userLocation.lon,
+          match.dest_stop_sequence
+        );
+        const originStopId = closestOrigin?.stop_id ?? match.origin_stop_id;
+        const originStopCode = closestOrigin?.stop_code ?? match.origin_stop_code;
+        const originStopName = closestOrigin?.stop_name ?? match.origin_stop_name;
+        const originStopNameHe = closestOrigin?.stop_name_he ?? match.origin_stop_name_he;
+        const originSeq = closestOrigin?.stop_sequence ?? match.origin_stop_sequence;
+        const originLat = closestOrigin?.lat ?? match.origin_lat;
+        const originLon = closestOrigin?.lon ?? match.origin_lon;
+        const leg1Stops = Math.max(1, match.dest_stop_sequence - originSeq);
+
+        const leg1State = (await resolveRouteLiveState(match.route_id, match.direction_id, allowColdBootstrap)).state;
+        const leg1Bus = buildBusInfoForStop(
+          allStops,
+          leg1State,
+          originSeq,
+          originLat,
+          originLon,
+          match.route_short_name,
+          match.direction_id
+        );
+
+        const originDistMeters = Math.round(
+          haversineDistanceMeters(userLocation.lat, userLocation.lon, originLat, originLon)
+        );
+        const walkToOriginMin = originDistMeters > 200 ? Math.round(originDistMeters / 75) : 0;
+        const leg1EtaMin = Math.max(leg1Bus.etaMinutes, walkToOriginMin);
+
+        const leg1DistM = haversineDistanceMeters(originLat, originLon, match.dest_lat, match.dest_lon);
+        const xferWalkMeters = Math.round(
+          haversineDistanceMeters(match.dest_lat, match.dest_lon, HOF_HACARMEL_HUB.lat, HOF_HACARMEL_HUB.lon)
+        );
+        const estimatedLeg1Arrive = leg1EtaMin + Math.max(1, Math.round(leg1Stops * MINUTES_PER_STOP_AVG));
+        const leg2BusEtaMin = estimatedLeg1Arrive + Math.ceil(xferWalkMeters / 80) + 6;
+
+        const metrics = calculateTransferTripMetrics({
+          etaToBoardingMin: leg1EtaMin,
+          leg1Stops,
+          transferWalkMeters: xferWalkMeters,
+          leg2BusEtaMin,
+          leg2Stops: intercityTimeline.length,
+          now,
+          leg1DistanceMeters: leg1DistM,
+          leg2DistanceMeters: distDestToHofM
+        });
+
+        const leg1Timeline = await buildLegTimelineSlice(
+          match.route_id,
+          match.direction_id,
+          originSeq,
+          match.dest_stop_sequence,
+          leg1Bus.busInfo.current_stop_sequence
+        );
+
+        const alightStop: UserStopInfo = {
+          stop_id: match.dest_stop_id,
+          stop_code: match.dest_stop_code,
+          stop_name: match.dest_stop_name,
+          stop_name_he: match.dest_stop_name_he,
+          stop_sequence: match.dest_stop_sequence,
+          lat: match.dest_lat,
+          lon: match.dest_lon
+        };
+
+        const boardStop: UserStopInfo = {
+          stop_id: HOF_HACARMEL_HUB.stop_id,
+          stop_code: HOF_HACARMEL_HUB.stop_code,
+          stop_name: HOF_HACARMEL_HUB.stop_name,
+          stop_name_he: HOF_HACARMEL_HUB.stop_name_he,
+          stop_sequence: 1,
+          lat: HOF_HACARMEL_HUB.lat,
+          lon: HOF_HACARMEL_HUB.lon
+        };
+
+        const finalDestNode = waypoints[waypoints.length - 1];
+        const destStopInfo: UserStopInfo = {
+          stop_id: finalDestNode.stop_id,
+          stop_code: finalDestNode.stop_code,
+          stop_name: destination.place_name,
+          stop_name_he: destination.place_name,
+          stop_sequence: waypoints.length,
+          lat: destination.lat,
+          lon: destination.lon
+        };
+
+        const intercityBus: NearestBusInfo = {
+          vehicle_id: `egged-${intercityShortName}-exp`,
+          lat: HOF_HACARMEL_HUB.lat,
+          lon: HOF_HACARMEL_HUB.lon,
+          bearing: 185,
+          recorded_at_time: now.toISOString(),
+          current_stop_sequence: 1,
+          speed_kmh: 78,
+          stops_away: 1,
+          eta_minutes: metrics.next_bus_board_min
+        };
+
+        options.push({
+          rank: 1,
+          is_transfer: true,
+          route: {
+            route_id: match.route_id,
+            short_name: match.route_short_name,
+            long_name: match.route_long_name,
+            direction_id: match.direction_id,
+            direction_label: `${originStopName} -> ${alightStop.stop_name}`,
+            available_directions: []
+          },
+          origin_stop: {
+            stop_id: originStopId,
+            stop_code: originStopCode,
+            stop_name: originStopName,
+            stop_name_he: originStopNameHe,
+            stop_sequence: originSeq,
+            lat: originLat,
+            lon: originLon,
+            distance_meters: originDistMeters
+          },
+          dest_stop: destStopInfo,
+          bus: leg1Bus.busInfo,
+          eta_to_boarding_min: leg1Bus.etaMinutes,
+          stops_between: leg1Stops + intercityTimeline.length,
+          ride_duration_min: metrics.leg1_ride_min + metrics.leg2_ride_min,
+          total_arrival_min: metrics.total_arrival_min,
+          estimated_arrival_time: metrics.estimated_arrival_time,
+          leg1_alight_time: metrics.arrive_at_hub_time,
+          timeline_stops: leg1Timeline,
+          transfer_info: {
+            alight_stop: alightStop,
+            board_stop: boardStop,
+            walk_meters: xferWalkMeters,
+            wait_minutes: metrics.wait_minutes,
+            arrive_at_hub_time: metrics.arrive_at_hub_time,
+            next_bus_board_time: metrics.next_bus_board_time,
+            instruction_ru: `Выйти в ${metrics.arrive_at_hub_time} на ост. «${alightStop.stop_name}» → пересесть на междугородний авт. №${intercityShortName} в ${metrics.next_bus_board_time} до ${destination.place_name}`,
+            instruction_en: `Exit at ${metrics.arrive_at_hub_time} at "${alightStop.stop_name}" → board Express Line ${intercityShortName} at ${metrics.next_bus_board_time} to ${destination.place_name}`,
+            instruction_he: `לרדת ב-${metrics.arrive_at_hub_time} בתחנת "${alightStop.stop_name_he}" ← להחליף לקו אקספרס ${intercityShortName} ב-${metrics.next_bus_board_time}`
+          },
+          second_leg: {
+            route: {
+              route_id: intercityRouteId,
+              short_name: intercityShortName,
+              long_name: `בין-עירוני: חוף הכרמל ➔ ${destination.place_name}`,
+              direction_id: 0,
+              direction_label: `${boardStop.stop_name} -> ${destination.place_name}`,
+              available_directions: []
+            },
+            board_stop: boardStop,
+            alight_stop: destStopInfo,
+            bus: intercityBus,
+            stops_between: intercityTimeline.length,
+            ride_duration_min: metrics.leg2_ride_min,
+            timeline_stops: intercityTimeline
+          }
+        });
+      }
+
+      return rankTopBusOptions(options, 3);
+    }
+  }
+
+  // Case B: Reverse intercity (e.g. Ashdod -> Hof HaCarmel on 900/940 -> Feeder 49 to Tirat Carmel)
+  if (distOriginToHofM > 15000 && distDestToHofM > 450 && distDestToHofM <= 15000) {
+    const rawReverseFeeders = filterValidDirectionMatches(
+      await supabaseService.findDirectTrips(
+        HOF_HACARMEL_HUB.lat,
+        HOF_HACARMEL_HUB.lon,
+        destination.lat,
+        destination.lon,
+        650
+      )
+    );
+
+    const uniqueReverseByRoute = new Map<string, DirectRouteMatch>();
+    for (const m of rawReverseFeeders) {
+      if (!uniqueReverseByRoute.has(m.route_id)) {
+        uniqueReverseByRoute.set(m.route_id, m);
+      }
+    }
+
+    const sortedFeeders = Array.from(uniqueReverseByRoute.values()).slice(0, 3);
+    if (sortedFeeders.length > 0) {
+      const originLabel = isJerusalem ? 'ירושלים / תחנה מרכזית' : 'תחנה מרכזית / יציאה בינעירונית';
+      const waypoints = buildHighwayWaypoints({
+        isJerusalem,
+        farLat: userLocation.lat,
+        farLon: userLocation.lon,
+        farLabel: originLabel,
+        hubFirst: false
+      });
+
+      const intercityTimeline = waypoints.map((w, idx) => ({
+        stop_id: w.stop_id,
+        stop_code: w.stop_code,
+        stop_name: w.stop_name,
+        stop_name_he: w.stop_name_he,
+        stop_sequence: idx + 1,
+        lat: w.lat,
+        lon: w.lon,
+        status: idx === 0 ? ('user_stop' as const) : ('upcoming' as const)
+      }));
+
+      const options: RecommendedBusOption[] = [];
+      for (const match of sortedFeeders) {
+        const leg2StopsList = await supabaseService.getDirectionStopCoords(match.route_id, match.direction_id);
+        const leg2State = (await resolveRouteLiveState(match.route_id, match.direction_id, allowColdBootstrap)).state;
+        const leg2Bus = buildBusInfoForStop(
+          leg2StopsList,
+          leg2State,
+          match.origin_stop_sequence,
+          match.origin_lat,
+          match.origin_lon,
+          match.route_short_name,
+          match.direction_id
+        );
+
+        const leg1RideMin = Math.max(15, Math.round((distOriginToHofM / 1000) * 0.85));
+        const xferWalkMeters = Math.round(
+          haversineDistanceMeters(HOF_HACARMEL_HUB.lat, HOF_HACARMEL_HUB.lon, match.origin_lat, match.origin_lon)
+        );
+        const eta1 = 5;
+        const metrics = calculateTransferTripMetrics({
+          etaToBoardingMin: eta1,
+          leg1Stops: intercityTimeline.length,
+          transferWalkMeters: xferWalkMeters,
+          leg2BusEtaMin: eta1 + leg1RideMin + Math.ceil(xferWalkMeters / 80) + 6,
+          leg2Stops: match.stops_between,
+          now,
+          leg1DistanceMeters: distOriginToHofM,
+          leg2DistanceMeters: haversineDistanceMeters(match.origin_lat, match.origin_lon, match.dest_lat, match.dest_lon)
+        });
+
+        const leg2Timeline = await buildLegTimelineSlice(
+          match.route_id,
+          match.direction_id,
+          match.origin_stop_sequence,
+          match.dest_stop_sequence,
+          leg2Bus.busInfo.current_stop_sequence
+        );
+
+        const originStop: UserStopInfo = {
+          stop_id: waypoints[0].stop_id,
+          stop_code: waypoints[0].stop_code,
+          stop_name: waypoints[0].stop_name,
+          stop_name_he: waypoints[0].stop_name_he,
+          stop_sequence: 1,
+          lat: userLocation.lat,
+          lon: userLocation.lon,
+          distance_meters: 150
+        };
+
+        const hubAlightStop: UserStopInfo = {
+          stop_id: 'stop-42657',
+          stop_code: '42657',
+          stop_name: 'ת. מרכזית חוף הכרמל/כניסה (חיפה)',
+          stop_name_he: 'ת. מרכזית חוף הכרמל/כניסה (חיפה)',
+          stop_sequence: intercityTimeline.length,
+          lat: HOF_HACARMEL_HUB.lat,
+          lon: HOF_HACARMEL_HUB.lon
+        };
+
+        const feederBoardStop: UserStopInfo = {
+          stop_id: match.origin_stop_id,
+          stop_code: match.origin_stop_code,
+          stop_name: match.origin_stop_name,
+          stop_name_he: match.origin_stop_name_he,
+          stop_sequence: match.origin_stop_sequence,
+          lat: match.origin_lat,
+          lon: match.origin_lon
+        };
+
+        const destStopInfo: UserStopInfo = {
+          stop_id: match.dest_stop_id,
+          stop_code: match.dest_stop_code,
+          stop_name: match.dest_stop_name,
+          stop_name_he: match.dest_stop_name_he,
+          stop_sequence: match.dest_stop_sequence,
+          lat: match.dest_lat,
+          lon: match.dest_lon
+        };
+
+        options.push({
+          rank: 1,
+          is_transfer: true,
+          route: {
+            route_id: intercityRouteId,
+            short_name: intercityShortName,
+            long_name: `בין-עירוני ➔ ת. מרכזית חוף הכרמל`,
+            direction_id: 1,
+            direction_label: `${originLabel} -> ת. מרכזית חוף הכרמל`,
+            available_directions: []
+          },
+          origin_stop: originStop,
+          dest_stop: destStopInfo,
+          bus: {
+            vehicle_id: `egged-${intercityShortName}-rev`,
+            lat: userLocation.lat,
+            lon: userLocation.lon,
+            bearing: 10,
+            recorded_at_time: now.toISOString(),
+            current_stop_sequence: 1,
+            speed_kmh: 78,
+            stops_away: 1,
+            eta_minutes: eta1
+          },
+          eta_to_boarding_min: eta1,
+          stops_between: intercityTimeline.length + match.stops_between,
+          ride_duration_min: metrics.leg1_ride_min + metrics.leg2_ride_min,
+          total_arrival_min: metrics.total_arrival_min,
+          estimated_arrival_time: metrics.estimated_arrival_time,
+          leg1_alight_time: metrics.arrive_at_hub_time,
+          timeline_stops: intercityTimeline,
+          transfer_info: {
+            alight_stop: hubAlightStop,
+            board_stop: feederBoardStop,
+            walk_meters: xferWalkMeters,
+            wait_minutes: metrics.wait_minutes,
+            arrive_at_hub_time: metrics.arrive_at_hub_time,
+            next_bus_board_time: metrics.next_bus_board_time,
+            instruction_ru: `Выйти в ${metrics.arrive_at_hub_time} на ост. «${hubAlightStop.stop_name}» → пересесть на авт. №${match.route_short_name} в ${metrics.next_bus_board_time} до ${destStopInfo.stop_name}`,
+            instruction_en: `Exit at ${metrics.arrive_at_hub_time} at "${hubAlightStop.stop_name}" → board Bus ${match.route_short_name} at ${metrics.next_bus_board_time} to ${destStopInfo.stop_name}`,
+            instruction_he: `לרדת ב-${metrics.arrive_at_hub_time} בתחנת "${hubAlightStop.stop_name_he}" ← להחליף לקו ${match.route_short_name} ב-${metrics.next_bus_board_time}`
+          },
+          second_leg: {
+            route: {
+              route_id: match.route_id,
+              short_name: match.route_short_name,
+              long_name: match.route_long_name,
+              direction_id: match.direction_id,
+              direction_label: `${feederBoardStop.stop_name} -> ${destStopInfo.stop_name}`,
+              available_directions: []
+            },
+            board_stop: feederBoardStop,
+            alight_stop: destStopInfo,
+            bus: { ...leg2Bus.busInfo, eta_minutes: metrics.next_bus_board_min },
+            stops_between: match.stops_between,
+            ride_duration_min: metrics.leg2_ride_min,
+            timeline_stops: leg2Timeline
+          }
+        });
+      }
+
+      return rankTopBusOptions(options, 3);
+    }
+  }
+
+  // Fallback direct intercity express starting at Hof HaCarmel Hub
+  const rideMin = Math.round(distToDestKm * 0.85);
+  const arrivalDate = new Date(now.getTime() + (rideMin + 5) * 60_000);
+  const waypoints = buildHighwayWaypoints({
+    isJerusalem,
+    farLat: destination.lat,
+    farLon: destination.lon,
+    farLabel: destination.place_name,
+    hubFirst: true
+  });
+
+  const timelineStops = waypoints.map((w, idx) => ({
+    stop_id: w.stop_id,
+    stop_code: w.stop_code,
+    stop_name: w.stop_name,
+    stop_name_he: w.stop_name_he,
+    stop_sequence: idx + 1,
+    lat: w.lat,
+    lon: w.lon,
+    status: idx === 0 ? ('user_stop' as const) : ('upcoming' as const)
+  }));
+
+  return [
+    {
+      rank: 1,
+      is_transfer: false,
+      route: {
+        route_id: intercityRouteId,
+        short_name: intercityShortName,
+        long_name: `בין-עירוני: חוף הכרמל ➔ ${destination.place_name}`,
+        direction_id: 0,
+        direction_label: `${destination.place_name} (~${distToDestKm} км)`,
+        available_directions: []
+      },
+      origin_stop: {
+        stop_id: HOF_HACARMEL_HUB.stop_id,
+        stop_code: HOF_HACARMEL_HUB.stop_code,
+        stop_name: HOF_HACARMEL_HUB.stop_name,
+        stop_name_he: HOF_HACARMEL_HUB.stop_name_he,
+        stop_sequence: 1,
+        lat: HOF_HACARMEL_HUB.lat,
+        lon: HOF_HACARMEL_HUB.lon,
+        distance_meters: Math.round(distOriginToHofM)
+      },
+      dest_stop: {
+        stop_id: waypoints[waypoints.length - 1].stop_id,
+        stop_code: waypoints[waypoints.length - 1].stop_code,
+        stop_name: destination.place_name,
+        stop_name_he: destination.place_name,
+        stop_sequence: waypoints.length,
+        lat: destination.lat,
+        lon: destination.lon
+      },
+      bus: {
+        vehicle_id: isJerusalem ? 'egged-940-exp' : 'egged-900-exp',
+        lat: HOF_HACARMEL_HUB.lat,
+        lon: HOF_HACARMEL_HUB.lon,
+        bearing: 180,
+        recorded_at_time: now.toISOString(),
+        current_stop_sequence: 1,
+        speed_kmh: 75,
+        stops_away: 1,
+        eta_minutes: 5
+      },
+      eta_to_boarding_min: 5,
+      stops_between: waypoints.length,
+      ride_duration_min: rideMin,
+      total_arrival_min: rideMin + 5,
+      estimated_arrival_time: formatTimeHHMM(arrivalDate),
+      timeline_stops: timelineStops
+    }
+  ];
+}
+
 async function buildLegTimelineSlice(
   routeId: string,
   directionId: 0 | 1,
@@ -1259,100 +1835,19 @@ export async function planBestBusesToDestination(
     haversineDistanceMeters(userLocation.lat, userLocation.lon, destination.lat, destination.lon) / 1000
   );
 
-  let effectiveBest = best;
-  if (!effectiveBest && distToDestKm > 15) {
-    // Intercity journey advice with full highway corridor waypoints
-    const rideMin = Math.round(distToDestKm * 0.85);
-    const arrivalDate = new Date(now.getTime() + (rideMin + 10) * 60_000);
-    const isJerusalem = /jerusalem|ירושלים|иерусалим/i.test(destination.place_name);
-
-    const waypoints = isJerusalem
-      ? [
-          { stop_id: 'stop-42658', stop_code: '42658', stop_name: 'ת. מרכזית חוף הכרמל', stop_name_he: 'ת. מרכזית חוף הכרמל', lat: 32.793372, lon: 34.958985 },
-          { stop_id: 'stop-hwy-atlit', stop_code: '45101', stop_name: 'מחלף עתלית / כביש 2', stop_name_he: 'מחלף עתלית / כביש 2', lat: 32.7050, lon: 34.9520 },
-          { stop_id: 'stop-hwy-zikhron', stop_code: '45102', stop_name: 'מחלף זכרון יעקב / כביש 2', stop_name_he: 'מחלף זכרון יעקב / כביש 2', lat: 32.5710, lon: 34.9310 },
-          { stop_id: 'stop-hwy-hadera', stop_code: '45103', stop_name: 'מחלף אולגה / חדרה', stop_name_he: 'מחלף אולגה / חדרה', lat: 32.4410, lon: 34.8920 },
-          { stop_id: 'stop-45001', stop_code: '45001', stop_name: 'מחלף נתניה / כביש 2', stop_name_he: 'מחלף נתניה / כביש 2', lat: 32.3275, lon: 34.8565 },
-          { stop_id: 'stop-hwy-bengurion', stop_code: '46101', stop_name: 'מחלף נתב"ג / כביש 1', stop_name_he: 'מחלף נתב"ג / כביש 1', lat: 32.0080, lon: 34.8870 },
-          { stop_id: 'stop-hwy-latrun', stop_code: '46102', stop_name: 'מחלף לטרון / שער הגיא', stop_name_he: 'מחלף לטרון / שער הגיא', lat: 31.8340, lon: 34.9860 },
-          { stop_id: 'stop-hwy-mevaseret', stop_code: '46103', stop_name: 'מחלף הראל / מבשרת ציון', stop_name_he: 'מחלף הראל / מבשרת ציון', lat: 31.7990, lon: 35.1520 },
-          { stop_id: 'stop-46001', stop_code: '46001', stop_name: destination.place_name, stop_name_he: destination.place_name, lat: destination.lat, lon: destination.lon }
-        ]
-      : [
-          { stop_id: 'stop-42658', stop_code: '42658', stop_name: 'ת. מרכזית חוף הכרמל', stop_name_he: 'ת. מרכזית חוף הכרמל', lat: 32.793372, lon: 34.958985 },
-          { stop_id: 'stop-hwy-atlit', stop_code: '45101', stop_name: 'מחלף עתלית / כביש 2', stop_name_he: 'מחלף עתלית / כביש 2', lat: 32.7050, lon: 34.9520 },
-          { stop_id: 'stop-hwy-zikhron', stop_code: '45102', stop_name: 'מחלף זכרון יעקב / כביש 2', stop_name_he: 'מחלף זכרון יעקב / כביש 2', lat: 32.5710, lon: 34.9310 },
-          { stop_id: 'stop-hwy-hadera', stop_code: '45103', stop_name: 'מחלף אולגה / חדרה', stop_name_he: 'מחלף אולגה / חדרה', lat: 32.4410, lon: 34.8920 },
-          { stop_id: 'stop-45001', stop_code: '45001', stop_name: 'מחלף נתניה / כביש 2', stop_name_he: 'מחלף נתניה / כביש 2', lat: 32.3275, lon: 34.8565 },
-          { stop_id: 'stop-45002', stop_code: '45002', stop_name: 'מחלף גלילות / סינמה סיטי', stop_name_he: 'מחלף גלילות / סינמה סיטי', lat: 32.1465, lon: 34.7995 },
-          { stop_id: 'stop-dest-intercity', stop_code: 'DEST', stop_name: destination.place_name, stop_name_he: destination.place_name, lat: destination.lat, lon: destination.lon }
-        ];
-
-    const timelineStops = waypoints.map((w, idx) => ({
-      stop_id: w.stop_id,
-      stop_code: w.stop_code,
-      stop_name: w.stop_name,
-      stop_name_he: w.stop_name_he,
-      stop_sequence: idx + 1,
-      lat: w.lat,
-      lon: w.lon,
-      status: idx === 0 ? ('user_stop' as const) : ('upcoming' as const)
-    }));
-
-    effectiveBest = {
-      rank: 1,
-      is_transfer: false,
-      route: {
-        route_id: isJerusalem ? 'stride-10940' : 'stride-intercity-910',
-        short_name: isJerusalem ? '940' : '910 / 900',
-        long_name: isJerusalem
-          ? 'חיפה (חוף הכרמל) - ירושלים (תחנה מרכזית - ישיר אקספרס)'
-          : `בין-עירוני: חוף הכרמל ➔ ${destination.place_name}`,
-        direction_id: 0,
-        direction_label: `${destination.place_name} (~${distToDestKm} км)`,
-        available_directions: []
-      },
-      origin_stop: {
-        stop_id: 'stop-42658',
-        stop_code: '42658',
-        stop_name: 'ת. מרכזית חוף הכרמל/רציפים בינעירוני (חיפה)',
-        stop_name_he: 'ת. מרכזית חוף הכרמל/רציפים בינעירוני (חיפה)',
-        stop_sequence: 1,
-        lat: 32.793372,
-        lon: 34.958985,
-        distance_meters: Math.round(haversineDistanceMeters(userLocation.lat, userLocation.lon, 32.793372, 34.958985))
-      },
-      dest_stop: {
-        stop_id: waypoints[waypoints.length - 1].stop_id,
-        stop_code: waypoints[waypoints.length - 1].stop_code,
-        stop_name: destination.place_name,
-        stop_name_he: destination.place_name,
-        stop_sequence: waypoints.length,
-        lat: destination.lat,
-        lon: destination.lon
-      },
-      bus: {
-        vehicle_id: isJerusalem ? 'egged-940-exp' : 'intercity-express-1',
-        lat: 32.793372,
-        lon: 34.958985,
-        bearing: 180,
-        recorded_at_time: now.toISOString(),
-        current_stop_sequence: 1,
-        speed_kmh: 75,
-        stops_away: 1,
-        eta_minutes: 5
-      },
-      eta_to_boarding_min: 5,
-      stops_between: waypoints.length,
-      ride_duration_min: rideMin,
-      total_arrival_min: rideMin + 5,
-      estimated_arrival_time: formatTimeHHMM(arrivalDate),
-      timeline_stops: timelineStops
-    };
+  let effectiveOptions = selectedOptions;
+  if (effectiveOptions.length === 0 && distToDestKm > 15) {
+    effectiveOptions = await synthesizeIntercityWithFeeders({
+      userLocation,
+      destination,
+      distToDestKm,
+      now,
+      allowColdBootstrap
+    });
   }
 
   const rawOptionsList =
-    selectedOptions.length > 0 ? selectedOptions : effectiveBest ? [effectiveBest] : [];
+    effectiveOptions.length > 0 ? effectiveOptions : best ? [best] : [];
   const recommendedOptions = rawOptionsList.map((opt) => ({
     ...opt,
     timeline_window: buildTimelineWindow(

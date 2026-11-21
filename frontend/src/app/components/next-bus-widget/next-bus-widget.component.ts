@@ -12,6 +12,7 @@ import {
 } from '@angular/core';
 import type {
   EntryContext,
+  GeocodedDestination,
   LineCandidate,
   LiveBusStatusResponse,
   RenderMode,
@@ -169,8 +170,12 @@ const EMPTY_INITIAL_STATE: LiveBusStatusResponse = {
             [state]="busState()"
             [lang]="lang()"
             [selectedOptionIndex]="selectedOptionIndex()"
+            [isTripReversed]="isTripReversed()"
+            [originLabel]="detectedCityName()"
+            [targetLabel]="originalDestination()?.place_name ?? busState().destination?.place_name ?? ''"
             (selectOptionIndex)="selectedOptionIndex.set($event)"
             (switchDirection)="onDirectionSwitch($event)"
+            (reverseTrip)="onReverseTrip()"
             (selectCandidate)="onSelectCandidate($event)"
             (openMap)="setViewMode('interactive')"
           />
@@ -180,8 +185,12 @@ const EMPTY_INITIAL_STATE: LiveBusStatusResponse = {
               [state]="busState()"
               [lang]="lang()"
               [selectedOptionIndex]="selectedOptionIndex()"
+              [isTripReversed]="isTripReversed()"
+              [originLabel]="detectedCityName()"
+              [targetLabel]="originalDestination()?.place_name ?? busState().destination?.place_name ?? ''"
               (selectOptionIndex)="selectedOptionIndex.set($event)"
               (switchDirection)="onDirectionSwitch($event)"
+              (reverseTrip)="onReverseTrip()"
             />
           } @loading (minimum 120ms) {
             <div class="defer-status">{{ labels().loadingMap }}</div>
@@ -424,6 +433,8 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
   readonly selectedDirection = signal<0 | 1>(0);
   readonly selectedRouteId = signal<string | null>(null);
   readonly selectedOptionIndex = signal<number>(0);
+  readonly isTripReversed = signal<boolean>(false);
+  readonly originalDestination = signal<GeocodedDestination | null>(null);
   readonly hasExplicitDirection = signal(false);
   readonly lang = signal<WidgetLang>('ru');
   readonly userCoords = signal<{ lat: number; lon: number; accuracy?: number } | null>(null);
@@ -585,6 +596,9 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
       this.entryContext.set('mcp');
       if (injected) {
         this.busState.set(injected);
+        if (injected.destination) {
+          this.originalDestination.set(injected.destination);
+        }
         this.selectedDirection.set(injected.route.direction_id);
         this.selectedRouteId.set(injected.route.route_id || null);
         this.modeOverride.set(injected.render_mode);
@@ -595,6 +609,9 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
       this.entryContext.set('standalone');
       if (injected) {
         this.busState.set(injected);
+        if (injected.destination) {
+          this.originalDestination.set(injected.destination);
+        }
         this.selectedDirection.set(injected.route.direction_id);
         this.selectedRouteId.set(injected.route.route_id || null);
       }
@@ -690,6 +707,8 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
     this.activeSearchLabel.set('');
     this.selectedRouteId.set(null);
     this.selectedOptionIndex.set(0);
+    this.isTripReversed.set(false);
+    this.originalDestination.set(null);
     this.hasExplicitDirection.set(false);
     this.busState.set(EMPTY_INITIAL_STATE);
   }
@@ -736,6 +755,20 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
     }
   }
 
+  onReverseTrip(): void {
+    if (!this.busState().destination && !this.originalDestination()) {
+      const nextDir: 0 | 1 = this.selectedDirection() === 0 ? 1 : 0;
+      this.onDirectionSwitch(nextDir);
+      return;
+    }
+
+    this.isTripReversed.set(!this.isTripReversed());
+    this.selectedOptionIndex.set(0);
+    if (this.hasActiveSearch()) {
+      void this.fetchLatestStatus(true);
+    }
+  }
+
   setViewMode(nextMode: RenderMode): void {
     if (this.viewMode() === nextMode) return;
     this.modeOverride.set(nextMode);
@@ -754,6 +787,8 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
     this.selectedRouteId.set(candidate.route_id);
     this.selectedDirection.set(candidate.direction_id);
     this.selectedOptionIndex.set(0);
+    this.isTripReversed.set(false);
+    this.originalDestination.set(null);
     this.hasExplicitDirection.set(true);
     this.activeSearchLabel.set(candidate.line_number);
 
@@ -796,6 +831,8 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
     this.hasExplicitDirection.set(false);
     this.selectedRouteId.set(null);
     this.selectedOptionIndex.set(0);
+    this.isTripReversed.set(false);
+    this.originalDestination.set(null);
 
     try {
       let coords = this.userCoords();
@@ -833,6 +870,9 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
       if (response.ok) {
         const data = (await response.json()) as LiveBusStatusResponse;
         this.busState.set(data);
+        if (data.destination) {
+          this.originalDestination.set(data.destination);
+        }
         this.selectedRouteId.set(data.route.route_id || null);
         this.selectedDirection.set(data.route.direction_id);
         this.startPolling();
@@ -856,33 +896,44 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
       const urlDestLon = params.get('dest_lon');
       const urlDestLabel = params.get('dest_label');
 
+      const origDest = this.originalDestination() ?? current.destination;
       const destLat =
-        current.destination?.lat ??
+        origDest?.lat ??
         (urlDestLat && !Number.isNaN(Number(urlDestLat)) ? Number(urlDestLat) : undefined);
       const destLon =
-        current.destination?.lon ??
+        origDest?.lon ??
         (urlDestLon && !Number.isNaN(Number(urlDestLon)) ? Number(urlDestLon) : undefined);
 
       if (destLat !== undefined && destLon !== undefined) {
-        const destLabel = current.destination?.place_name ?? urlDestLabel ?? 'Destination';
-        const routeIds = (current.recommended_options ?? [])
-          .map((opt) => opt.route.route_id)
-          .join(',');
+        const destLabel = origDest?.place_name ?? urlDestLabel ?? 'Destination';
+        const reversed = this.isTripReversed();
+        const fromLat = reversed ? destLat : coords.lat;
+        const fromLon = reversed ? destLon : coords.lon;
+        const toLat = reversed ? coords.lat : destLat;
+        const toLon = reversed ? coords.lon : destLon;
+        const toLabel = reversed ? this.detectedCityName() : destLabel;
+
+        const routeIds = reversed
+          ? ''
+          : (current.recommended_options ?? []).map((opt) => opt.route.route_id).join(',');
         const routeIdsParam = routeIds ? `&route_ids=${encodeURIComponent(routeIds)}` : '';
-        const bootstrapParam = !current.destination ? '&bootstrap=true' : '';
+        const bootstrapParam = !current.destination || bootstrapLine ? '&bootstrap=true' : '';
 
         const tripUrl = `/api/live-status?lat=${encodeURIComponent(
-          coords.lat
-        )}&lon=${encodeURIComponent(coords.lon)}&dest_lat=${encodeURIComponent(
-          destLat
-        )}&dest_lon=${encodeURIComponent(destLon)}&dest_label=${encodeURIComponent(
-          destLabel
+          fromLat
+        )}&lon=${encodeURIComponent(fromLon)}&dest_lat=${encodeURIComponent(
+          toLat
+        )}&dest_lon=${encodeURIComponent(toLon)}&dest_label=${encodeURIComponent(
+          toLabel
         )}&entry_context=${encodeURIComponent(this.entryContext())}${routeIdsParam}${bootstrapParam}`;
 
         const response = await fetch(tripUrl);
         if (!response.ok) return;
         const data = (await response.json()) as LiveBusStatusResponse;
         this.busState.set(data);
+        if (!reversed && data.destination && !this.originalDestination()) {
+          this.originalDestination.set(data.destination);
+        }
         return;
       }
 

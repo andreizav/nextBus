@@ -89,6 +89,71 @@ const ISRAEL_GAZETTEER: IsraelLandmark[] = [
     formatted_address: 'Jaffa St 208, Jerusalem, Israel'
   },
 
+  // --- Southern & Central Intercity Cities ---
+  {
+    patterns: [/ашдод|ashdod|אשדוד/i],
+    lat: 31.7978,
+    lon: 34.6503,
+    place_name: 'Ашдод (אשדוד — תחנה מרכזית / סיטי)',
+    formatted_address: 'HaGdud HaIvri St 6, Ashdod, Israel'
+  },
+  {
+    patterns: [/ашкелон|ashkelon|אשקלון/i],
+    lat: 31.6688,
+    lon: 34.5743,
+    place_name: 'Ашкелон (אשקלון)',
+    formatted_address: 'HaNassi Blvd, Ashkelon, Israel'
+  },
+  {
+    patterns: [/беэр[- ]?шева|beer\s*sheva|באר\s*שבע/i],
+    lat: 31.2439,
+    lon: 34.7966,
+    place_name: 'Беэр-Шева (באר שבע)',
+    formatted_address: 'Yitzhak Rager Blvd, Beer Sheva, Israel'
+  },
+  {
+    patterns: [/ришон[- ]?ле[- ]?цион|rishon\s*lezion|ראשון\s*לציון/i],
+    lat: 31.9730,
+    lon: 34.7925,
+    place_name: 'Ришон-ле-Цион (ראשון לציון)',
+    formatted_address: 'Herzl St, Rishon LeZion, Israel'
+  },
+  {
+    patterns: [/реховот|rehovot|רחובות/i],
+    lat: 31.8928,
+    lon: 34.8113,
+    place_name: 'Реховот (רחובות)',
+    formatted_address: 'Herzl St, Rehovot, Israel'
+  },
+  {
+    patterns: [/петах[- ]?тиква|petah\s*tikva|פתח\s*תקווה/i],
+    lat: 32.0840,
+    lon: 34.8878,
+    place_name: 'Петах-Тиква (פתח תקווה)',
+    formatted_address: 'Jabotinsky Rd, Petah Tikva, Israel'
+  },
+  {
+    patterns: [/хадера|hadera|חדרה/i],
+    lat: 32.4340,
+    lon: 34.9197,
+    place_name: 'Хадера (חדרה)',
+    formatted_address: 'HaNassi Weizmann St, Hadera, Israel'
+  },
+  {
+    patterns: [/акко|acre|akko|עכו/i],
+    lat: 32.9278,
+    lon: 35.0818,
+    place_name: 'Акко (עכו)',
+    formatted_address: 'Ben Ami St, Acre, Israel'
+  },
+  {
+    patterns: [/нагария|nahariya|נהריה/i],
+    lat: 33.0058,
+    lon: 35.0989,
+    place_name: 'Нагария (נהריה)',
+    formatted_address: 'Gaaton Blvd, Nahariya, Israel'
+  },
+
   // --- Coastal & Central Hubs ---
   {
     patterns: [/нетания|netanya|נתניה/i],
