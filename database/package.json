@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "seed": "tsx seed-gtfs.ts",
+    "seed:nationwide": "tsx import-full-gtfs.ts --seed-verified",
+    "import:gtfs": "tsx import-full-gtfs.ts --from-mot",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
