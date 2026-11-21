@@ -15,7 +15,10 @@ import type {
   GeocodedDestination,
   LineCandidate,
   LiveBusStatusResponse,
+  LocalLineSuggestion,
+  LocalSuggestionsResponse,
   RenderMode,
+  ReturningRouteSuggestion,
   WidgetLang
 } from '../../models/bus.models';
 import { InteractiveMapViewComponent } from '../interactive-map-view/interactive-map-view.component';
@@ -166,22 +169,93 @@ const EMPTY_INITIAL_STATE: LiveBusStatusResponse = {
       }
 
       @if (!hasActiveSearch()) {
-        <section class="minimal-ready" role="region" aria-label="Quick route selection">
+        <section class="minimal-ready" role="region" aria-label="Local transit and recent routes">
           <div class="ready-head">
             <h2 class="ready-title">{{ welcomeLabels().title }}</h2>
             <p class="ready-sub">{{ welcomeLabels().tip }}</p>
           </div>
 
-          <div class="ready-chips">
-            @for (chip of quickChips(); track chip.query) {
-              <button
-                type="button"
-                class="ready-chip-btn nb-btn"
-                (click)="onSearchDestination(chip.query)"
-              >
-                <span aria-hidden="true">{{ chip.icon }}</span>
-                <span>{{ chip.label }}</span>
-              </button>
+          <!-- 1. Returning User Routes Near Current Location (~250m) -->
+          @if (returningRoutes().length > 0) {
+            <div class="sug-block">
+              <div class="sug-head">{{ welcomeLabels().returningTitle }}</div>
+              <div class="sug-list">
+                @for (item of returningRoutes(); track (item.id || '') + '-' + (item.dest_label || item.route_id) + '-' + $index) {
+                  <button
+                    type="button"
+                    class="sug-card is-returning"
+                    (click)="onSelectReturningRoute(item)"
+                  >
+                    <div class="sug-row-top">
+                      <span class="sug-line-badge is-history">
+                        🕒 {{ item.line_number || '🚌' }}
+                      </span>
+                      <span class="sug-terminus" dir="auto">
+                        → {{ cleanPlaceName(item.dest_label || item.origin_stop_name || '') }}
+                      </span>
+                      @if (item.eta_minutes !== undefined) {
+                        <span class="sug-eta">{{ item.eta_minutes }} {{ minShort() }}</span>
+                      }
+                    </div>
+                    <div class="sug-row-meta" dir="auto">
+                      @if (item.origin_stop_name) {
+                        <span>📍 {{ cleanPlaceName(item.origin_stop_name) }}</span>
+                        <span>•</span>
+                      }
+                      <span>{{ item.distance_meters }} m</span>
+                    </div>
+                  </button>
+                }
+              </div>
+            </div>
+          }
+
+          <!-- 2. Local Bus Lines Passing Nearby Stops (number + terminus + live ETA) -->
+          <div class="sug-block">
+            <div class="sug-head">{{ welcomeLabels().localTitle }}</div>
+
+            @if (isLoadingSuggestions() && localLines().length === 0) {
+              <div class="sug-empty">{{ labels().locating }}</div>
+            } @else if (localLines().length === 0) {
+              <div class="sug-empty">{{ welcomeLabels().noLocalLines }}</div>
+            } @else {
+              <div class="sug-list">
+                @for (line of localLines(); track line.route_id + '-' + line.direction_id) {
+                  <button
+                    type="button"
+                    class="sug-card"
+                    (click)="onSelectLocalLine(line)"
+                  >
+                    <div class="sug-row-top">
+                      <span class="sug-line-badge">{{ line.line_number }}</span>
+                      <span class="sug-terminus" dir="auto">
+                        → {{
+                          cleanPlaceName(
+                            lang() === 'he' || lang() === 'ar'
+                              ? line.destination_he
+                              : line.destination_name
+                          )
+                        }}
+                      </span>
+                      <span class="sug-eta">{{ line.eta_minutes }} {{ minShort() }}</span>
+                    </div>
+                    <div class="sug-row-meta" dir="auto">
+                      <span>
+                        📍
+                        {{
+                          cleanPlaceName(
+                            lang() === 'he' || lang() === 'ar'
+                              ? line.nearest_stop_name_he
+                              : line.nearest_stop_name
+                          )
+                        }}
+                      </span>
+                      <span>•</span>
+                      <span>{{ line.distance_meters }} m</span>
+                    </div>
+                  </button>
+                }
+              </div>
             }
           </div>
         </section>
@@ -337,56 +411,128 @@ const EMPTY_INITIAL_STATE: LiveBusStatusResponse = {
       /* Minimalist Empty Ready State */
       .minimal-ready {
         display: grid;
-        gap: 1rem;
-        padding-block: 0.75rem 0.35rem;
+        gap: 0.9rem;
+        padding-block: 0.35rem 0.25rem;
       }
 
       .ready-head {
         text-align: center;
         display: grid;
-        gap: 0.35rem;
+        gap: 0.28rem;
       }
 
       .ready-title {
         margin: 0;
-        font-size: 1.15rem;
+        font-size: 1.08rem;
         font-weight: 700;
         color: #f8fafc;
       }
 
       .ready-sub {
         margin: 0;
-        font-size: 0.78rem;
+        font-size: 0.76rem;
         color: #8b96a5;
-        line-height: 1.4;
+        line-height: 1.38;
       }
 
-      .ready-chips {
-        display: flex;
-        flex-wrap: wrap;
-        justify-content: center;
-        gap: 0.45rem;
+      .sug-block {
+        display: grid;
+        gap: 0.42rem;
       }
 
-      .ready-chip-btn {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.35rem;
-        background: rgba(255, 255, 255, 0.06);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 999px;
-        padding: 0.42rem 0.78rem;
-        color: #e2e8f0;
+      .sug-head {
+        font-size: 0.72rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: #8b96a5;
+        padding-inline: 0.2rem;
+      }
+
+      .sug-empty {
         font-size: 0.78rem;
-        font-weight: 500;
+        color: #7c8796;
+        text-align: center;
+        padding-block: 0.65rem;
+      }
+
+      .sug-list {
+        display: grid;
+        gap: 0.42rem;
+      }
+
+      .sug-card {
+        display: grid;
+        gap: 0.2rem;
+        inline-size: 100%;
+        text-align: start;
+        background: rgba(255, 255, 255, 0.045);
+        border: 1px solid rgba(255, 255, 255, 0.09);
+        border-radius: 0.9rem;
+        padding: 0.5rem 0.7rem;
+        color: #e2e8f0;
         cursor: pointer;
         transition: all 0.15s ease;
       }
 
-      .ready-chip-btn:hover {
-        background: rgba(59, 130, 246, 0.22);
-        border-color: #3b82f6;
+      .sug-card:hover {
+        background: rgba(48, 135, 246, 0.16);
+        border-color: #3087f6;
         color: #ffffff;
+      }
+
+      .sug-card.is-returning {
+        background: rgba(48, 135, 246, 0.12);
+        border-color: rgba(59, 130, 246, 0.38);
+      }
+
+      .sug-row-top {
+        display: flex;
+        align-items: center;
+        gap: 0.48rem;
+        min-inline-size: 0;
+      }
+
+      .sug-line-badge {
+        background: #3087f6;
+        color: #ffffff;
+        font-size: 0.76rem;
+        font-weight: 800;
+        border-radius: 0.45rem;
+        padding: 0.12rem 0.45rem;
+        flex-shrink: 0;
+      }
+
+      .sug-line-badge.is-history {
+        background: rgba(59, 130, 246, 0.28);
+        border: 1px solid rgba(96, 165, 250, 0.55);
+      }
+
+      .sug-terminus {
+        font-size: 0.82rem;
+        font-weight: 600;
+        color: #f8fafc;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        flex: 1 1 auto;
+        min-inline-size: 0;
+      }
+
+      .sug-eta {
+        font-size: 0.74rem;
+        font-weight: 700;
+        color: #93c5fd;
+        flex-shrink: 0;
+      }
+
+      .sug-row-meta {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.3rem;
+        font-size: 0.71rem;
+        color: #9aa6b4;
       }
 
       .defer-status {
@@ -457,6 +603,10 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
   readonly isTripReversed = signal<boolean>(false);
   readonly originalDestination = signal<GeocodedDestination | null>(null);
   readonly hasExplicitDirection = signal(false);
+  readonly userId = signal<string>('');
+  readonly returningRoutes = signal<ReturningRouteSuggestion[]>([]);
+  readonly localLines = signal<LocalLineSuggestion[]>([]);
+  readonly isLoadingSuggestions = signal<boolean>(false);
   readonly lang = signal<WidgetLang>('he');
   private hasManualLang = false;
   readonly userCoords = signal<{ lat: number; lon: number; accuracy?: number } | null>(null);
@@ -548,48 +698,68 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
       case 'he':
         return {
           title: 'לאן תרצו להגיע היום?',
-          subtitle: 'חיפוש חכם של אוטובוסים בזמן אמת, קווים ישירים ומסלולי החלפה מהירים.',
-          popularLabel: 'קווים ויעדים פופולריים',
-          tip: 'הזינו מספר קו (למשל 49 או 910) או כתובת יעד. ניתן להשתמש במיקרופון לחיפוש קולי.',
+          tip: 'הזינו מספר קו או כתובת יעד, או בחרו מהקווים הקרובים אליכם.',
+          returningTitle: 'המסלולים האחרונים שלך מכאן',
+          localTitle: 'אוטובוסים קרובים אליך',
+          noLocalLines: 'אין תחנות אוטובוס בקרבת המיקום הנוכחי',
           resetBtn: 'חיפוש חדש',
           resetTitle: 'איפוס וחזרה למסך הראשי'
         };
       case 'ar':
         return {
           title: 'إلى أين تريد الذهاب اليوم؟',
-          subtitle: 'بحث ذكي للحافلات بالوقت الفعلي مع الخطوط المباشرة والتحويلات السريعة.',
-          popularLabel: 'الخطوط والوجهات الشائعة',
-          tip: 'أدخل رقم الحافلة (مثل 49 أو 900) أو المدينة/الوجهة. يمكنك استخدام الميكروفون للبحث الصوتي.',
+          tip: 'أدخل رقم الحافلة أو الوجهة، أو اختر من الحافلات القريبة منك.',
+          returningTitle: 'مساراتك الأخيرة من هنا',
+          localTitle: 'حافلات بالقرب منك',
+          noLocalLines: 'لم يتم العثور على محطات قريبة',
           resetBtn: 'بحث جديد',
           resetTitle: 'إعادة تعيين والعودة للبداية'
         };
       case 'uk':
         return {
           title: 'Куди ви хочете поїхати?',
-          subtitle: 'Розумний пошук автобусів у реальному часі з прямими рейсами та швидкими пересадками.',
-          popularLabel: 'Популярні маршрути та напрямки',
-          tip: 'Введіть номер автобуса (наприклад, 49 або 900) чи адресу/місто призначення. Натисніть мікрофон для голосового пошуку.',
+          tip: 'Введіть номер автобуса або пункт призначення чи оберіть найближчий рейс.',
+          returningTitle: 'Ваші нещодавні маршрути звідси',
+          localTitle: 'Автобуси поруч із вами',
+          noLocalLines: 'Не знайдено зупинок поблизу',
           resetBtn: 'Новий пошук',
           resetTitle: 'Скинути та повернутися на головний екран'
         };
       case 'en':
         return {
           title: 'Where would you like to go?',
-          subtitle: 'Smart real-time search for direct buses, connections, and seamless transfers.',
-          popularLabel: 'Popular routes & destinations',
-          tip: 'Enter a bus line number (e.g. 49 or 910) or destination place. Voice search is also available.',
+          tip: 'Enter a bus line or destination, or tap a local bus stop nearby.',
+          returningTitle: 'Your recent routes from here',
+          localTitle: 'Buses near you',
+          noLocalLines: 'No nearby bus stops found',
           resetBtn: 'New search',
           resetTitle: 'Clear and return to start screen'
         };
       default:
         return {
           title: 'Куда вы хотите поехать?',
-          subtitle: 'Умный поиск автобусов в реальном времени с прямыми рейсами и быстрыми пересадками.',
-          popularLabel: 'Популярные маршруты и направления',
-          tip: 'Введите номер автобуса (например, 49 или 910) или адрес/город назначения. Нажмите микрофон для голосового поиска.',
+          tip: 'Введите номер автобуса или место назначения, либо выберите маршрут рядом с вами.',
+          returningTitle: 'Ваши недавние маршруты отсюда',
+          localTitle: 'Автобусы рядом с вами',
+          noLocalLines: 'Поблизости нет остановок в базе',
           resetBtn: 'Новый поиск',
           resetTitle: 'Сбросить и вернуться на главный экран'
         };
+    }
+  });
+
+  readonly minShort = computed(() => {
+    switch (this.lang()) {
+      case 'he':
+        return 'דק׳';
+      case 'ar':
+        return 'د';
+      case 'uk':
+        return 'хв';
+      case 'en':
+        return 'min';
+      default:
+        return 'мин';
     }
   });
 
@@ -621,50 +791,25 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
     return l === 'en' ? 'Haifa' : 'Хайфа';
   });
 
-  readonly quickChips = computed(() => {
-    switch (this.lang()) {
-      case 'he':
-        return [
-          { icon: '🚌', label: 'קו 49 (טירת כרמל)', query: '49' },
-          { icon: '🏥', label: 'בית חולים רמב"ם', query: 'בית חולים רמב"ם' },
-          { icon: '📍', label: 'ירושלים (תחנה מרכזית)', query: 'ירושלים' },
-          { icon: '📍', label: 'תל אביב (עזריאלי)', query: 'תל אביב עזריאלי' },
-          { icon: '📍', label: 'מרכז חורב, חיפה', query: 'מרכז חורב חיפה' }
-        ];
-      case 'ar':
-        return [
-          { icon: '🚌', label: 'خط 49 (طيرة الكرمل)', query: '49' },
-          { icon: '🏥', label: 'مستشفى رمبام', query: 'בית חולים רמב"ם' },
-          { icon: '📍', label: 'القدس', query: 'ירושלים' },
-          { icon: '📍', label: 'تل أبيب (عزرائيلي)', query: 'תל אביב עזריאלי' },
-          { icon: '📍', label: 'مركز حوريف، حيفا', query: 'מרכז חורב חיפה' }
-        ];
-      case 'uk':
-        return [
-          { icon: '🚌', label: 'Автобус 49 (Тірат-Кармель)', query: '49' },
-          { icon: '🏥', label: 'Лікарня Рамбам', query: 'Rambam Hospital' },
-          { icon: '📍', label: 'Єрусалим', query: 'Иерусалим' },
-          { icon: '📍', label: 'Тель-Авів (Азріелі)', query: 'Тель-Авив Азриэли' },
-          { icon: '📍', label: 'Центр Хорев, Хайфа', query: 'Центр Хорев Хайфа' }
-        ];
-      case 'en':
-        return [
-          { icon: '🚌', label: 'Line 49 (Tirat Carmel)', query: '49' },
-          { icon: '🏥', label: 'Rambam Hospital', query: 'Rambam Hospital' },
-          { icon: '📍', label: 'Jerusalem Central', query: 'Jerusalem' },
-          { icon: '📍', label: 'Tel Aviv (Azrieli)', query: 'Tel Aviv Azrieli' },
-          { icon: '📍', label: 'Horev Center, Haifa', query: 'Horev Center Haifa' }
-        ];
-      default:
-        return [
-          { icon: '🚌', label: 'Сорок девятый автобус', query: 'Сорок девятый автобус' },
-          { icon: '🏥', label: 'Больница Рамбам', query: 'Хочу поехать в больницу Рамбам' },
-          { icon: '📍', label: 'Иерусалим', query: 'Иерусалим' },
-          { icon: '📍', label: 'Тель-Авив (Азриэли)', query: 'Тель-Авив Азриэли' },
-          { icon: '📍', label: 'Центр Хорев, Хайфа', query: 'Центр Хорев Хайфа' }
-        ];
+  cleanPlaceName(name: string): string {
+    return name.replace(/\s*\([^)]+\)\s*$/, '').trim() || name;
+  }
+
+  private resolvePersistentUserId(): string {
+    const paramId = new URLSearchParams(window.location.search).get('user_id')?.trim();
+    if (paramId) return paramId;
+
+    const storageKey = 'nextbus_user_id';
+    try {
+      const existing = window.localStorage?.getItem(storageKey)?.trim();
+      if (existing) return existing;
+      const generated = `nb_u_${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36).slice(-4)}`;
+      window.localStorage?.setItem(storageKey, generated);
+      return generated;
+    } catch {
+      return `nb_u_${Math.random().toString(36).slice(2, 10)}`;
     }
-  });
+  }
 
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private observer: IntersectionObserver | null = null;
@@ -689,6 +834,10 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
 
     if (isMcp) {
       this.entryContext.set('mcp');
+      const paramUid = params.get('user_id')?.trim() || injected?.user_id?.trim();
+      if (paramUid) {
+        this.userId.set(paramUid);
+      }
       if (injected) {
         this.busState.set(injected);
         if (injected.destination) {
@@ -702,6 +851,7 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
       }
     } else {
       this.entryContext.set('standalone');
+      this.userId.set(this.resolvePersistentUserId());
       if (injected) {
         this.busState.set(injected);
         if (injected.destination) {
@@ -778,6 +928,9 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
     } else {
       this.hasActiveSearch.set(false);
       this.stopPolling();
+      if (this.entryContext() === 'standalone') {
+        void this.loadLocalSuggestions();
+      }
     }
   }
 
@@ -816,6 +969,9 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
     this.originalDestination.set(null);
     this.hasExplicitDirection.set(false);
     this.busState.set(EMPTY_INITIAL_STATE);
+    if (this.entryContext() === 'standalone') {
+      void this.loadLocalSuggestions();
+    }
   }
 
   selectLang(nextLang: WidgetLang): void {
@@ -886,6 +1042,8 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
           } else {
             void this.fetchLatestStatus();
           }
+        } else if (this.entryContext() === 'standalone') {
+          void this.loadLocalSuggestions();
         }
       },
       () => {
@@ -934,6 +1092,96 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
     this.setViewMode(nextMode);
   }
 
+  async loadLocalSuggestions(): Promise<void> {
+    this.isLoadingSuggestions.set(true);
+    try {
+      const coords = this.userCoords() ?? DEFAULT_COORDS;
+      const uid = this.userId().trim();
+      const userParam = uid ? `&user_id=${encodeURIComponent(uid)}` : '';
+      const url = `/api/local-suggestions?lat=${encodeURIComponent(coords.lat)}&lon=${encodeURIComponent(coords.lon)}${userParam}`;
+      const response = await fetch(url);
+      if (response.ok) {
+        const data = (await response.json()) as LocalSuggestionsResponse;
+        this.returningRoutes.set(data.returning_routes ?? []);
+        this.localLines.set(data.local_lines ?? []);
+      }
+    } catch {
+      // Keep current suggestions on transient error
+    } finally {
+      this.isLoadingSuggestions.set(false);
+    }
+  }
+
+  async onSelectLocalLine(line: LocalLineSuggestion): Promise<void> {
+    this.isSearching.set(true);
+    this.hasActiveSearch.set(true);
+    this.selectedRouteId.set(line.route_id);
+    this.selectedDirection.set(line.direction_id);
+    this.selectedOptionIndex.set(0);
+    this.isTripReversed.set(false);
+    this.originalDestination.set(null);
+    this.hasExplicitDirection.set(true);
+    this.activeSearchLabel.set(line.line_number);
+
+    try {
+      const coords = this.userCoords() ?? DEFAULT_COORDS;
+      const response = await fetch('/api/search-routes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: line.line_number,
+          user_location: { lat: coords.lat, lon: coords.lon },
+          user_id: this.userId() || undefined,
+          route_id: line.route_id,
+          direction_id: line.direction_id,
+          include_nearby_places: this.viewMode() === 'interactive'
+        })
+      });
+      if (response.ok) {
+        const data = (await response.json()) as LiveBusStatusResponse;
+        this.busState.set(data);
+        this.startPolling();
+        void this.loadLocalSuggestions();
+      }
+    } catch {
+      // Keep state on transient error
+    } finally {
+      this.isSearching.set(false);
+    }
+  }
+
+  onSelectReturningRoute(item: ReturningRouteSuggestion): void {
+    if (
+      item.route_id &&
+      item.line_number &&
+      (item.dest_lat === null || item.dest_lat === undefined)
+    ) {
+      void this.onSelectLocalLine({
+        route_id: item.route_id,
+        line_number: item.line_number,
+        route_long_name: item.dest_label || item.line_number,
+        direction_id: item.direction_id === 1 ? 1 : 0,
+        nearest_stop_id: item.origin_stop_id ?? '',
+        nearest_stop_code: '',
+        nearest_stop_name: item.origin_stop_name ?? '',
+        nearest_stop_name_he: item.origin_stop_name ?? '',
+        nearest_stop_sequence: 1,
+        stop_lat: item.origin_lat,
+        stop_lon: item.origin_lon,
+        distance_meters: item.distance_meters,
+        destination_name: item.dest_label || item.line_number,
+        destination_he: item.dest_label || item.line_number,
+        eta_minutes: item.eta_minutes ?? 5
+      });
+      return;
+    }
+
+    const q = item.dest_label?.trim() || item.line_number?.trim();
+    if (q) {
+      void this.onSearchDestination(q);
+    }
+  }
+
   async onSelectCandidate(candidate: LineCandidate): Promise<void> {
     this.isSearching.set(true);
     this.selectedRouteId.set(candidate.route_id);
@@ -953,6 +1201,7 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
         body: JSON.stringify({
           query: candidate.line_number,
           user_location: { lat: coords.lat, lon: coords.lon },
+          user_id: this.userId() || undefined,
           route_id: candidate.route_id,
           direction_id: candidate.direction_id,
           include_nearby_places: this.viewMode() === 'interactive'
@@ -965,6 +1214,9 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
           candidates: existingCandidates ?? data.candidates
         });
         this.startPolling();
+        if (this.entryContext() === 'standalone') {
+          void this.loadLocalSuggestions();
+        }
       }
     } catch {
       // Keep current state on temporary failure
@@ -1017,6 +1269,7 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
         body: JSON.stringify({
           query: cleaned,
           user_location: { lat: finalCoords.lat, lon: finalCoords.lon },
+          user_id: this.userId() || undefined,
           include_nearby_places: this.viewMode() === 'interactive'
         })
       });
@@ -1029,6 +1282,9 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
         this.selectedRouteId.set(data.route.route_id || null);
         this.selectedDirection.set(data.route.direction_id);
         this.startPolling();
+        if (this.entryContext() === 'standalone') {
+          void this.loadLocalSuggestions();
+        }
       }
     } catch {
       // Keep current state on temporary failure
@@ -1057,6 +1313,9 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
         origDest?.lon ??
         (urlDestLon && !Number.isNaN(Number(urlDestLon)) ? Number(urlDestLon) : undefined);
 
+      const uid = this.userId().trim();
+      const userParam = uid ? `&user_id=${encodeURIComponent(uid)}` : '';
+
       if (destLat !== undefined && destLon !== undefined) {
         const destLabel = origDest?.place_name ?? urlDestLabel ?? 'Destination';
         const reversed = this.isTripReversed();
@@ -1078,7 +1337,7 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
           toLat
         )}&dest_lon=${encodeURIComponent(toLon)}&dest_label=${encodeURIComponent(
           toLabel
-        )}&entry_context=${encodeURIComponent(this.entryContext())}${routeIdsParam}${bootstrapParam}`;
+        )}&entry_context=${encodeURIComponent(this.entryContext())}${userParam}${routeIdsParam}${bootstrapParam}`;
 
         const response = await fetch(tripUrl);
         if (!response.ok) return;
@@ -1107,7 +1366,7 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
         coords.lon
       )}${dirParam}${routeParam}&include_nearby_places=${includeNearby}&entry_context=${encodeURIComponent(
         this.entryContext()
-      )}${bootstrapParam}`;
+      )}${userParam}${bootstrapParam}`;
 
       const response = await fetch(url);
       if (!response.ok) return;
