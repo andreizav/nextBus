@@ -74,18 +74,20 @@ import { VoiceRecognitionService } from '../../services/voice-recognition.servic
         </button>
       </form>
 
-      <div class="quick-chips">
-        <span class="chips-caption">{{ labels().quickLabel }}:</span>
-        @for (chip of labels().chips; track chip) {
-          <button
-            type="button"
-            class="chip-btn"
-            (click)="selectQuickDestination(chip)"
-          >
-            {{ chip }}
-          </button>
-        }
-      </div>
+      @if (showQuickChips()) {
+        <div class="quick-chips">
+          <span class="chips-caption">{{ labels().quickLabel }}:</span>
+          @for (chip of labels().chips; track chip) {
+            <button
+              type="button"
+              class="chip-btn"
+              (click)="selectQuickDestination(chip)"
+            >
+              {{ chip }}
+            </button>
+          }
+        </div>
+      }
     </div>
   `,
   styles: [
@@ -238,6 +240,7 @@ export class SearchBarComponent {
 
   readonly lang = input<WidgetLang>('ru');
   readonly isSearching = input<boolean>(false);
+  readonly showQuickChips = input<boolean>(false);
   readonly searchSubmitted = output<string>();
 
   readonly query = signal<string>('');

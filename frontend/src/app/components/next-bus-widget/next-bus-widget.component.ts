@@ -12,6 +12,7 @@ import {
 } from '@angular/core';
 import type {
   EntryContext,
+  LineCandidate,
   LiveBusStatusResponse,
   RenderMode,
   WidgetLang
@@ -28,7 +29,7 @@ const DEFAULT_COORDS = {
 };
 
 const EMPTY_INITIAL_STATE: LiveBusStatusResponse = {
-  render_mode: 'interactive',
+  render_mode: 'lite',
   updated_at: new Date().toISOString(),
   cache_hit: true,
   user_location: DEFAULT_COORDS,
@@ -227,6 +228,8 @@ const EMPTY_INITIAL_STATE: LiveBusStatusResponse = {
             [state]="busState()"
             [lang]="lang()"
             (switchDirection)="onDirectionSwitch($event)"
+            (selectCandidate)="onSelectCandidate($event)"
+            (openMap)="toggleInteractiveMode()"
           />
         } @else {
           @defer {
@@ -530,6 +533,7 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
   readonly entryContext = signal<EntryContext>('standalone');
   readonly isSearching = signal<boolean>(false);
   readonly selectedDirection = signal<0 | 1>(0);
+  readonly selectedRouteId = signal<string | null>(null);
   readonly hasExplicitDirection = signal(false);
   readonly lang = signal<WidgetLang>('ru');
   readonly userCoords = signal<{ lat: number; lon: number; accuracy?: number } | null>(null);
@@ -556,8 +560,8 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
           locating: 'מאתר...',
           defaultArea: 'חיפה (ברירת מחדל)',
           toStop: 'מרחק לתחנה',
-          openInteractive: 'מפה ובתי קפה',
-          backToLite: 'חזרה למצב Lite',
+          openInteractive: '🗺️ מפה',
+          backToLite: '⚡ כרטיס',
           loadingMap: 'טוען מפה אינטראקטיבית...',
           lineWord: 'קו'
         };
@@ -569,8 +573,8 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
           locating: 'Locating...',
           defaultArea: 'Haifa (default coords)',
           toStop: 'To nearest stop',
-          openInteractive: 'Interactive & Cafes',
-          backToLite: 'Back to Lite',
+          openInteractive: '🗺️ Map',
+          backToLite: '⚡ Card',
           loadingMap: 'Loading interactive map module...',
           lineWord: 'Line'
         };
@@ -582,8 +586,8 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
           locating: 'Поиск GPS...',
           defaultArea: 'Хайфа (координаты по умолчанию)',
           toStop: 'До остановки',
-          openInteractive: 'Карта и кофейни',
-          backToLite: 'Назад в Lite',
+          openInteractive: '🗺️ Карта',
+          backToLite: '⚡ Карточка',
           loadingMap: 'Загрузка интерактивной карты...',
           lineWord: 'Автобус'
         };
@@ -642,30 +646,24 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
       case 'he':
         return [
           { icon: '🚌', label: 'קו 49 (טירת כרמל)', query: '49' },
-          { icon: '🚌', label: 'קו 940 (חיפה ➔ ירושלים)', query: 'ירושלים' },
-          { icon: '🚌', label: 'קו 910 (חיפה ⇄ תל אביב)', query: '910' },
-          { icon: '🚌', label: 'קו 24 (חורב)', query: '24' },
-          { icon: '📍', label: 'ירושלים (תחנה מרכזית)', query: 'ירושלים תחנה מרכזית' },
+          { icon: '🏥', label: 'בית חולים רמב"ם', query: 'בית חולים רמב"ם' },
+          { icon: '📍', label: 'ירושלים (תחנה מרכזית)', query: 'ירושלים' },
           { icon: '📍', label: 'תל אביב (עזריאלי)', query: 'תל אביב עזריאלי' },
           { icon: '📍', label: 'מרכז חורב, חיפה', query: 'מרכז חורב חיפה' }
         ];
       case 'en':
         return [
           { icon: '🚌', label: 'Line 49 (Tirat Carmel)', query: '49' },
-          { icon: '🚌', label: 'Line 940 (Haifa ➔ Jerusalem)', query: 'Jerusalem' },
-          { icon: '🚌', label: 'Line 910 (Haifa ⇄ Tel Aviv)', query: '910' },
-          { icon: '🚌', label: 'Line 24 (Horev)', query: '24' },
-          { icon: '📍', label: 'Jerusalem Central', query: 'Jerusalem Central' },
+          { icon: '🏥', label: 'Rambam Hospital', query: 'Rambam Hospital' },
+          { icon: '📍', label: 'Jerusalem Central', query: 'Jerusalem' },
           { icon: '📍', label: 'Tel Aviv (Azrieli)', query: 'Tel Aviv Azrieli' },
           { icon: '📍', label: 'Horev Center, Haifa', query: 'Horev Center Haifa' }
         ];
       default:
         return [
-          { icon: '🚌', label: 'Автобус 49 (Тират-Кармель)', query: '49' },
-          { icon: '🚌', label: 'Маршрут 940 (в Иерусалим)', query: 'Иерусалим' },
-          { icon: '🚌', label: 'Маршрут 910 (Хайфа ⇄ Тель-Авив)', query: '910' },
-          { icon: '🚌', label: 'Автобус 24 (Хорев)', query: '24' },
-          { icon: '📍', label: 'Иерусалим (Тахана Мерказит)', query: 'Иерусалим' },
+          { icon: '🚌', label: 'Сорок девятый автобус', query: 'Сорок девятый автобус' },
+          { icon: '🏥', label: 'Больница Рамбам', query: 'Хочу поехать в больницу Рамбам' },
+          { icon: '📍', label: 'Иерусалим', query: 'Иерусалим' },
           { icon: '📍', label: 'Тель-Авив (Азриэли)', query: 'Тель-Авив Азриэли' },
           { icon: '📍', label: 'Центр Хорев, Хайфа', query: 'Центр Хорев Хайфа' }
         ];
@@ -698,18 +696,20 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
       if (injected) {
         this.busState.set(injected);
         this.selectedDirection.set(injected.route.direction_id);
+        this.selectedRouteId.set(injected.route.route_id || null);
         this.modeOverride.set(injected.render_mode);
       } else {
-        this.modeOverride.set('interactive');
+        this.modeOverride.set('lite');
       }
     } else {
       this.entryContext.set('standalone');
       if (injected) {
         this.busState.set(injected);
         this.selectedDirection.set(injected.route.direction_id);
+        this.selectedRouteId.set(injected.route.route_id || null);
       }
-      // Standalone web/mobile defaults to interactive map + search bar unless ?mode=lite
-      this.modeOverride.set('interactive');
+      // Standalone web/mobile defaults to uncluttered lightweight card view with @defer map toggle
+      this.modeOverride.set('lite');
     }
 
     const modeParam = params.get('mode');
@@ -746,12 +746,15 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
       this.observer.observe(this.hostRef.nativeElement);
     }
 
+    const qParam = params.get('q');
     const hasExplicitQuery =
       Boolean(params.get('line')) ||
       Boolean(params.get('dest_lat')) ||
-      Boolean(params.get('q'));
+      Boolean(qParam);
 
-    if (isMcp || hasExplicitQuery || injected) {
+    if (qParam) {
+      void this.onSearchDestination(qParam);
+    } else if (isMcp || hasExplicitQuery || injected) {
       this.hasActiveSearch.set(true);
       if (params.get('line')) {
         this.activeSearchLabel.set(params.get('line') ?? '');
@@ -795,6 +798,8 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
     this.stopPolling();
     this.hasActiveSearch.set(false);
     this.activeSearchLabel.set('');
+    this.selectedRouteId.set(null);
+    this.hasExplicitDirection.set(false);
     this.busState.set(EMPTY_INITIAL_STATE);
   }
 
@@ -848,6 +853,42 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
     }
   }
 
+  async onSelectCandidate(candidate: LineCandidate): Promise<void> {
+    this.isSearching.set(true);
+    this.selectedRouteId.set(candidate.route_id);
+    this.selectedDirection.set(candidate.direction_id);
+    this.hasExplicitDirection.set(true);
+    this.activeSearchLabel.set(candidate.line_number);
+
+    try {
+      const coords = this.userCoords() ?? DEFAULT_COORDS;
+      const existingCandidates = this.busState().candidates;
+      const response = await fetch('/api/search-routes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: candidate.line_number,
+          user_location: { lat: coords.lat, lon: coords.lon },
+          route_id: candidate.route_id,
+          direction_id: candidate.direction_id,
+          include_nearby_places: this.viewMode() === 'interactive'
+        })
+      });
+      if (response.ok) {
+        const data = (await response.json()) as LiveBusStatusResponse;
+        this.busState.set({
+          ...data,
+          candidates: existingCandidates ?? data.candidates
+        });
+        this.startPolling();
+      }
+    } catch {
+      // Keep current state on temporary failure
+    } finally {
+      this.isSearching.set(false);
+    }
+  }
+
   async onSearchDestination(query: string): Promise<void> {
     const cleaned = query.trim();
     if (!cleaned) return;
@@ -855,6 +896,8 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
     this.isSearching.set(true);
     this.hasActiveSearch.set(true);
     this.activeSearchLabel.set(cleaned);
+    this.hasExplicitDirection.set(false);
+    this.selectedRouteId.set(null);
 
     try {
       let coords = this.userCoords();
@@ -880,41 +923,21 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
       }
 
       const finalCoords = coords ?? this.userCoords() ?? DEFAULT_COORDS;
-      const lineMatch = cleaned.match(
-        /^(?:קו|линия|номер|маршрут|автобус|line|bus|#|№)?\s*(\d{1,4}[a-zа-я]?)$/i
-      );
-
-      if (lineMatch) {
-        const line = lineMatch[1];
-        const includeNearby = this.viewMode() === 'interactive';
-        const url = `/api/live-status?line_number=${encodeURIComponent(
-          line
-        )}&lat=${encodeURIComponent(finalCoords.lat)}&lon=${encodeURIComponent(
-          finalCoords.lon
-        )}&include_nearby_places=${includeNearby}&entry_context=${encodeURIComponent(
-          this.entryContext()
-        )}`;
-        const response = await fetch(url);
-        if (response.ok) {
-          const data = (await response.json()) as LiveBusStatusResponse;
-          this.busState.set(data);
-          this.selectedDirection.set(data.route.direction_id);
-          this.startPolling();
-        }
-      } else {
-        const response = await fetch('/api/search-routes', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            query: cleaned,
-            user_location: { lat: finalCoords.lat, lon: finalCoords.lon }
-          })
-        });
-        if (response.ok) {
-          const data = (await response.json()) as LiveBusStatusResponse;
-          this.busState.set(data);
-          this.startPolling();
-        }
+      const response = await fetch('/api/search-routes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: cleaned,
+          user_location: { lat: finalCoords.lat, lon: finalCoords.lon },
+          include_nearby_places: this.viewMode() === 'interactive'
+        })
+      });
+      if (response.ok) {
+        const data = (await response.json()) as LiveBusStatusResponse;
+        this.busState.set(data);
+        this.selectedRouteId.set(data.route.route_id || null);
+        this.selectedDirection.set(data.route.direction_id);
+        this.startPolling();
       }
     } catch {
       // Keep current state on temporary failure
@@ -972,12 +995,14 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
       const dirParam = this.hasExplicitDirection()
         ? `&direction_id=${this.selectedDirection()}`
         : '';
+      const routeId = this.selectedRouteId() ?? current.route.route_id;
+      const routeParam = routeId ? `&route_id=${encodeURIComponent(routeId)}` : '';
 
       const url = `/api/live-status?line_number=${encodeURIComponent(
         line
       )}&lat=${encodeURIComponent(coords.lat)}&lon=${encodeURIComponent(
         coords.lon
-      )}${dirParam}&include_nearby_places=${includeNearby}&entry_context=${encodeURIComponent(
+      )}${dirParam}${routeParam}&include_nearby_places=${includeNearby}&entry_context=${encodeURIComponent(
         this.entryContext()
       )}`;
 
@@ -985,7 +1010,10 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
       if (!response.ok) return;
 
       const data = (await response.json()) as LiveBusStatusResponse;
-      this.busState.set(data);
+      this.busState.set({
+        ...data,
+        candidates: current.candidates ?? data.candidates
+      });
       if (!this.hasExplicitDirection()) {
         this.selectedDirection.set(data.route.direction_id);
       }

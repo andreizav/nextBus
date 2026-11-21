@@ -1,6 +1,20 @@
 import { CommonModule } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
-import type { LiveBusStatusResponse, WidgetLang } from '../../models/bus.models';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  effect,
+  input,
+  output,
+  signal
+} from '@angular/core';
+import type {
+  LineCandidate,
+  LiveBusStatusResponse,
+  StopTimelineItem,
+  TripOption,
+  WidgetLang
+} from '../../models/bus.models';
 
 @Component({
   selector: 'nb-lite-timeline-view',
@@ -11,295 +25,239 @@ import type { LiveBusStatusResponse, WidgetLang } from '../../models/bus.models'
     <section
       class="lite-card nb-card"
       [attr.dir]="lang() === 'he' ? 'rtl' : 'ltr'"
-      aria-label="Live bus arrival status without map"
+      aria-label="Mobile transit card with arrival time, location pin, and stop window"
     >
-      <header class="lite-header">
-        <div class="route-identity">
+      <!-- 1. Hero Header: Route # + ETA Countdown + Map Toggle -->
+      <header class="hero-header">
+        <div class="hero-left">
           <div
             class="route-badge"
-            [class.is-transfer]="activeOption()?.is_transfer"
+            [class.is-transfer]="isTransferTrip()"
             aria-label="Route number"
           >
-            @if (activeOption()?.is_transfer && activeOption()?.second_leg; as sec) {
-              <span>{{ state().route.short_name }}→{{ sec.route.short_name }}</span>
+            @if (isTransferTrip() && secondLegShortName()) {
+              <span>{{ activeRoute().short_name }}→{{ secondLegShortName() }}</span>
             } @else {
-              <span>{{ state().route.short_name }}</span>
+              <span>{{ activeRoute().short_name || '?' }}</span>
             }
           </div>
 
-          <div class="route-meta">
-            <span class="route-tag">
-              <span aria-hidden="true">⚡</span>
-              {{ labels().liteBadge }}
-            </span>
-            <h2 class="stop-heading">
+          <div class="hero-meta">
+            <h2 class="hero-title">
               @if (state().destination; as dest) {
-                {{ labels().tripTo }} {{ dest.place_name }}
+                {{ dest.place_name }}
               } @else {
-                {{ lang() === 'he' ? state().user_stop.stop_name_he : state().user_stop.stop_name }}
+                {{ currentDirectionLabel() || activeRoute().long_name }}
               }
             </h2>
-            <p class="stop-code-meta">
-              @if (activeOption(); as opt) {
-                {{ labels().boardAtStop }}
-                «{{ lang() === 'he' ? state().user_stop.stop_name_he : state().user_stop.stop_name }}»
-                (#{{ state().user_stop.stop_code }})
-                • 🏁 {{ labels().arriveAt }} <strong>{{ opt.estimated_arrival_time }}</strong>
-                ({{ labels().total }} {{ opt.total_arrival_min }} {{ labels().min }})
+            <p class="hero-sub">
+              @if (activeTripOption(); as trip) {
+                🏁 {{ labels().arriveAt }} <strong>{{ trip.estimated_arrival_time }}</strong>
+                • {{ trip.total_duration_min }} {{ labels().min }}
               } @else {
-                #{{ state().user_stop.stop_code }}
+                {{ labels().busNowAt }}:
+                <strong>{{ currentBusStopName() }}</strong>
               }
             </p>
           </div>
         </div>
 
-        <div class="eta-box" role="status" aria-live="polite">
-          <span class="eta-value">{{ etaText() }}</span>
-          <span class="eta-stops">{{ stopsAwayText() }}</span>
+        <div class="hero-right">
+          <div class="eta-pill" role="status" aria-live="polite">
+            <span class="eta-value">{{ etaText() }}</span>
+            <span class="eta-sub">{{ stopsAwayText() }}</span>
+          </div>
+          <button
+            type="button"
+            class="map-toggle-btn nb-btn"
+            (click)="openMap.emit()"
+            [title]="labels().showMap"
+          >
+            🗺️ {{ labels().showMap }}
+          </button>
         </div>
       </header>
 
-      @if (!state().destination) {
-        <div class="direction-bar">
-          <span class="direction-label">
-            <span aria-hidden="true">⇄</span>
-            {{ currentDirectionLabel() }}
-          </span>
+      <!-- 2. Clear User Location Anchor Pin -->
+      <div class="user-pin-banner" role="region" aria-label="Your current stop">
+        <div class="pin-main">
+          <span class="pin-badge">📍 {{ labels().youAreHere }}</span>
+          <strong class="pin-stop-name">
+            «{{ lang() === 'he' ? activeUserStop().stop_name_he : activeUserStop().stop_name }}»
+          </strong>
+          @if (activeUserStop().stop_code) {
+            <span class="pin-code">#{{ activeUserStop().stop_code }}</span>
+          }
+          @if (activeUserStop().distance_meters !== undefined) {
+            <span class="pin-dist">({{ activeUserStop().distance_meters }} m)</span>
+          }
+        </div>
+
+        @if (!state().destination && state().route.available_directions.length > 1) {
           <button
             type="button"
-            class="switch-btn nb-btn"
+            class="dir-switch-btn nb-btn"
             (click)="onSwitchDirection()"
           >
-            {{ labels().switchDir }}
+            ⇄ {{ labels().switchDir }}
           </button>
-        </div>
-      }
+        }
+      </div>
 
-      @if (activeOption(); as opt) {
-        @if (opt.is_transfer && opt.transfer_info && opt.second_leg) {
-          <div class="transfer-alert-box" role="region" aria-label="Bus transfer instructions">
-            <div class="transfer-alert-title">
-              <span>🔄 {{ labels().transferGuideTitle }}</span>
-              <span class="transfer-wait-pill">
-                @if (opt.transfer_info.walk_meters > 0) {
-                  🚶 {{ opt.transfer_info.walk_meters }} m •
-                }
-                ⏱️ {{ labels().waitWord }} {{ opt.transfer_info.wait_minutes }} {{ labels().min }}
-              </span>
-            </div>
-
-            <div class="transfer-steps-grid">
-              <div class="xfer-step">
-                <span class="xfer-badge bus1">🚌 №{{ opt.route.short_name }}</span>
-                <span>
-                  {{ labels().step1Board }}
-                  «{{ lang() === 'he' ? opt.origin_stop.stop_name_he : opt.origin_stop.stop_name }}»
-                  (#{{ opt.origin_stop.stop_code }}) — {{ etaText() }}
-                </span>
-              </div>
-              <div class="xfer-step is-highlight">
-                <span class="xfer-badge hub">🔄 {{ opt.transfer_info.arrive_at_hub_time }}</span>
-                <span>
-                  {{ labels().step2Exit }}
-                  <strong>«{{ lang() === 'he' ? opt.transfer_info.alight_stop.stop_name_he : opt.transfer_info.alight_stop.stop_name }}» (#{{ opt.transfer_info.alight_stop.stop_code }})</strong>
-                  → {{ labels().step2BoardNew }}
-                  <strong class="new-bus-pill">🚌 №{{ opt.second_leg.route.short_name }}</strong>
-                  {{ labels().atTime }} <strong>{{ opt.transfer_info.next_bus_board_time }}</strong>
-                  @if (opt.transfer_info.board_stop.stop_code !== opt.transfer_info.alight_stop.stop_code) {
-                    ({{ labels().atStop }} «{{ lang() === 'he' ? opt.transfer_info.board_stop.stop_name_he : opt.transfer_info.board_stop.stop_name }}» #{{ opt.transfer_info.board_stop.stop_code }})
-                  }
-                </span>
-              </div>
-              <div class="xfer-step">
-                <span class="xfer-badge dest">🏁 {{ opt.estimated_arrival_time }}</span>
-                <span>
-                  {{ labels().step3Dest }}
-                  «{{ lang() === 'he' ? opt.dest_stop.stop_name_he : opt.dest_stop.stop_name }}»
-                  (#{{ opt.dest_stop.stop_code }})
-                </span>
-              </div>
+      <!-- 3. Line Disambiguation Selector (when multiple matching lines/directions nearby) -->
+      @if (state().candidates; as candidates) {
+        @if (candidates.length > 1) {
+          <div class="disambiguation-box" role="region" aria-label="Choose matching line">
+            <span class="section-caption">🚌 {{ labels().chooseLine }}</span>
+            <div class="cand-list">
+              @for (cand of candidates; track cand.route_id + '-' + cand.direction_id) {
+                <button
+                  type="button"
+                  class="cand-btn nb-btn"
+                  [class.is-active]="
+                    cand.route_id === state().route.route_id &&
+                    cand.direction_id === state().route.direction_id
+                  "
+                  (click)="selectCandidate.emit(cand)"
+                >
+                  <span class="cand-num">№{{ cand.line_number }}</span>
+                  <span class="cand-dest">→ {{ cand.destination_he }}</span>
+                  <span class="cand-eta">{{ cand.eta_minutes }} {{ labels().min }}</span>
+                </button>
+              }
             </div>
           </div>
         }
       }
 
-      <div class="bus-status-banner" role="region" aria-label="Current bus location">
-        <div class="status-metric">
-          <span class="metric-label">
-            {{ labels().busNowAt }} (🚌 №{{ state().route.short_name }})
-          </span>
-          @if (currentBusStop(); as busStop) {
-            <strong class="metric-stop" [attr.dir]="lang() === 'he' ? 'rtl' : 'auto'">
-              <span aria-hidden="true">🚌</span>
-              {{ lang() === 'he' ? busStop.name_he : busStop.name }}
-            </strong>
-            <span class="metric-sub">
-              @if (busStop.code) {
-                #{{ busStop.code }} •
+      <!-- 4. Step-by-Step Trip Options (up to 3 options, ordered legs) -->
+      @if (tripOptions().length > 0) {
+        <div class="trip-section" role="region" aria-label="Trip plan">
+          @if (tripOptions().length > 1) {
+            <div class="trip-tabs" role="tablist">
+              @for (opt of tripOptions(); track opt.rank; let idx = $index) {
+                <button
+                  type="button"
+                  role="tab"
+                  class="trip-tab-btn nb-btn"
+                  [class.is-active]="selectedTripIndex() === idx"
+                  (click)="selectedTripIndex.set(idx)"
+                >
+                  {{ labels().optionWord }} {{ opt.rank }} • {{ opt.total_duration_min }} {{ labels().min }}
+                  @if (opt.transfers_count === 0) {
+                    ⚡
+                  } @else {
+                    🔄{{ opt.transfers_count }}
+                  }
+                </button>
               }
-              {{ labels().stopOrder }} {{ busStop.seq }}
-            </span>
-          } @else {
-            <strong class="metric-stop">{{ labels().noBusYet }}</strong>
+            </div>
+          }
+
+          @if (activeTripOption(); as trip) {
+            <ol class="legs-list">
+              @for (leg of trip.legs; track leg.route_id + '-' + $index; let idx = $index) {
+                <li class="leg-card" [class.is-transfer-leg]="leg.leg_type === 'TRANSFER'">
+                  <div class="leg-head">
+                    <span class="leg-line-chip" [class.is-xfer]="leg.leg_type === 'TRANSFER'">
+                      {{ idx + 1 }}.
+                      @if (leg.leg_type === 'TRANSFER') {
+                        🔄 {{ labels().transferTo }}
+                      } @else {
+                        🚌 {{ labels().boardWord }}
+                      }
+                      №{{ leg.line_number }}
+                    </span>
+                    <span class="leg-timing">
+                      @if (leg.leg_type === 'TRANSFER' && leg.transfer_wait_min !== undefined) {
+                        ⏱️ {{ labels().waitWord }} {{ leg.transfer_wait_min }} {{ labels().min }}
+                        @if (leg.transfer_walk_meters && leg.transfer_walk_meters > 15) {
+                          • 🚶 {{ leg.transfer_walk_meters }} m
+                        }
+                      } @else {
+                        ⏰ {{ leg.board_stop.scheduled_time }} ({{ leg.board_stop.eta_minutes }} {{ labels().min }})
+                      }
+                    </span>
+                  </div>
+                  <p class="leg-stops-desc">
+                    <span class="leg-action">
+                      «{{ lang() === 'he' ? leg.board_stop.stop_name_he : leg.board_stop.stop_name }}»
+                      (#{{ leg.board_stop.stop_code }})
+                    </span>
+                    <span class="leg-arrow">➔</span>
+                    <span class="leg-action">
+                      {{ labels().exitAt }} «{{ lang() === 'he' ? leg.alight_stop.stop_name_he : leg.alight_stop.stop_name }}»
+                      ({{ leg.alight_stop.stops_count }} {{ labels().stopsWord }}, ~{{ leg.ride_duration_min }} {{ labels().min }})
+                    </span>
+                  </p>
+                </li>
+              }
+            </ol>
           }
         </div>
+      }
 
-        <div class="status-count">
-          <span class="count-number">{{ state().nearest_bus?.stops_away ?? '-' }}</span>
-          <span class="count-label">{{ labels().stopsRemaining }}</span>
-        </div>
-      </div>
+      <!-- 5. Compact Stop Window ("back & ahead") -->
+      @if (visibleTimelineStops().length > 0) {
+        <div class="window-box" role="region" aria-label="Stops window">
+          @if (!showAllStops() && hiddenPastCount() > 0) {
+            <div class="hidden-stops-hint">
+              ↑ {{ labels().moreBefore }} {{ hiddenPastCount() }} {{ labels().stopsShort }}
+            </div>
+          }
 
-      <div class="timeline-panel">
-        <div class="timeline-track">
-          <div
-            class="timeline-fill"
-            [style.transform]="'scaleY(' + progressScale() + ')'"
-          ></div>
-          <div
-            class="timeline-bus-dot"
-            [style.top.%]="busProgressPercent()"
-            aria-hidden="true"
-          >
-            🚌
-          </div>
-        </div>
-
-        <div class="timeline-stages">
           <ul class="stop-list">
-            @for (stop of state().timeline_stops; track stop.stop_id + '-' + stop.stop_sequence) {
+            @for (stop of visibleTimelineStops(); track stop.stop_id + '-' + stop.stop_sequence) {
               <li
                 class="stop-row"
                 [class.is-passed]="stop.status === 'passed'"
-                [class.is-user]="stop.stop_sequence === state().user_stop.stop_sequence"
-                [class.is-bus]="
-                  state().nearest_bus &&
-                  stop.stop_sequence === state().nearest_bus?.current_stop_sequence
-                "
-                [class.is-xfer-exit]="
-                  activeOption()?.is_transfer &&
-                  stop.stop_sequence === activeOption()?.transfer_info?.alight_stop?.stop_sequence
-                "
+                [class.is-user]="stop.stop_sequence === activeUserStop().stop_sequence"
+                [class.is-bus]="activeBusSequence() !== undefined && stop.stop_sequence === activeBusSequence()"
               >
-                <span class="stop-marker" aria-hidden="true">
-                  @if (
-                    activeOption()?.is_transfer &&
-                    stop.stop_sequence === activeOption()?.transfer_info?.alight_stop?.stop_sequence
-                  ) {
-                    🔄
-                  } @else if (stop.stop_sequence === state().user_stop.stop_sequence) {
+                <span class="stop-dot" aria-hidden="true">
+                  @if (activeBusSequence() !== undefined && stop.stop_sequence === activeBusSequence()) {
+                    🚌
+                  } @else if (stop.stop_sequence === activeUserStop().stop_sequence) {
                     📍
-                  } @else if (
-                    state().nearest_bus &&
-                    stop.stop_sequence === state().nearest_bus?.current_stop_sequence
-                  ) {
-                    ●
+                  } @else if (stop.status === 'passed') {
+                    ✓
                   } @else {
                     ○
                   }
                 </span>
 
-                <div class="stop-names">
-                  <span class="stop-primary" dir="auto">
-                    @if (lang() === 'he') {
-                      {{ stop.stop_name_he }}
-                    } @else {
-                      {{ stop.stop_name }}
-                    }
-                  </span>
-                  @if (stop.stop_sequence === state().user_stop.stop_sequence) {
-                    <span class="stop-role-note is-board">
-                      {{ labels().roleBoard }} №{{ state().route.short_name }}
-                    </span>
-                  } @else if (
-                    state().nearest_bus &&
-                    stop.stop_sequence === state().nearest_bus?.current_stop_sequence
-                  ) {
-                    <span class="stop-role-note is-live">
-                      {{ labels().roleBusHere }} №{{ state().route.short_name }}
-                    </span>
-                  } @else if (
-                    activeOption()?.is_transfer &&
-                    activeOption()?.second_leg &&
-                    stop.stop_sequence === activeOption()?.transfer_info?.alight_stop?.stop_sequence
-                  ) {
-                    <span class="stop-role-note is-xfer">
-                      {{ labels().roleExitTransfer }} №{{ state().route.short_name }} → №{{ activeOption()!.second_leg!.route.short_name }}
-                    </span>
-                  }
-                </div>
+                <span class="stop-name" dir="auto">
+                  {{ lang() === 'he' ? stop.stop_name_he : stop.stop_name }}
+                </span>
 
-                <div class="stop-badges">
-                  <span class="stop-bus-chip">🚌 №{{ state().route.short_name }}</span>
-                  <span class="stop-code">#{{ stop.stop_code }}</span>
-                </div>
+                @if (stop.stop_sequence === activeUserStop().stop_sequence) {
+                  <span class="stop-tag tag-user">{{ labels().youTag }}</span>
+                } @else if (activeBusSequence() !== undefined && stop.stop_sequence === activeBusSequence()) {
+                  <span class="stop-tag tag-bus">{{ labels().busTag }}</span>
+                }
+
+                <span class="stop-code">#{{ stop.stop_code }}</span>
               </li>
             }
           </ul>
 
-          @if (activeOption(); as opt) {
-            @if (opt.is_transfer && opt.transfer_info && opt.second_leg) {
-              <div class="transfer-divider">
-                <span>
-                  🔄 {{ labels().step2Exit }} №{{ opt.route.short_name }} ({{ opt.transfer_info.arrive_at_hub_time }}) →
-                  <strong>🚌 №{{ opt.second_leg.route.short_name }} ({{ opt.transfer_info.next_bus_board_time }})</strong>
-                </span>
-              </div>
+          @if (!showAllStops() && hiddenUpcomingCount() > 0) {
+            <div class="hidden-stops-hint">
+              ↓ {{ labels().moreAhead }} {{ hiddenUpcomingCount() }} {{ labels().stopsShort }}
+            </div>
+          }
 
-              <ul class="stop-list">
-                @for (stop of opt.second_leg.timeline_stops; track 'leg2-' + stop.stop_id + '-' + stop.stop_sequence) {
-                  <li
-                    class="stop-row"
-                    [class.is-xfer-board]="stop.stop_sequence === opt.second_leg.board_stop.stop_sequence"
-                    [class.is-bus]="stop.stop_sequence === opt.second_leg.bus.current_stop_sequence"
-                    [class.is-dest-end]="stop.stop_sequence === opt.dest_stop.stop_sequence"
-                  >
-                    <span class="stop-marker" aria-hidden="true">
-                      @if (stop.stop_sequence === opt.second_leg.board_stop.stop_sequence) {
-                        🔄
-                      } @else if (stop.stop_sequence === opt.dest_stop.stop_sequence) {
-                        🏁
-                      } @else if (stop.stop_sequence === opt.second_leg.bus.current_stop_sequence) {
-                        ●
-                      } @else {
-                        ○
-                      }
-                    </span>
-
-                    <div class="stop-names">
-                      <span class="stop-primary" dir="auto">
-                        @if (lang() === 'he') {
-                          {{ stop.stop_name_he }}
-                        } @else {
-                          {{ stop.stop_name }}
-                        }
-                      </span>
-                      @if (stop.stop_sequence === opt.second_leg.board_stop.stop_sequence) {
-                        <span class="stop-role-note is-xfer">
-                          {{ labels().roleBoardNew }} №{{ opt.second_leg.route.short_name }} ({{ opt.transfer_info.next_bus_board_time }})
-                        </span>
-                      } @else if (stop.stop_sequence === opt.second_leg.bus.current_stop_sequence) {
-                        <span class="stop-role-note is-live">
-                          {{ labels().roleBusHere }} №{{ opt.second_leg.route.short_name }}
-                        </span>
-                      } @else if (stop.stop_sequence === opt.dest_stop.stop_sequence) {
-                        <span class="stop-role-note is-final">
-                          {{ labels().roleFinalExit }} ({{ opt.estimated_arrival_time }})
-                        </span>
-                      }
-                    </div>
-
-                    <div class="stop-badges">
-                      <span class="stop-bus-chip is-leg2">🚌 №{{ opt.second_leg.route.short_name }}</span>
-                      <span class="stop-code">#{{ stop.stop_code }}</span>
-                    </div>
-                  </li>
-                }
-              </ul>
-            }
+          @if (canExpandStops()) {
+            <button
+              type="button"
+              class="expand-stops-btn nb-btn"
+              (click)="showAllStops.set(!showAllStops())"
+            >
+              {{ showAllStops() ? labels().collapseStops : labels().showAllStops + ' (' + totalStopsCount() + ')' }}
+            </button>
           }
         </div>
-      </div>
+      }
     </section>
   `,
   styles: [
@@ -308,329 +266,266 @@ import type { LiveBusStatusResponse, WidgetLang } from '../../models/bus.models'
         color-scheme: only dark;
         background: #0b1220;
         color: #f8fafc;
-        accent-color: #38bdf8;
         border: 1px solid #2b3c5d;
         border-radius: 1rem;
-        padding-block: 1.25rem;
-        padding-inline: 1.25rem;
+        padding: 1rem;
         display: grid;
-        gap: 1rem;
-        inline-size: 100%;
-        min-inline-size: 0;
+        gap: 0.75rem;
       }
 
-      .lite-header {
+      .hero-header {
         display: flex;
         flex-wrap: wrap;
         justify-content: space-between;
         align-items: center;
-        gap: 1rem;
+        gap: 0.75rem;
       }
 
-      .route-identity {
+      .hero-left {
         display: flex;
         align-items: center;
-        gap: 0.875rem;
+        gap: 0.75rem;
+        flex: 1 1 210px;
         min-inline-size: 0;
-        flex: 1 1 240px;
       }
 
       .route-badge {
         display: grid;
         place-items: center;
-        min-inline-size: 3.75rem;
+        min-inline-size: 3.4rem;
+        block-size: 3.4rem;
         padding-inline: 0.5rem;
-        block-size: 3.75rem;
-        flex-shrink: 0;
-        border-radius: 0.875rem;
+        border-radius: 0.85rem;
         background: #38bdf8;
         color: #041322;
-        font-size: 1.55rem;
+        font-size: 1.45rem;
         font-weight: 800;
-        letter-spacing: -0.02em;
+        flex-shrink: 0;
       }
 
       .route-badge.is-transfer {
         background: #f59e0b;
-        font-size: 1.15rem;
+        font-size: 1.05rem;
       }
 
-      .route-meta {
+      .hero-meta {
         min-inline-size: 0;
       }
 
-      .route-tag {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.35rem;
-        font-size: 0.75rem;
-        font-weight: 700;
-        color: #7dd3fc;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-      }
-
-      .stop-heading {
-        margin-block: 0.15rem 0;
-        font-size: 1.05rem;
+      .hero-title {
+        margin: 0;
+        font-size: 1rem;
         font-weight: 700;
         color: #f8fafc;
+        line-height: 1.25;
       }
 
-      .stop-code-meta {
+      .hero-sub {
         margin: 0.2rem 0 0;
-        font-size: 0.8rem;
+        font-size: 0.78rem;
         color: #cbd5e1;
       }
 
-      .eta-box {
+      .hero-right {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .eta-pill {
         background: #13223b;
         border: 1.5px solid #38bdf8;
-        border-radius: 0.875rem;
-        padding-block: 0.65rem;
-        padding-inline: 1.1rem;
+        border-radius: 0.75rem;
+        padding: 0.4rem 0.75rem;
         text-align: end;
       }
 
       .eta-value {
         display: block;
-        font-size: 1.5rem;
+        font-size: 1.25rem;
         font-weight: 800;
         color: #38bdf8;
+        line-height: 1.1;
       }
 
-      .eta-stops {
+      .eta-sub {
         display: block;
-        font-size: 0.8125rem;
+        font-size: 0.72rem;
         color: #cbd5e1;
       }
 
-      .direction-bar {
-        display: flex;
-        flex-wrap: wrap;
-        justify-content: space-between;
-        align-items: center;
-        gap: 0.75rem;
-        background: #131e33;
-        border: 1px solid #2b3c5d;
-        border-radius: 0.75rem;
-        padding-block: 0.625rem;
-        padding-inline: 0.875rem;
-      }
-
-      .direction-label {
-        font-size: 0.875rem;
-        font-weight: 600;
-        color: #e2e8f0;
-      }
-
-      .switch-btn {
-        background: #1e293b;
-        color: #f8fafc;
-        border: 1px solid #38bdf8;
-        border-radius: 0.5rem;
-        padding-block: 0.45rem;
-        padding-inline: 0.85rem;
-        font-size: 0.8125rem;
-        font-weight: 600;
+      .map-toggle-btn {
+        background: #132924;
+        color: #6ee7b7;
+        border: 1px solid #34d399;
+        border-radius: 0.65rem;
+        padding: 0.5rem 0.7rem;
+        font-size: 0.78rem;
+        font-weight: 700;
         cursor: pointer;
+        white-space: nowrap;
       }
 
-      .switch-btn:hover {
-        background: #273751;
-      }
-
-      .transfer-alert-box {
-        background: #1d180c;
-        border: 1.5px solid #f59e0b;
-        border-radius: 0.875rem;
-        padding-block: 0.8rem;
-        padding-inline: 0.95rem;
-        display: grid;
-        gap: 0.55rem;
-      }
-
-      .transfer-alert-title {
+      .user-pin-banner {
         display: flex;
         flex-wrap: wrap;
         justify-content: space-between;
         align-items: center;
         gap: 0.5rem;
-        font-size: 0.85rem;
-        font-weight: 800;
-        color: #fcd34d;
+        background: rgba(251, 191, 36, 0.08);
+        border: 1px solid rgba(251, 191, 36, 0.38);
+        border-radius: 0.75rem;
+        padding: 0.55rem 0.75rem;
       }
 
-      .transfer-wait-pill {
-        font-size: 0.75rem;
-        font-weight: 600;
-        color: #fde68a;
-        background: rgba(245, 158, 11, 0.14);
-        border: 1px solid rgba(245, 158, 11, 0.4);
-        border-radius: 999px;
-        padding-block: 0.15rem;
-        padding-inline: 0.55rem;
-      }
-
-      .transfer-steps-grid {
-        display: grid;
-        gap: 0.42rem;
-      }
-
-      .xfer-step {
+      .pin-main {
         display: flex;
         flex-wrap: wrap;
-        align-items: baseline;
-        gap: 0.45rem;
-        font-size: 0.82rem;
-        color: #e2e8f0;
-        line-height: 1.4;
+        align-items: center;
+        gap: 0.35rem;
+        font-size: 0.8rem;
       }
 
-      .xfer-step.is-highlight {
-        background: rgba(245, 158, 11, 0.12);
-        border-radius: 0.5rem;
-        padding-block: 0.35rem;
-        padding-inline: 0.5rem;
-        color: #fef3c7;
-      }
-
-      .xfer-badge {
-        display: inline-block;
-        font-size: 0.75rem;
+      .pin-badge {
+        color: #fbbf24;
         font-weight: 800;
-        border-radius: 0.375rem;
-        padding-block: 0.1rem;
-        padding-inline: 0.4rem;
-        flex-shrink: 0;
       }
 
-      .xfer-badge.bus1 {
-        background: #10b981;
+      .pin-stop-name {
+        color: #f8fafc;
+      }
+
+      .pin-code,
+      .pin-dist {
+        color: #cbd5e1;
+        font-size: 0.74rem;
+      }
+
+      .dir-switch-btn {
+        background: #172540;
+        color: #f8fafc;
+        border: 1px solid #38bdf8;
+        border-radius: 0.5rem;
+        padding: 0.3rem 0.65rem;
+        font-size: 0.74rem;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      .disambiguation-box,
+      .trip-section,
+      .window-box {
+        background: #10192b;
+        border: 1px solid #24344f;
+        border-radius: 0.75rem;
+        padding: 0.7rem;
+        display: grid;
+        gap: 0.5rem;
+      }
+
+      .section-caption {
+        font-size: 0.75rem;
+        font-weight: 700;
+        color: #7dd3fc;
+      }
+
+      .cand-list,
+      .trip-tabs {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+      }
+
+      .cand-btn,
+      .trip-tab-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        background: #172540;
+        color: #e2e8f0;
+        border: 1px solid #2b3c5d;
+        border-radius: 0.6rem;
+        padding: 0.38rem 0.6rem;
+        font-size: 0.76rem;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      .cand-btn.is-active,
+      .trip-tab-btn.is-active {
+        background: #38bdf8;
         color: #041322;
+        border-color: #38bdf8;
       }
 
-      .xfer-badge.hub {
-        background: #f59e0b;
-        color: #041322;
+      .cand-eta {
+        opacity: 0.85;
+        font-weight: 700;
       }
 
-      .xfer-badge.dest {
-        background: #ef4444;
-        color: #ffffff;
+      .legs-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 0.45rem;
       }
 
-      .new-bus-pill {
-        color: #041322;
-        background: #f59e0b;
-        border-radius: 0.35rem;
-        padding-block: 0.05rem;
-        padding-inline: 0.35rem;
+      .leg-card {
+        background: #0b1220;
+        border: 1px solid #24385b;
+        border-radius: 0.6rem;
+        padding: 0.55rem 0.7rem;
+        display: grid;
+        gap: 0.25rem;
       }
 
-      .bus-status-banner {
+      .leg-card.is-transfer-leg {
+        border-color: #f59e0b;
+        background: #19140b;
+      }
+
+      .leg-head {
         display: flex;
         flex-wrap: wrap;
         justify-content: space-between;
         align-items: center;
-        gap: 1rem;
-        background: #0f1d33;
-        border: 1px solid #2f4b75;
-        border-radius: 0.875rem;
-        padding-block: 0.875rem;
-        padding-inline: 1rem;
+        gap: 0.4rem;
+        font-size: 0.78rem;
       }
 
-      .status-metric {
-        display: grid;
-        gap: 0.2rem;
-        min-inline-size: 0;
-        flex: 1 1 220px;
-      }
-
-      .metric-label {
-        font-size: 0.75rem;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-        color: #7dd3fc;
-      }
-
-      .metric-stop {
-        font-size: 1.05rem;
-        color: #f8fafc;
-      }
-
-      .metric-sub {
-        font-size: 0.8rem;
-        color: #cbd5e1;
-      }
-
-      .status-count {
-        display: grid;
-        place-items: center;
-        background: #13223b;
-        border: 1px solid #2b3c5d;
-        border-radius: 0.75rem;
-        padding-block: 0.5rem;
-        padding-inline: 0.9rem;
-        min-inline-size: 6.5rem;
-      }
-
-      .count-number {
-        font-size: 1.45rem;
+      .leg-line-chip {
         font-weight: 800;
-        color: #34d399;
-        line-height: 1.1;
+        color: #38bdf8;
       }
 
-      .count-label {
-        font-size: 0.72rem;
+      .leg-line-chip.is-xfer {
+        color: #fbbf24;
+      }
+
+      .leg-timing {
+        font-size: 0.74rem;
         color: #cbd5e1;
       }
 
-      .timeline-panel {
-        position: relative;
-        display: flex;
-        gap: 0.875rem;
-        background: #10192b;
-        border: 1px solid #24344f;
-        border-radius: 0.75rem;
-        padding-block: 0.875rem;
-        padding-inline: 0.875rem;
+      .leg-stops-desc {
+        margin: 0;
+        font-size: 0.77rem;
+        color: #e2e8f0;
+        line-height: 1.35;
       }
 
-      .timeline-track {
-        position: relative;
-        inline-size: 6px;
-        flex-shrink: 0;
-        background: #24344f;
-        border-radius: 999px;
-        margin-block: 0.5rem;
+      .leg-arrow {
+        color: #38bdf8;
+        margin-inline: 0.3rem;
+        font-weight: 700;
       }
 
-      .timeline-fill {
-        position: absolute;
-        inset: 0;
-        background: linear-gradient(180deg, #38bdf8, #34d399);
-        border-radius: 999px;
-        transform-origin: top center;
-        transition: transform 1.5s linear;
-      }
-
-      .timeline-bus-dot {
-        position: absolute;
-        inset-inline-start: -9px;
-        transform: translateY(-50%);
-        font-size: 0.95rem;
-        transition: top 1.5s linear;
-      }
-
-      .timeline-stages {
-        flex: 1 1 auto;
-        min-inline-size: 0;
-        display: grid;
-        gap: 0.75rem;
+      .hidden-stops-hint {
+        text-align: center;
+        font-size: 0.72rem;
+        color: #94a3b8;
+        padding-block: 0.15rem;
       }
 
       .stop-list {
@@ -638,21 +533,19 @@ import type { LiveBusStatusResponse, WidgetLang } from '../../models/bus.models'
         margin: 0;
         padding: 0;
         display: grid;
-        gap: 0.625rem;
+        gap: 0.42rem;
       }
 
       .stop-row {
         display: flex;
         align-items: center;
-        justify-content: space-between;
-        gap: 0.5rem;
-        font-size: 0.85rem;
+        gap: 0.45rem;
+        font-size: 0.8rem;
         color: #cbd5e1;
       }
 
       .stop-row.is-passed {
-        color: #94a3b8;
-        opacity: 0.72;
+        color: #64748b;
       }
 
       .stop-row.is-user {
@@ -665,95 +558,53 @@ import type { LiveBusStatusResponse, WidgetLang } from '../../models/bus.models'
         font-weight: 700;
       }
 
-      .stop-row.is-xfer-exit,
-      .stop-row.is-xfer-board {
-        color: #fcd34d;
-        font-weight: 700;
-      }
-
-      .stop-row.is-dest-end {
-        color: #f87171;
-        font-weight: 700;
-      }
-
-      .stop-marker {
-        inline-size: 1.15rem;
-        flex-shrink: 0;
+      .stop-dot {
+        inline-size: 1.1rem;
         text-align: center;
+        flex-shrink: 0;
       }
 
-      .stop-names {
+      .stop-name {
         flex: 1 1 auto;
         min-inline-size: 0;
-        display: grid;
-        gap: 0.1rem;
-      }
-
-      .stop-primary {
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
       }
 
-      .stop-role-note {
-        font-size: 0.72rem;
-        font-weight: 600;
-      }
-
-      .stop-role-note.is-board {
-        color: #fbbf24;
-      }
-
-      .stop-role-note.is-live {
-        color: #38bdf8;
-      }
-
-      .stop-role-note.is-xfer {
-        color: #fcd34d;
-      }
-
-      .stop-role-note.is-final {
-        color: #f87171;
-      }
-
-      .stop-badges {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.4rem;
+      .stop-tag {
+        font-size: 0.68rem;
+        font-weight: 700;
+        border-radius: 999px;
+        padding: 0.08rem 0.45rem;
         flex-shrink: 0;
       }
 
-      .stop-bus-chip {
-        background: #172844;
-        color: #7dd3fc;
-        border: 1px solid #2b456f;
-        border-radius: 0.375rem;
-        padding-block: 0.1rem;
-        padding-inline: 0.4rem;
-        font-size: 0.72rem;
-        font-weight: 700;
+      .tag-user {
+        background: rgba(251, 191, 36, 0.16);
+        color: #fbbf24;
       }
 
-      .stop-bus-chip.is-leg2 {
-        background: #2b210e;
-        color: #fcd34d;
-        border-color: #b45309;
+      .tag-bus {
+        background: rgba(56, 189, 248, 0.16);
+        color: #38bdf8;
       }
 
       .stop-code {
-        font-size: 0.75rem;
+        font-size: 0.72rem;
         color: #94a3b8;
         flex-shrink: 0;
       }
 
-      .transfer-divider {
-        background: #261f0e;
-        border: 1px dashed #f59e0b;
+      .expand-stops-btn {
+        background: #172540;
+        color: #7dd3fc;
+        border: 1px dashed #33486e;
         border-radius: 0.5rem;
-        padding-block: 0.45rem;
-        padding-inline: 0.65rem;
-        font-size: 0.78rem;
-        color: #fde68a;
+        padding: 0.35rem 0.65rem;
+        font-size: 0.75rem;
+        font-weight: 600;
+        cursor: pointer;
       }
     `
   ]
@@ -762,171 +613,207 @@ export class LiteTimelineViewComponent {
   readonly state = input.required<LiveBusStatusResponse>();
   readonly lang = input<WidgetLang>('ru');
   readonly switchDirection = output<0 | 1>();
+  readonly selectCandidate = output<LineCandidate>();
+  readonly openMap = output<void>();
 
-  readonly activeOption = computed(() => this.state().recommended_options?.[0] ?? null);
+  readonly showAllStops = signal<boolean>(false);
+  readonly selectedTripIndex = signal<number>(0);
+
+  constructor() {
+    effect(() => {
+      // Reset view expansion & selected tab when a new route or destination loads
+      void this.state().route.route_id;
+      void this.state().destination?.place_name;
+      this.showAllStops.set(false);
+      this.selectedTripIndex.set(0);
+    });
+  }
+
+  readonly tripOptions = computed<TripOption[]>(() => this.state().trip_options ?? []);
+
+  readonly activeTripOption = computed<TripOption | null>(() => {
+    const opts = this.tripOptions();
+    if (opts.length === 0) return null;
+    const idx = Math.min(this.selectedTripIndex(), opts.length - 1);
+    return opts[idx] ?? opts[0];
+  });
+
+  readonly activeRecOption = computed(() => {
+    const opts = this.state().recommended_options ?? [];
+    if (opts.length === 0) return null;
+    const idx = Math.min(this.selectedTripIndex(), opts.length - 1);
+    return opts[idx] ?? opts[0];
+  });
+
+  readonly activeRoute = computed(() => this.activeRecOption()?.route ?? this.state().route);
+  readonly activeUserStop = computed(() => this.activeRecOption()?.origin_stop ?? this.state().user_stop);
+  readonly activeBus = computed(() => this.activeRecOption()?.bus ?? this.state().nearest_bus);
+
+  readonly isTransferTrip = computed(() => {
+    const trip = this.activeTripOption();
+    if (trip) return trip.transfers_count > 0;
+    return Boolean(this.activeRecOption()?.is_transfer);
+  });
+
+  readonly secondLegShortName = computed(() => {
+    const trip = this.activeTripOption();
+    if (trip && trip.legs.length > 1) {
+      return trip.legs.slice(1).map((l) => l.line_number).join('→');
+    }
+    return this.activeRecOption()?.second_leg?.route.short_name ?? '';
+  });
+
+  readonly activeTimelineStops = computed<StopTimelineItem[]>(
+    () => this.activeRecOption()?.timeline_stops ?? this.state().timeline_stops
+  );
+
+  readonly activeTimelineWindow = computed(
+    () => this.activeRecOption()?.timeline_window ?? this.state().timeline_window ?? null
+  );
+
+  readonly activeBusSequence = computed(() => this.activeBus()?.current_stop_sequence);
+
+  readonly visibleTimelineStops = computed<StopTimelineItem[]>(() => {
+    const full = this.activeTimelineStops();
+    if (this.showAllStops()) return full;
+    const win = this.activeTimelineWindow();
+    if (win && win.compact_stops.length > 0) return win.compact_stops;
+    return full.slice(0, 6);
+  });
+
+  readonly hiddenPastCount = computed(
+    () => this.activeTimelineWindow()?.hidden_past_count ?? 0
+  );
+
+  readonly hiddenUpcomingCount = computed(
+    () => this.activeTimelineWindow()?.hidden_upcoming_count ?? 0
+  );
+
+  readonly totalStopsCount = computed(
+    () => this.activeTimelineWindow()?.total_stops_count ?? this.activeTimelineStops().length
+  );
+
+  readonly canExpandStops = computed(
+    () => this.totalStopsCount() > (this.activeTimelineWindow()?.compact_stops.length ?? 6)
+  );
+
+  readonly currentBusStopName = computed(() => {
+    const bus = this.activeBus();
+    if (!bus) return this.labels().noBusYet;
+    if (bus.current_stop_name) {
+      return this.lang() === 'he'
+        ? (bus.current_stop_name_he ?? bus.current_stop_name)
+        : bus.current_stop_name;
+    }
+    return `#${bus.current_stop_sequence}`;
+  });
+
+  readonly currentDirectionLabel = computed(() => {
+    const dir = this.activeRoute().direction_id;
+    const match = this.activeRoute().available_directions.find((d) => d.direction_id === dir);
+    if (!match) return this.activeRoute().direction_label;
+    return this.lang() === 'he' ? match.label_he : match.label;
+  });
+
+  readonly etaText = computed(() => {
+    const eta = this.activeBus()?.eta_minutes;
+    if (eta === undefined) {
+      return this.lang() === 'he' ? 'אין נתונים' : this.lang() === 'en' ? 'No ETA' : 'Нет данных';
+    }
+    if (eta === 0) {
+      return this.lang() === 'he' ? 'בתחנה' : this.lang() === 'en' ? 'Arriving' : 'На ост.';
+    }
+    if (this.lang() === 'he') return `בעוד ${eta} דק׳`;
+    if (this.lang() === 'en') return `${eta} min`;
+    return `Через ${eta} мин`;
+  });
+
+  readonly stopsAwayText = computed(() => {
+    const stops = this.activeBus()?.stops_away ?? 0;
+    if (this.lang() === 'he') return `${stops} תחנות`;
+    if (this.lang() === 'en') return `${stops} stops`;
+    return `${stops} ост.`;
+  });
 
   readonly labels = computed(() => {
     switch (this.lang()) {
       case 'he':
         return {
-          liteBadge: 'מצב Lite • ללא מפה',
-          tripTo: 'מסלול ליעד:',
-          boardAtStop: 'עלייה בתחנה',
-          arriveAt: 'הגעה ב-',
-          total: 'סה״כ',
-          min: 'דק׳',
+          showMap: 'מפה',
+          youAreHere: 'אתם כאן:',
           switchDir: 'החלף כיוון',
-          transferGuideTitle: 'הוראות החלפת אוטובוס (מאיפה ומתי)',
+          chooseLine: 'נמצאו מספר קווים/כיוונים בסביבתך:',
+          optionWord: 'אפשרות',
+          boardWord: 'עלייה לקו',
+          transferTo: 'החלפה לקו',
+          exitAt: 'ירידה ב-',
           waitWord: 'המתנה',
-          step1Board: 'עולה בתחנה',
-          step2Exit: 'יורד בתחנת',
-          step2BoardNew: 'עולה לאוטובוס החדש',
-          atTime: 'בשעה',
-          atStop: 'בתחנה',
-          step3Dest: 'יורד ביעד:',
-          roleBoard: 'עלייה לקו',
-          roleBusHere: 'כאן כעת קו',
-          roleExitTransfer: 'ירידה מקו',
-          roleBoardNew: 'עלייה לקו החדש',
-          roleFinalExit: 'ירידה ביעד',
-          busNowAt: 'האוטובוס נמצא כעת בתחנה',
-          stopOrder: 'תחנה מס׳',
-          stopsRemaining: 'תחנות ממך',
-          noBusYet: 'אין מידע על מיקום האוטובוס'
+          stopsWord: 'תחנות',
+          min: 'דק׳',
+          arriveAt: 'הגעה',
+          busNowAt: 'מיקום נוכחי',
+          noBusYet: 'ממתין לנתונים',
+          moreBefore: 'עוד',
+          moreAhead: 'עוד',
+          stopsShort: 'תחנות',
+          showAllStops: 'כל התחנות',
+          collapseStops: 'צמצם לחלון תחנות',
+          youTag: 'אתם',
+          busTag: 'אוטובוס'
         };
       case 'en':
         return {
-          liteBadge: 'Lite Mode • Map-Free ETA',
-          tripTo: 'Route to',
-          boardAtStop: 'Board at',
-          arriveAt: 'Arrive',
-          total: 'total',
+          showMap: 'Map',
+          youAreHere: 'You are here:',
+          switchDir: 'Switch Dir',
+          chooseLine: 'Multiple lines/directions near you:',
+          optionWord: 'Option',
+          boardWord: 'Board Line',
+          transferTo: 'Transfer to',
+          exitAt: 'Exit at',
+          waitWord: 'wait',
+          stopsWord: 'stops',
           min: 'min',
-          switchDir: 'Switch Direction',
-          transferGuideTitle: 'Transfer Instructions (Where & New Bus #)',
-          waitWord: 'Wait',
-          step1Board: 'Board at',
-          step2Exit: 'Exit at',
-          step2BoardNew: 'board new bus',
-          atTime: 'at',
-          atStop: 'at stop',
-          step3Dest: 'Arrive at destination:',
-          roleBoard: 'Board Line',
-          roleBusHere: 'Now here: Line',
-          roleExitTransfer: 'Exit Line',
-          roleBoardNew: 'Board new Line',
-          roleFinalExit: 'Final destination',
-          busNowAt: 'Bus is currently at stop',
-          stopOrder: 'Stop seq',
-          stopsRemaining: 'stops away',
-          noBusYet: 'Waiting for bus telemetry'
+          arriveAt: 'Arrive',
+          busNowAt: 'Now at',
+          noBusYet: 'Awaiting telemetry',
+          moreBefore: 'Earlier:',
+          moreAhead: 'Ahead:',
+          stopsShort: 'stops',
+          showAllStops: 'All stops',
+          collapseStops: 'Compact view',
+          youTag: 'You',
+          busTag: 'Bus'
         };
       default:
         return {
-          liteBadge: 'Режим Lite • Без карты',
-          tripTo: 'Маршрут до:',
-          boardAtStop: 'Посадка на ост.',
-          arriveAt: 'Прибытие в',
-          total: 'всего',
-          min: 'мин',
-          switchDir: 'Сменить направление',
-          transferGuideTitle: 'Где выйти и на какой автобус пересесть',
+          showMap: 'На карте',
+          youAreHere: 'Вы здесь:',
+          switchDir: 'Сменить',
+          chooseLine: 'Выберите маршрут или направление рядом:',
+          optionWord: 'Вариант',
+          boardWord: 'Сесть на',
+          transferTo: 'Пересадка на',
+          exitAt: 'выйти на',
           waitWord: 'ожидание',
-          step1Board: 'Садитесь на ост.',
-          step2Exit: 'Выйти на ост.',
-          step2BoardNew: 'пересесть на новый автобус',
-          atTime: 'в',
-          atStop: 'на ост.',
-          step3Dest: 'Выйти на конечной:',
-          roleBoard: 'Посадка на авт.',
-          roleBusHere: 'Сейчас здесь авт.',
-          roleExitTransfer: 'Выход из авт.',
-          roleBoardNew: 'Посадка на новый авт.',
-          roleFinalExit: 'Выход на конечной',
-          busNowAt: 'Автобус сейчас на остановке',
-          stopOrder: 'Остановка №',
-          stopsRemaining: 'остановок до вас',
-          noBusYet: 'Ожидание телеметрии'
+          stopsWord: 'ост.',
+          min: 'мин',
+          arriveAt: 'Прибытие',
+          busNowAt: 'Сейчас',
+          noBusYet: 'Ожидание сигнала',
+          moreBefore: 'Пройдено ещё',
+          moreAhead: 'Ещё дальше',
+          stopsShort: 'ост.',
+          showAllStops: 'Все остановки',
+          collapseStops: 'Свернуть список',
+          youTag: 'Вы',
+          busTag: 'Автобус'
         };
     }
   });
 
-  readonly currentBusStop = computed(() => {
-    const bus = this.state().nearest_bus;
-    if (!bus) return null;
-
-    if (bus.current_stop_name) {
-      return {
-        name: bus.current_stop_name,
-        name_he: bus.current_stop_name_he ?? bus.current_stop_name,
-        code: bus.current_stop_code ?? '',
-        seq: bus.current_stop_sequence
-      };
-    }
-
-    const fromTimeline = this.state().timeline_stops.find(
-      (s) => s.stop_sequence === bus.current_stop_sequence
-    );
-    if (fromTimeline) {
-      return {
-        name: fromTimeline.stop_name,
-        name_he: fromTimeline.stop_name_he,
-        code: fromTimeline.stop_code,
-        seq: fromTimeline.stop_sequence
-      };
-    }
-
-    return {
-      name: `#${bus.current_stop_sequence}`,
-      name_he: `#${bus.current_stop_sequence}`,
-      code: '',
-      seq: bus.current_stop_sequence
-    };
-  });
-
-  readonly etaText = computed(() => {
-    const eta = this.state().nearest_bus?.eta_minutes;
-    if (eta === undefined) {
-      return this.lang() === 'he' ? 'אין נתונים' : this.lang() === 'en' ? 'No ETA' : 'Нет данных';
-    }
-    if (eta === 0) {
-      return this.lang() === 'he' ? 'בתחנה' : this.lang() === 'en' ? 'Arriving' : 'Прибывает';
-    }
-    if (this.lang() === 'he') return `בעוד ${eta} דק׳`;
-    if (this.lang() === 'en') return `In ${eta} min`;
-    return `Через ${eta} мин`;
-  });
-
-  readonly stopsAwayText = computed(() => {
-    const stops = this.state().nearest_bus?.stops_away ?? 0;
-    if (this.lang() === 'he') return `${stops} תחנות ממך`;
-    if (this.lang() === 'en') return `${stops} stops away`;
-    return `${stops} ост. до вас`;
-  });
-
-  readonly currentDirectionLabel = computed(() => {
-    const dir = this.state().route.direction_id;
-    const match = this.state().route.available_directions.find((d) => d.direction_id === dir);
-    if (!match) return this.state().route.direction_label;
-    return this.lang() === 'he' ? match.label_he : match.label;
-  });
-
-  readonly busProgressPercent = computed(() => {
-    const stops = this.state().timeline_stops;
-    const busSeq = this.state().nearest_bus?.current_stop_sequence;
-    if (!stops.length || busSeq === undefined) return 15;
-    const idx = stops.findIndex((s) => s.stop_sequence >= busSeq);
-    const resolvedIdx = idx === -1 ? stops.length - 1 : idx;
-    const pct = (resolvedIdx / Math.max(1, stops.length - 1)) * 100;
-    return Math.min(96, Math.max(4, Math.round(pct)));
-  });
-
-  readonly progressScale = computed(() => {
-    return Math.max(0.08, Number((this.busProgressPercent() / 100).toFixed(2)));
-  });
-
   onSwitchDirection(): void {
-    const nextDir: 0 | 1 = this.state().route.direction_id === 0 ? 1 : 0;
+    const nextDir: 0 | 1 = this.activeRoute().direction_id === 0 ? 1 : 0;
     this.switchDirection.emit(nextDir);
   }
 }
