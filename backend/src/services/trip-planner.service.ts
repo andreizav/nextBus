@@ -661,18 +661,18 @@ export async function planBestBusesToDestination(
       match.direction_id
     );
 
+    const originDistMeters = Math.round(
+      haversineDistanceMeters(userLocation.lat, userLocation.lon, match.origin_lat, match.origin_lon)
+    );
+    const walkToOriginMin = originDistMeters > 200 ? Math.round(originDistMeters / 75) : 0;
     const distM = haversineDistanceMeters(match.origin_lat, match.origin_lon, match.dest_lat, match.dest_lon);
-    const metrics = calculateTripMetrics(etaMinutes, match.stops_between, now, distM);
+    const metrics = calculateTripMetrics(Math.max(etaMinutes, walkToOriginMin), match.stops_between, now, distM);
     const timelineStops = await buildLegTimelineSlice(
       match.route_id,
       match.direction_id,
       match.origin_stop_sequence,
       match.dest_stop_sequence,
       busInfo.current_stop_sequence
-    );
-
-    const originDistMeters = Math.round(
-      haversineDistanceMeters(userLocation.lat, userLocation.lon, match.origin_lat, match.origin_lon)
     );
 
     directCandidates.push({

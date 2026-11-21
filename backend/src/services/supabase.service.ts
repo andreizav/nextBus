@@ -500,7 +500,7 @@ class SupabaseService {
   ): Promise<DirectRouteMatch[]> {
     this.ensureInit();
 
-    const radiiToTry = [radiusMeters, Math.max(1500, radiusMeters * 2), 3000];
+    const radiiToTry = [radiusMeters, Math.max(1100, radiusMeters)];
     let dbSucceeded = false;
 
     for (const radius of radiiToTry) {
@@ -603,7 +603,7 @@ class SupabaseService {
   ): Promise<TransferRouteMatch[]> {
     this.ensureInit();
 
-    const radiiToTry = [radiusMeters, Math.max(1500, radiusMeters * 2), 3000];
+    const radiiToTry = [radiusMeters, Math.max(1100, radiusMeters)];
 
     for (const radius of radiiToTry) {
       if (this.client) {
@@ -807,7 +807,7 @@ class SupabaseService {
     maxTransfers = 2
   ): Promise<TwoTransferTripMatch[]> {
     this.ensureInit();
-    const radiiToTry = [radiusMeters, Math.max(1500, radiusMeters * 2), 3000];
+    const radiiToTry = [radiusMeters, Math.max(1100, radiusMeters)];
 
     for (const radius of radiiToTry) {
       if (this.client) {
