@@ -1,11 +1,11 @@
 # nextBus — Technical Specification (`docs/spec.md`)
 
 ## 1. Overview
-**nextBus** is a Cloud-Native real-time Israeli public transit tracking service integrated with **Google Connected Apps** (Google Search & Gemini) via the **Model Context Protocol (MCP)**.
+**nextBus** is a Cloud-Native real-time Israeli public transit tracking service integrated with **Google Connected Apps** (Google Search & Gemini) via the **Model Context Protocol (MCP)** as well as direct standalone web/mobile usage.
 
 ```mermaid
 flowchart LR
-    User["Google Search / Gemini"] -->|MCP POST /mcp| Backend["Node.js + Express + MCP Server"]
+    User["Google Search / Gemini or Standalone Web"] -->|MCP POST /mcp or POST /api/search-routes| Backend["Node.js + Express + Intent Router"]
     Widget["Angular 20 Widget"] -->|GET /api/live-status (15s)| Backend
     Backend -->|1. Geo RPC| Supabase["Supabase (PostgreSQL + PostGIS)"]
     Backend -->|2. Read State 1-2ms| Redis["Redis (bus:state & bus:active_routes)"]
@@ -44,8 +44,12 @@ flowchart LR
 ### RPC Functions
 1. `find_nearest_stop_for_line(line_num TEXT, user_lat FLOAT, user_lon FLOAT, preferred_dir SMALLINT DEFAULT NULL)`
    Returns the nearest stop for the specified bus line using PostGIS KNN `<->` distance ordering on `GEOGRAPHY(Point, 4326)`.
-2. `find_direct_routes_between_points(origin_lat FLOAT, origin_lon FLOAT, dest_lat FLOAT, dest_lon FLOAT, radius_meters INT DEFAULT 500)`
+2. `find_nearby_lines_by_number(line_num TEXT, user_lat FLOAT, user_lon FLOAT, radius_meters INT DEFAULT 600)`
+   Filters stops within `radius_meters` using `ST_DWithin`, matches routes with `route_short_name` matching or prefixed by `line_num` (e.g. `49` and `49א`), excludes unrelated cities, and returns candidate routes/directions with `origin_he`, `destination_he`, nearest stop info, and distance.
+3. `find_direct_trips(origin_lat FLOAT, origin_lon FLOAT, dest_lat FLOAT, dest_lon FLOAT, radius_meters INT DEFAULT 500)`
    Uses `ST_DWithin` to find boarding stops (Set A) within `radius_meters` of origin and alighting stops (Set B) within `radius_meters` of destination, joins `route_stops` enforcing strict travel direction (`rs_origin.stop_sequence < rs_dest.stop_sequence`), and returns one optimal `(origin_stop, dest_stop)` pair per route and direction with `stops_between`.
+4. `find_transfer_trips(origin_lat FLOAT, origin_lon FLOAT, dest_lat FLOAT, dest_lon FLOAT, radius_meters INT DEFAULT 500, max_transfers INT DEFAULT 2)`
+   Finds connecting transfer journeys (1 or 2 transfers) via shared hubs or nearby stops (`ST_DWithin`), enforcing `seq_board < seq_alight` on every leg.
 
 ---
 
@@ -59,77 +63,154 @@ flowchart LR
 
 ---
 
-## 4. MCP Tool Contracts
+## 4. Unified Intent Routing & Widget Response Contracts
 
-### 4.1 `get_live_bus_status`
-- **Tool Name:** `get_live_bus_status`
-- **Annotations:** `readOnlyHint: true`, `destructiveHint: false`
-- **Input Schema (Zod):**
-  ```json
-  {
-    "line_number": "49",
-    "user_location": { "lat": 32.7802, "lon": 34.9658 },
-    "destination_hint": "Hof HaCarmel",
-    "include_nearby_places": false
-  }
-  ```
+All backend responses (`/mcp`, `POST /api/search-routes`, `GET /api/live-status`) share the unified `LiveBusStatusResponse` structure with additive intent-driven fields:
 
-### 4.2 `find_best_buses_to_destination`
-- **Tool Name:** `find_best_buses_to_destination`
-- **Annotations:** `readOnlyHint: true`, `destructiveHint: false`
-- **Input Schema (Zod):**
-  ```json
-  {
-    "user_location": { "lat": 32.7895, "lon": 34.9640 },
-    "destination_location": { "lat": 32.7832, "lon": 34.9859, "label": "Поликлиника на Хорев, Хайфа" }
-  }
-  ```
-- **Output JSON Contract (Extended with `entry_context`, `destination`, `recommended_options`):**
-  ```json
-  {
-    "entry_context": "mcp",
-    "render_mode": "interactive",
-    "updated_at": "2026-11-17T16:10:00.000Z",
-    "cache_hit": true,
-    "destination": {
-      "lat": 32.7832,
-      "lon": 34.9859,
-      "place_name": "Поликлиника на Хорев",
-      "formatted_address": "Horev St, Haifa, Israel"
+### 4.1 `entry_context` & `intent_type`
+- `entry_context`: `"mcp" | "standalone"`
+  - `"mcp"`: Invoked from Gemini / Google Search. Search input & microphone are strictly hidden in the UI.
+  - `"standalone"`: Direct web / mobile access. Search input + Web Speech API voice input are visible.
+- `intent_type`: `"LINE_LOOKUP" | "LINE_DISAMBIGUATION" | "TRIP_PLANNER"`
+
+### 4.2 `LINE_DISAMBIGUATION` (`candidates[]`)
+Returned when a user searches by bus line number (e.g., `"49"`, `"Сорок девятый автобус"`) and multiple nearby lines or directions match within the user's geographic radius:
+```json
+{
+  "intent_type": "LINE_DISAMBIGUATION",
+  "candidates": [
+    {
+      "route_id": "stride-10049",
+      "line_number": "49",
+      "direction_id": 0,
+      "origin_he": "טירת כרמל",
+      "destination_he": "חוף הכרמל חיפה",
+      "nearest_stop_name": "הרצל/מוצקין (טירת כרמל)",
+      "nearest_stop_name_he": "הרצל/מוצקין (טירת כרמל)",
+      "nearest_stop_code": "42653",
+      "distance_meters": 180,
+      "eta_minutes": 4
     },
-    "recommended_options": [
-      {
-        "rank": 1,
-        "route": { "route_id": "stride-10024", "short_name": "24", "long_name": "...", "direction_id": 0, "direction_label": "..." },
-        "origin_stop": { "stop_id": "...", "stop_code": "42656", "stop_name": "...", "stop_name_he": "...", "stop_sequence": 3, "lat": 32.790385, "lon": 34.96134 },
-        "dest_stop": { "stop_id": "...", "stop_code": "43101", "stop_name": "...", "stop_name_he": "...", "stop_sequence": 10, "lat": 32.7832, "lon": 34.9859 },
-        "bus": { "vehicle_id": "egged-24-101", "lat": 32.7870, "lon": 34.9590, "bearing": 90, "recorded_at_time": "...", "current_stop_sequence": 1, "stops_away": 2, "eta_minutes": 4 },
-        "eta_to_boarding_min": 4,
-        "stops_between": 7,
-        "ride_duration_min": 13,
-        "total_arrival_min": 17,
-        "estimated_arrival_time": "19:45",
-        "timeline_stops": []
-      }
-    ],
-    "route": { "route_id": "stride-10024", "short_name": "24", "long_name": "...", "direction_id": 0, "direction_label": "...", "available_directions": [] },
-    "user_stop": { "stop_id": "...", "stop_code": "42656", "stop_name": "...", "stop_name_he": "...", "stop_sequence": 3, "lat": 32.790385, "lon": 34.96134 },
-    "nearest_bus": { "vehicle_id": "egged-24-101", "lat": 32.7870, "lon": 34.9590, "bearing": 90, "recorded_at_time": "...", "current_stop_sequence": 1, "stops_away": 2, "eta_minutes": 4 },
-    "timeline_stops": [],
-    "lite_map": { "static_image_url": "...", "bbox": { "minLat": 32.755, "maxLat": 32.805, "minLon": 34.950, "maxLon": 34.990 }, "bus_projection": { "xPercent": 57.5, "yPercent": 79.0 }, "user_projection": { "xPercent": 54.5, "yPercent": 67.6 } },
-    "nearby_offers": []
+    {
+      "route_id": "stride-10049a",
+      "line_number": "49א",
+      "direction_id": 0,
+      "origin_he": "טירת כרמל",
+      "destination_he": "מרכז חורב (חיפה)",
+      "nearest_stop_name": "הרצל/מוצקין (טירת כרמל)",
+      "nearest_stop_name_he": "הרצל/מוצקין (טירת כרמל)",
+      "nearest_stop_code": "42653",
+      "distance_meters": 180,
+      "eta_minutes": 7
+    }
+  ]
+}
+```
+
+### 4.3 `TRIP_PLANNER` (`trip_options[]` with ordered `legs[]`)
+Returned for A-to-B destination queries (up to 3 options, supporting 0, 1, or 2 transfers):
+```json
+{
+  "intent_type": "TRIP_PLANNER",
+  "trip_options": [
+    {
+      "rank": 1,
+      "total_duration_min": 29,
+      "estimated_arrival_time": "13:19",
+      "transfers_count": 1,
+      "legs": [
+        {
+          "leg_type": "BOARD_AND_RIDE",
+          "line_number": "49",
+          "route_id": "stride-10049",
+          "direction_id": 0,
+          "board_stop": {
+            "stop_id": "stop-42655",
+            "stop_code": "42655",
+            "stop_name": "הרצל/העצמאות (טירת כרמל)",
+            "stop_name_he": "הרצל/העצמאות (טירת כרמל)",
+            "eta_minutes": 4,
+            "scheduled_time": "12:54"
+          },
+          "alight_stop": {
+            "stop_id": "stop-42656",
+            "stop_code": "42656",
+            "stop_name": "מת''מ (חיפה)",
+            "stop_name_he": "מת''מ (חיפה)",
+            "stops_count": 6
+          },
+          "ride_duration_min": 9
+        },
+        {
+          "leg_type": "TRANSFER",
+          "line_number": "17",
+          "route_id": "stride-10017",
+          "direction_id": 0,
+          "board_stop": {
+            "stop_id": "stop-42658",
+            "stop_code": "42658",
+            "stop_name": "ת. מרכזית חוף הכרמל",
+            "stop_name_he": "ת. מרכזית חוף הכרמל",
+            "eta_minutes": 18,
+            "scheduled_time": "13:08"
+          },
+          "alight_stop": {
+            "stop_id": "stop-43052",
+            "stop_code": "43052",
+            "stop_name": "Rambam Hospital / Bat Galim (Haifa)",
+            "stop_name_he": "בית חולים רמב\"ם / בת גלים (חיפה)",
+            "stops_count": 3
+          },
+          "transfer_wait_min": 5,
+          "transfer_walk_meters": 95,
+          "ride_duration_min": 11
+        }
+      ]
+    }
+  ]
+}
+```
+
+### 4.4 Compact Stop Timeline (`timeline_window`)
+Enforces the "3-second rule" on mobile screens by slicing full route stop lists into a compact window around the approaching bus and the user's boarding stop (2–3 stops before and 2–3 stops ahead):
+```json
+{
+  "timeline_window": {
+    "past_stops": [],
+    "current_bus_stop": null,
+    "user_stop": null,
+    "upcoming_stops": [],
+    "compact_stops": [],
+    "hidden_past_count": 12,
+    "hidden_upcoming_count": 15,
+    "total_stops_count": 33
   }
-  ```
+}
+```
 
 ---
 
-## 5. HTTP Endpoints
+## 5. MCP Tool Contracts
+
+### 5.1 `get_live_bus_status`
+- **Tool Name:** `get_live_bus_status`
+- **Annotations:** `readOnlyHint: true`, `destructiveHint: false`
+- **Input Schema (Zod):** `line_number`, `user_location { lat, lon }`, `destination_hint?`, `include_nearby_places?`
+
+### 5.2 `find_best_buses_to_destination`
+- **Tool Name:** `find_best_buses_to_destination`
+- **Annotations:** `readOnlyHint: true`, `destructiveHint: false`
+- **Input Schema (Zod):** `user_location { lat, lon }`, `destination_location { lat, lon, label }`
+
+---
+
+## 6. HTTP Endpoints
 
 | Method | Path | Purpose |
 | :--- | :--- | :--- |
-| `POST` | `/mcp` | MCP JSON-RPC / Streamable HTTP endpoint exposing `get_live_bus_status` and `find_best_buses_to_destination` |
-| `POST` | `/api/search-routes` | Standalone A -> B search: geocodes `query` via Google Places/Geocoding + Redis `geo:cache` and returns Top-3 buses (`entry_context: "standalone"`) |
-| `GET` | `/api/live-status` | 15s widget polling endpoint; supports single `line_number` or multi-route `route_ids` with destination coords for Top-3 live refresh from Redis |
+| `POST` | `/mcp` | MCP JSON-RPC / Streamable HTTP endpoint (`entry_context: "mcp"`) |
+| `POST` | `/api/search-routes` | Standalone Intent Router (`entry_context: "standalone"`): handles line lookup, disambiguation, or A->B trip planning from text/voice |
+| `GET` | `/api/live-status` | 15s widget polling endpoint; reads Redis cache and returns `timeline_window`, `candidates`, and `trip_options` |
 | `GET` | `/.well-known/google-connected-apps` | Google Connected Console domain verification JSON |
 | `GET` | `/privacy` | Static Privacy Policy HTML page |
 | `GET` | `/terms` | Static Terms of Service HTML page |
