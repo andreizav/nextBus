@@ -1273,14 +1273,21 @@ class SupabaseService {
     if (/טירת|тират|tirat/.test(q)) return ['טירת כרמל', 'tirat carmel'];
     if (/תל.?אביב|тель.?авив|tel.?aviv|\btlv\b/.test(q)) return ['תל אביב', 'tel aviv'];
     if (/ירושלים|иерусалим|jerusalem/.test(q)) return ['ירושלים', 'jerusalem'];
+    if (/אילת|эйлат|eilat/.test(q)) return ['אילת', 'eilat'];
+    if (/באר.?שבע|беэр.?шев|beer.?sheva/.test(q)) return ['באר שבע', "be'er sheva", 'beer sheva'];
+    if (/דימונה|димон|dimona/.test(q)) return ['דימונה', 'dimona'];
+    if (/מצפה.?רמון|мицпе.?рамон|mitzpe.?ramon/.test(q)) return ['מצפה רמון', 'mitzpe ramon'];
     if (/אשדוד|ашдод|ashdod/.test(q)) return ['אשדוד', 'ashdod'];
     if (/קריית.?גת|קרית.?גת|кирьят.?гат|kiryat.?gat/.test(q)) return ['קריית גת', 'kiryat gat'];
     if (/נתניה|нетани|netanya/.test(q)) return ['נתניה', 'netanya'];
     if (/אשקלון|ашкелон|ashkelon/.test(q)) return ['אשקלון', 'ashkelon'];
-    if (/באר.?שבע|беэр.?шев|beer.?sheva/.test(q)) return ['באר שבע', 'beer sheva'];
     if (/חדרה|хадер|hadera/.test(q)) return ['חדרה', 'hadera'];
     if (/עכו|акко|acre|akko/.test(q)) return ['עכו', 'acre', 'akko'];
     if (/נהריה|нагари|nahariya/.test(q)) return ['נהריה', 'nahariya'];
+    if (/ראשון.?לציון|ришон|rishon/.test(q)) return ['ראשון לציון', 'rishon lezion'];
+    if (/רחובות|реховот|rehovot/.test(q)) return ['רחובות', 'rehovot'];
+    if (/פתח.?תקווה|петах|petah/.test(q)) return ['פתח תקווה', 'petah tikva'];
+    if (/הרצליה|герцли|herzliya/.test(q)) return ['הרצליה', 'herzliya'];
     return [cityName.trim()];
   }
 

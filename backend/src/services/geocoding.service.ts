@@ -34,7 +34,9 @@ const KNOWN_CITIES: Array<{ canonical: string; regex: RegExp; cityTokenRegex: Re
   { canonical: 'רחובות', regex: /^(?:רחובות|реховот[аеу]?|rehovot)$/i, cityTokenRegex: /(?:רחובות|реховот[аеу]?|rehovot)/i },
   { canonical: 'פתח תקווה', regex: /^(?:פתח\s*תקווה|петах[- ]?тикв[аеу]|petah\s*tikva)$/i, cityTokenRegex: /(?:פתח\s*תקווה|петах[- ]?тикв[аеу]|petah\s*tikva)/i },
   { canonical: 'הרצליה', regex: /^(?:הרצליה|герцли[яию]|herzliya)$/i, cityTokenRegex: /(?:הרצליה|герцли[яию]|herzliya)/i },
-  { canonical: 'אילת', regex: /^(?:אילת|эйлат[аеу]?|eilat)$/i, cityTokenRegex: /(?:אילת|эйлат[аеу]?|eilat)/i }
+  { canonical: 'אילת', regex: /^(?:אילת|эйлат[аеу]?|eilat)$/i, cityTokenRegex: /(?:אילת|эйлат[аеу]?|eilat)/i },
+  { canonical: 'דימונה', regex: /^(?:דימונה|димон[аеу]|dimona)$/i, cityTokenRegex: /(?:דימונה|димон[аеу]|dimona)/i },
+  { canonical: 'מצפה רמון', regex: /^(?:מצפה\s*רמון|мицпе[- ]?рамон[аеу]?|mitzpe\s*ramon)$/i, cityTokenRegex: /(?:מצפה\s*רמון|мицпе[- ]?рамон[аеу]?|mitzpe\s*ramon)/i }
 ];
 
 const KNOWN_STREET_ROOTS =
@@ -174,6 +176,20 @@ const ISRAEL_GAZETTEER: IsraelLandmark[] = [
     lon: 34.7966,
     place_name: 'Беэр-Шева (באר שבע)',
     formatted_address: 'Yitzhak Rager Blvd, Beer Sheva, Israel'
+  },
+  {
+    patterns: [/димон[аеу]|dimona|דימונה/i],
+    lat: 31.0700,
+    lon: 35.0330,
+    place_name: 'Димона (דימונה — תחנה מרכזית)',
+    formatted_address: 'Dimona Central Bus Station, Israel'
+  },
+  {
+    patterns: [/мицпе[- ]?рамон|mitzpe\s*ramon|מצפה\s*רמון/i],
+    lat: 30.6100,
+    lon: 34.8010,
+    place_name: 'Мицпе-Рамон (מצפה רמון)',
+    formatted_address: 'Mitzpe Ramon, Israel'
   },
   {
     patterns: [/ришон[- ]?ле[- ]?цион|rishon\s*lezion|ראשון\s*לציון/i],
@@ -445,7 +461,7 @@ function stripLeadingDirectionPreposition(text: string): string {
   const stripped = trimmed
     .replace(/^(?:в|во|до|на|к|по|to)\s+/i, '')
     .trim();
-  if (/^ל(?:רחוב|מרכז|חיפה|תל|ירושלים|אשדוד|קריית|נתניה|טירת|באר|אשקלון|חדרה|אילת)/.test(stripped)) {
+  if (/^ל(?:רחוב|מרכז|חיפה|תל|ירושלים|אשדוד|קריית|נתניה|טירת|באר|אשקלון|חדרה|אילת|דימונה|מצפה)/.test(stripped)) {
     return stripped.slice(1).trim();
   }
   return stripped || trimmed;
@@ -564,9 +580,12 @@ export async function resolveDestinationText(
   }
 
   const queryHash = computeQueryHash(trimmed);
-  const cacheKey = `geo:v2:cache:${queryHash}`;
+  const cacheKey = `geo:cache:${queryHash}`;
+  const legacyCacheKey = `geo:v2:cache:${queryHash}`;
 
-  const cached = await redisService.getJson<GeocodedDestination>(cacheKey);
+  const cached =
+    (await redisService.getJson<GeocodedDestination>(cacheKey)) ??
+    (await redisService.getJson<GeocodedDestination>(legacyCacheKey));
   if (cached) {
     return { ...cached, source: 'cache' };
   }
@@ -574,7 +593,7 @@ export async function resolveDestinationText(
   let resolved: GeocodedDestination | null = null;
   const apiKey = process.env.GOOGLE_MAPS_API_KEY?.trim();
 
-  // 1. City-only -> Central Bus Station / Hub via GTFS/PostGIS
+  // Layer 1a: City-only -> Central Bus Station / Hub via GTFS/PostGIS (Supabase first)
   if (classification.granularity === 'city' && classification.cityName) {
     const centralStop = await supabaseService.findCentralStopForCity(classification.cityName);
     if (centralStop) {
@@ -591,7 +610,7 @@ export async function resolveDestinationText(
     }
   }
 
-  // 2. Street-only (no house number, no POI) -> Most popular stop on street + alternatives
+  // Layer 1b: Street-only -> Most popular stop on street + alternatives via GTFS/PostGIS
   if (!resolved && classification.granularity === 'street') {
     const streetStops = await supabaseService.findPopularStopOnStreet(
       classification.streetName || trimmed,
@@ -616,13 +635,7 @@ export async function resolveDestinationText(
     }
   }
 
-  // 3. Specific address / POI (or fallback when GTFS has no city/street hub) -> Geocoders
-  if (!resolved && apiKey && !apiKey.startsWith('your-')) {
-    resolved = await queryGooglePlacesOrGeocoding(trimmed, userLocation, apiKey);
-  }
-
-  // For specific numbered addresses (e.g. "Хорев 12, Хайфа"), prefer exact geocoder/Nominatim coordinates
-  // before falling back to generic street landmarks in the offline gazetteer.
+  // Layer 1c: Local Israel Gazetteer for known landmarks & cities (skipped for exact numbered addresses)
   if (!resolved && classification.granularity !== 'address') {
     const landmark = ISRAEL_GAZETTEER.find((item) =>
       item.patterns.some((pattern) => pattern.test(trimmed))
@@ -638,8 +651,13 @@ export async function resolveDestinationText(
     }
   }
 
+  // Layer 3 (Fallback Geocoder): Free OpenStreetMap Nominatim first, then optional GOOGLE_MAPS_API_KEY
   if (!resolved) {
     resolved = await queryNominatim(trimmed, userLocation);
+  }
+
+  if (!resolved && apiKey && !apiKey.startsWith('your-')) {
+    resolved = await queryGooglePlacesOrGeocoding(trimmed, userLocation, apiKey);
   }
 
   if (!resolved) {
@@ -658,7 +676,6 @@ export async function resolveDestinationText(
   }
 
   if (!resolved) {
-    // Still avoid silently snapping to userLocation; check Nominatim without city restriction or keep exact label
     resolved = {
       lat: userLocation.lat,
       lon: userLocation.lon,

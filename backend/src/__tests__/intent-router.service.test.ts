@@ -200,6 +200,14 @@ describe('Intent Router & Conversational Query Parsing', () => {
       expect(classifyDestinationGranularity('на улицу Хорев')).toMatchObject({
         granularity: 'street'
       });
+      expect(classifyDestinationGranularity('в Эйлат')).toMatchObject({
+        granularity: 'city',
+        cityName: 'אילת'
+      });
+      expect(classifyDestinationGranularity('в Беэр-Шеву')).toMatchObject({
+        granularity: 'city',
+        cityName: 'באר שבע'
+      });
     });
 
     it('resolves city -> central stop and street -> most popular stop with alternatives', async () => {
@@ -426,6 +434,58 @@ describe('Intent Router & Conversational Query Parsing', () => {
         expect(confirmedRes.intent_type).toBe('TRIP_PLANNER');
         expect(confirmedRes.route.short_name).toBe('480');
         expect(directSpy).toHaveBeenCalledWith(32.0837, 34.7978, 31.789, 35.203, 600);
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
+
+    it('resolves Eilat and Be\'er Sheva via Layer 1 GTFS central bus station and caches geo:cache with 24h TTL', async () => {
+      vi.spyOn(redisService, 'getJson').mockResolvedValue(null);
+      const setJsonSpy = vi.spyOn(redisService, 'setJson').mockResolvedValue(undefined);
+      const centralSpy = vi
+        .spyOn(supabaseService, 'findCentralStopForCity')
+        .mockImplementation(async (city) => {
+          if (city === 'אילת') {
+            return {
+              stop_id: 'stop-59001',
+              stop_code: '59001',
+              stop_name: 'Eilat - Central Bus Station',
+              stop_name_he: 'אילת - תחנה מרכזית',
+              lat: 29.5569,
+              lon: 34.9498,
+              routes_count: 4,
+              is_central_hub: true
+            };
+          }
+          if (city === 'באר שבע') {
+            return {
+              stop_id: 'stop-53001',
+              stop_code: '53001',
+              stop_name: "Be'er Sheva - Central Bus Station",
+              stop_name_he: 'באר שבע - תחנה מרכזית',
+              lat: 31.2439,
+              lon: 34.7966,
+              routes_count: 6,
+              is_central_hub: true
+            };
+          }
+          return null;
+        });
+      const fetchSpy = vi.spyOn(globalThis, 'fetch');
+
+      try {
+        const eilat = await resolveDestinationText('Эйлат', { lat: 32.7895, lon: 34.964 });
+        expect(eilat.source).toBe('gtfs_db');
+        expect(eilat.resolved_stop?.stop_id).toBe('stop-59001');
+        expect(eilat.lat).toBeCloseTo(29.5569, 4);
+
+        const beerSheva = await resolveDestinationText('Беэр-Шева', { lat: 32.7895, lon: 34.964 });
+        expect(beerSheva.source).toBe('gtfs_db');
+        expect(beerSheva.resolved_stop?.stop_id).toBe('stop-53001');
+        expect(centralSpy).toHaveBeenCalledTimes(2);
+        // External geocoders are NOT called when Layer 1 GTFS resolves the city
+        expect(fetchSpy).not.toHaveBeenCalled();
+        expect(setJsonSpy.mock.calls.some(([k, , ttl]) => String(k).startsWith('geo:cache:') && ttl === 86_400)).toBe(true);
       } finally {
         vi.restoreAllMocks();
       }

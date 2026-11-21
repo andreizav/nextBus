@@ -674,5 +674,73 @@ describe('Trip Planner A -> B matching and Top-3 ranking', () => {
         vi.restoreAllMocks();
       }
     });
+
+    it('returns full GTFS stops & explicit scheduled ETA for Eilat / Be\'er Sheva when Redis bus:state is empty', async () => {
+      vi.spyOn(redisService, 'getCachedRoutePair').mockResolvedValue(null);
+      vi.spyOn(redisService, 'setCachedRoutePair').mockResolvedValue(undefined);
+      vi.spyOn(redisService, 'touchActiveRoute').mockResolvedValue(undefined);
+      vi.spyOn(redisService, 'getBusState').mockResolvedValue(null);
+
+      vi.spyOn(supabaseService, 'findDirectTrips').mockResolvedValue([
+        {
+          route_id: 'stride-10993',
+          route_short_name: '993',
+          route_long_name: 'חיפה - תל אביב - באר שבע - אילת',
+          direction_id: 0,
+          origin_stop_id: 'stop-42362',
+          origin_stop_code: '42362',
+          origin_stop_name: 'Matam (Haifa)',
+          origin_stop_name_he: "מת''מ/ההגנה (חיפה)",
+          origin_stop_sequence: 2,
+          origin_lat: 32.7896,
+          origin_lon: 34.9621,
+          dest_stop_id: 'stop-59001',
+          dest_stop_code: '59001',
+          dest_stop_name: 'Eilat - Central Bus Station',
+          dest_stop_name_he: 'אילת - תחנה מרכזית',
+          dest_stop_sequence: 8,
+          dest_lat: 29.5569,
+          dest_lon: 34.9498,
+          stops_between: 6
+        }
+      ]);
+      vi.spyOn(supabaseService, 'findTransferTrips').mockResolvedValue([]);
+      vi.spyOn(supabaseService, 'getDirectionStopCoords').mockResolvedValue([
+        { stop_id: 'stop-42658', stop_code: '42658', stop_name: 'Hof HaCarmel', stop_name_he: 'חוף הכרמל', stop_sequence: 1, lat: 32.7934, lon: 34.959 },
+        { stop_id: 'stop-42362', stop_code: '42362', stop_name: 'Matam', stop_name_he: "מת''מ/ההגנה", stop_sequence: 2, lat: 32.7896, lon: 34.9621 },
+        { stop_id: 'stop-45003', stop_code: '45003', stop_name: 'Tel Aviv Savidor', stop_name_he: 'תל אביב סבידור', stop_sequence: 3, lat: 32.0837, lon: 34.7978 },
+        { stop_id: 'stop-48001', stop_code: '48001', stop_name: 'Kiryat Gat', stop_name_he: 'קריית גת', stop_sequence: 4, lat: 31.6095, lon: 34.7642 },
+        { stop_id: 'stop-53001', stop_code: '53001', stop_name: "Be'er Sheva CBS", stop_name_he: 'באר שבע - ת. מרכזית', stop_sequence: 5, lat: 31.2439, lon: 34.7966 },
+        { stop_id: 'stop-54001', stop_code: '54001', stop_name: 'Dimona', stop_name_he: 'דימונה', stop_sequence: 6, lat: 31.07, lon: 35.033 },
+        { stop_id: 'stop-55001', stop_code: '55001', stop_name: 'Mitzpe Ramon', stop_name_he: 'מצפה רמון', stop_sequence: 7, lat: 30.61, lon: 34.801 },
+        { stop_id: 'stop-59001', stop_code: '59001', stop_name: 'Eilat CBS', stop_name_he: 'אילת - תחנה מרכזית', stop_sequence: 8, lat: 29.5569, lon: 34.9498 },
+        { stop_id: 'stop-59002', stop_code: '59002', stop_name: 'Eilat Mall HaYam', stop_name_he: 'אילת - מול הים', stop_sequence: 9, lat: 29.5472, lon: 34.9535 }
+      ]);
+
+      try {
+        const res = await planBestBusesToDestination({
+          userLocation: { lat: 32.7895, lon: 34.964 },
+          destination: {
+            lat: 29.5569,
+            lon: 34.9498,
+            place_name: 'אילת - תחנה מרכזית',
+            formatted_address: 'Eilat Central Bus Station, Israel',
+            destination_granularity: 'city'
+          },
+          entryContext: 'standalone',
+          allowColdBootstrap: false
+        });
+
+        expect(res.no_verified_route).toBeUndefined();
+        expect(res.route.short_name).toBe('993');
+        expect(res.nearest_bus?.eta_source).toBe('scheduled');
+        expect(res.nearest_bus?.is_realtime).toBe(false);
+        expect(res.timeline_stops).toHaveLength(9);
+        expect(res.timeline_window?.total_stops_count).toBe(9);
+        expect(res.trip_options).toHaveLength(1);
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
   });
 });
