@@ -5,6 +5,25 @@ const STATE_TTL_SECONDS = 60;
 const ACTIVE_ROUTE_TTL_MS = 15 * 60 * 1000;
 const ACTIVE_ROUTES_KEY = 'bus:active_routes';
 
+export const ROUTE_PAIR_GRID_STEP = 0.0015;
+export const ROUTE_PAIR_TTL_SECONDS = 10_800; // 3 hours
+
+export function snapToRouteGrid(
+  coord: number,
+  step: number = ROUTE_PAIR_GRID_STEP
+): string {
+  return (Math.round(coord / step) * step).toFixed(4);
+}
+
+export function buildRoutePairCacheKey(
+  originLat: number,
+  originLon: number,
+  destLat: number,
+  destLon: number
+): string {
+  return `route:pair:${snapToRouteGrid(originLat)},${snapToRouteGrid(originLon)}:${snapToRouteGrid(destLat)},${snapToRouteGrid(destLon)}`;
+}
+
 export interface ActiveRouteRef {
   routeId: string;
   directionId: 0 | 1;
@@ -109,6 +128,27 @@ class RedisService {
     state: CachedRouteState
   ): Promise<void> {
     await this.setJson(this.stateKey(routeId, directionId), state, STATE_TTL_SECONDS);
+  }
+
+  buildRoutePairCacheKey(
+    originLat: number,
+    originLon: number,
+    destLat: number,
+    destLon: number
+  ): string {
+    return buildRoutePairCacheKey(originLat, originLon, destLat, destLon);
+  }
+
+  async getCachedRoutePair<T = unknown>(cacheKey: string): Promise<T | null> {
+    return this.getJson<T>(cacheKey);
+  }
+
+  async setCachedRoutePair(
+    cacheKey: string,
+    payload: unknown,
+    ttlSec: number = ROUTE_PAIR_TTL_SECONDS
+  ): Promise<void> {
+    await this.setJson(cacheKey, payload, ttlSec);
   }
 
   async touchActiveRoute(routeId: string, directionId: 0 | 1): Promise<void> {

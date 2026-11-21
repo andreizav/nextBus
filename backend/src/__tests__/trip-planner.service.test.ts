@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { buildRoutePairCacheKey, redisService } from '../services/redis.service.js';
+import { supabaseService, type RouteStopCoord } from '../services/supabase.service.js';
 import {
   buildTripOptions,
   calculateTransferTripMetrics,
@@ -6,6 +8,7 @@ import {
   filterApproachingVehicles,
   filterValidDirectionMatches,
   filterValidTransferMatches,
+  planBestBusesToDestination,
   rankTopBusOptions,
   selectBestSingleOption,
   selectTop3MixedOptions
@@ -387,6 +390,140 @@ describe('Trip Planner A -> B matching and Top-3 ranking', () => {
       expect(tripOpts[1].legs.map((l) => l.leg_type)).toEqual(['BOARD_AND_RIDE', 'TRANSFER']);
       expect(tripOpts[1].legs[1].line_number).toBe('17');
       expect(tripOpts[1].legs[1].transfer_wait_min).toBe(4);
+    });
+  });
+
+  describe('Route-Pair Cache (route:pair:...) with live ETA enrichment', () => {
+    it('builds stable grid keys (~150m) for nearby coordinates and separates distant cells', () => {
+      const k1 = buildRoutePairCacheKey(32.7618, 34.9711, 32.7828, 34.9859);
+      const k2 = buildRoutePairCacheKey(32.7621, 34.9708, 32.7831, 34.9857);
+      const kFar = buildRoutePairCacheKey(32.7900, 34.9600, 32.7828, 34.9859);
+
+      expect(k1).toMatch(/^route:pair:-?\d+\.\d{4},-?\d+\.\d{4}:-?\d+\.\d{4},-?\d+\.\d{4}$/);
+      expect(k1).toBe(k2);
+      expect(k1).not.toBe(kFar);
+    });
+
+    it('skips DB topology search on CACHE HIT while recalculating live ETA from Redis bus:state', async () => {
+      const routeStops: RouteStopCoord[] = [
+        { stop_id: 's1', stop_code: '1001', stop_name: 'Stop 1', stop_name_he: 'תחנה 1', stop_sequence: 1, lat: 32.7600, lon: 34.9600 },
+        { stop_id: 's2', stop_code: '1002', stop_name: 'Stop 2', stop_name_he: 'תחנה 2', stop_sequence: 2, lat: 32.7610, lon: 34.9640 },
+        { stop_id: 's3', stop_code: '1003', stop_name: 'Stop 3', stop_name_he: 'תחנה 3', stop_sequence: 3, lat: 32.7615, lon: 34.9670 },
+        { stop_id: 's4', stop_code: '1004', stop_name: 'Stop 4', stop_name_he: 'תחנה 4', stop_sequence: 4, lat: 32.7618, lon: 34.9690 },
+        { stop_id: 's5', stop_code: '1005', stop_name: 'Origin Board', stop_name_he: 'תחנת עלייה', stop_sequence: 5, lat: 32.7621, lon: 34.9711 },
+        { stop_id: 's6', stop_code: '1006', stop_name: 'Stop 6', stop_name_he: 'תחנה 6', stop_sequence: 6, lat: 32.7750, lon: 34.9800 },
+        { stop_id: 's7', stop_code: '1007', stop_name: 'Horev Dest', stop_name_he: 'מרכז חורב', stop_sequence: 7, lat: 32.7832, lon: 34.9859 }
+      ];
+
+      const pairCacheStore = new Map<string, unknown>();
+      let liveBusSeq = 1;
+      let liveBusLat = 32.7600;
+      let liveBusLon = 34.9600;
+
+      const findDirectSpy = vi.spyOn(supabaseService, 'findDirectTrips').mockResolvedValue([
+        {
+          route_id: 'stride-10024',
+          route_short_name: '24',
+          route_long_name: 'Line 24 Express',
+          direction_id: 0,
+          origin_stop_id: 's5',
+          origin_stop_code: '1005',
+          origin_stop_name: 'Origin Board',
+          origin_stop_name_he: 'תחנת עלייה',
+          origin_stop_sequence: 5,
+          origin_lat: 32.7621,
+          origin_lon: 34.9711,
+          dest_stop_id: 's7',
+          dest_stop_code: '1007',
+          dest_stop_name: 'Horev Dest',
+          dest_stop_name_he: 'מרכז חורב',
+          dest_stop_sequence: 7,
+          dest_lat: 32.7832,
+          dest_lon: 34.9859,
+          stops_between: 2
+        }
+      ]);
+      const findTransferSpy = vi.spyOn(supabaseService, 'findTransferTrips').mockResolvedValue([]);
+      const stopsSpy = vi.spyOn(supabaseService, 'getDirectionStopCoords').mockResolvedValue(routeStops);
+      const getPairSpy = vi
+        .spyOn(redisService, 'getCachedRoutePair')
+        .mockImplementation(async (key: string) => (pairCacheStore.get(key) as never) ?? null);
+      const setPairSpy = vi
+        .spyOn(redisService, 'setCachedRoutePair')
+        .mockImplementation(async (key: string, payload: unknown) => {
+          pairCacheStore.set(key, payload);
+        });
+      const touchSpy = vi.spyOn(redisService, 'touchActiveRoute').mockResolvedValue(undefined);
+      const busStateSpy = vi.spyOn(redisService, 'getBusState').mockImplementation(async () => ({
+        route_id: 'stride-10024',
+        direction_id: 0,
+        updated_at: '2026-11-21T12:00:00Z',
+        source: 'fallback',
+        vehicles: [
+          {
+            vehicle_id: 'bus-24-live',
+            lat: liveBusLat,
+            lon: liveBusLon,
+            bearing: 45,
+            recorded_at_time: '2026-11-21T12:00:00Z',
+            current_stop_sequence: liveBusSeq,
+            speed_kmh: 24
+          }
+        ]
+      }));
+
+      try {
+        const destination = {
+          lat: 32.7828,
+          lon: 34.9859,
+          place_name: 'Horev Center',
+          formatted_address: 'Horev 15, Haifa',
+          source: 'cache'
+        };
+
+        // 1st call: CACHE MISS -> queries Supabase & stores topology without ETA
+        const firstRes = await planBestBusesToDestination({
+          userLocation: { lat: 32.7618, lon: 34.9711 },
+          destination,
+          entryContext: 'standalone',
+          allowColdBootstrap: false
+        });
+
+        expect(findDirectSpy).toHaveBeenCalledTimes(1);
+        expect(findTransferSpy).toHaveBeenCalledTimes(1);
+        expect(setPairSpy).toHaveBeenCalledTimes(1);
+        expect(setPairSpy.mock.calls[0]?.[2]).toBe(10_800);
+        const storedJson = JSON.stringify(setPairSpy.mock.calls[0]?.[1]);
+        expect(storedJson).not.toContain('eta_minutes');
+        const firstEta = firstRes.recommended_options?.[0]?.eta_to_boarding_min ?? 99;
+
+        // Advance vehicle closer to boarding stop in live bus:state cache
+        liveBusSeq = 4;
+        liveBusLat = 32.7618;
+        liveBusLon = 34.9690;
+
+        // 2nd call from nearby (~45m) coordinates in same ~150m grid cell: CACHE HIT
+        const secondRes = await planBestBusesToDestination({
+          userLocation: { lat: 32.7621, lon: 34.9708 },
+          destination: { ...destination, lat: 32.7831, lon: 34.9857 },
+          entryContext: 'standalone',
+          allowColdBootstrap: false
+        });
+
+        expect(getPairSpy).toHaveBeenCalledTimes(2);
+        expect(secondRes.cache_hit).toBe(true);
+        // Zero additional Supabase queries on CACHE HIT
+        expect(findDirectSpy).toHaveBeenCalledTimes(1);
+        expect(findTransferSpy).toHaveBeenCalledTimes(1);
+        expect(stopsSpy).toHaveBeenCalledTimes(1);
+        expect(busStateSpy).toHaveBeenCalledTimes(2);
+        expect(touchSpy).toHaveBeenCalledTimes(2);
+
+        const secondEta = secondRes.recommended_options?.[0]?.eta_to_boarding_min ?? 99;
+        expect(secondEta).toBeLessThan(firstEta);
+      } finally {
+        vi.restoreAllMocks();
+      }
     });
   });
 });

@@ -8,7 +8,11 @@ import {
   selectNearestApproachingVehicle
 } from './eta.service.js';
 import { fetchRealNearbyCafes } from './places.service.js';
-import { redisService } from './redis.service.js';
+import {
+  ROUTE_PAIR_TTL_SECONDS,
+  buildRoutePairCacheKey,
+  redisService
+} from './redis.service.js';
 import { buildStaticMapUrl } from './static-map.service.js';
 import { fetchLiveVehiclesFromStride } from './stride.service.js';
 import {
@@ -575,14 +579,40 @@ function buildHighwayWaypoints(params: {
   return hubFirst ? [...base, farNode] : [farNode, ...base.slice().reverse()];
 }
 
+export interface CachedRoutePairPayload {
+  cached_at: string;
+  direct_matches: DirectRouteMatch[];
+  transfer_matches: TransferRouteMatch[];
+  two_transfer_matches: TwoTransferTripMatch[];
+  intercity_feeder_matches?: DirectRouteMatch[];
+  intercity_reverse_feeder_matches?: DirectRouteMatch[];
+  direction_stops_cache: Record<string, RouteStopCoord[]>;
+}
+
 async function synthesizeIntercityWithFeeders(params: {
   userLocation: { lat: number; lon: number };
   destination: GeocodedDestination;
   distToDestKm: number;
   now: Date;
   allowColdBootstrap: boolean;
-}): Promise<RecommendedBusOption[]> {
-  const { userLocation, destination, distToDestKm, now, allowColdBootstrap } = params;
+  cachedFeederMatches?: DirectRouteMatch[];
+  cachedReverseFeederMatches?: DirectRouteMatch[];
+  loadStops: (routeId: string, directionId: 0 | 1) => Promise<RouteStopCoord[]>;
+}): Promise<{
+  options: RecommendedBusOption[];
+  feederMatches?: DirectRouteMatch[];
+  reverseFeederMatches?: DirectRouteMatch[];
+}> {
+  const {
+    userLocation,
+    destination,
+    distToDestKm,
+    now,
+    allowColdBootstrap,
+    cachedFeederMatches,
+    cachedReverseFeederMatches,
+    loadStops
+  } = params;
 
   const distOriginToHofM = haversineDistanceMeters(
     userLocation.lat,
@@ -608,15 +638,17 @@ async function synthesizeIntercityWithFeeders(params: {
 
   // Case A: Local origin (e.g. Tirat Carmel) -> Intercity destination (e.g. Ashdod) via Bus 49 + 900/940
   if (distOriginToHofM > 450 && distOriginToHofM <= 15000) {
-    const rawFeeders = filterValidDirectionMatches(
-      await supabaseService.findDirectTrips(
-        userLocation.lat,
-        userLocation.lon,
-        HOF_HACARMEL_HUB.lat,
-        HOF_HACARMEL_HUB.lon,
-        650
-      )
-    );
+    const rawFeeders =
+      cachedFeederMatches ??
+      filterValidDirectionMatches(
+        await supabaseService.findDirectTrips(
+          userLocation.lat,
+          userLocation.lon,
+          HOF_HACARMEL_HUB.lat,
+          HOF_HACARMEL_HUB.lon,
+          650
+        )
+      );
 
     const uniqueByRoute = new Map<string, DirectRouteMatch>();
     for (const m of rawFeeders) {
@@ -658,7 +690,7 @@ async function synthesizeIntercityWithFeeders(params: {
 
       const options: RecommendedBusOption[] = [];
       for (const match of sortedFeeders) {
-        const allStops = await supabaseService.getDirectionStopCoords(match.route_id, match.direction_id);
+        const allStops = await loadStops(match.route_id, match.direction_id);
         const closestOrigin = findClosestValidOriginStop(
           allStops,
           userLocation.lat,
@@ -714,7 +746,8 @@ async function synthesizeIntercityWithFeeders(params: {
           match.direction_id,
           originSeq,
           match.dest_stop_sequence,
-          leg1Bus.busInfo.current_stop_sequence
+          leg1Bus.busInfo.current_stop_sequence,
+          loadStops
         );
 
         const alightStop: UserStopInfo = {
@@ -820,21 +853,26 @@ async function synthesizeIntercityWithFeeders(params: {
         });
       }
 
-      return rankTopBusOptions(options, 3);
+      return {
+        options: rankTopBusOptions(options, 3),
+        feederMatches: rawFeeders
+      };
     }
   }
 
   // Case B: Reverse intercity (e.g. Ashdod -> Hof HaCarmel on 900/940 -> Feeder 49 to Tirat Carmel)
   if (distOriginToHofM > 15000 && distDestToHofM > 450 && distDestToHofM <= 15000) {
-    const rawReverseFeeders = filterValidDirectionMatches(
-      await supabaseService.findDirectTrips(
-        HOF_HACARMEL_HUB.lat,
-        HOF_HACARMEL_HUB.lon,
-        destination.lat,
-        destination.lon,
-        650
-      )
-    );
+    const rawReverseFeeders =
+      cachedReverseFeederMatches ??
+      filterValidDirectionMatches(
+        await supabaseService.findDirectTrips(
+          HOF_HACARMEL_HUB.lat,
+          HOF_HACARMEL_HUB.lon,
+          destination.lat,
+          destination.lon,
+          650
+        )
+      );
 
     const uniqueReverseByRoute = new Map<string, DirectRouteMatch>();
     for (const m of rawReverseFeeders) {
@@ -867,7 +905,7 @@ async function synthesizeIntercityWithFeeders(params: {
 
       const options: RecommendedBusOption[] = [];
       for (const match of sortedFeeders) {
-        const leg2StopsList = await supabaseService.getDirectionStopCoords(match.route_id, match.direction_id);
+        const leg2StopsList = await loadStops(match.route_id, match.direction_id);
         const leg2State = (await resolveRouteLiveState(match.route_id, match.direction_id, allowColdBootstrap)).state;
         const leg2Bus = buildBusInfoForStop(
           leg2StopsList,
@@ -900,7 +938,8 @@ async function synthesizeIntercityWithFeeders(params: {
           match.direction_id,
           match.origin_stop_sequence,
           match.dest_stop_sequence,
-          leg2Bus.busInfo.current_stop_sequence
+          leg2Bus.busInfo.current_stop_sequence,
+          loadStops
         );
 
         const originStop: UserStopInfo = {
@@ -1005,7 +1044,10 @@ async function synthesizeIntercityWithFeeders(params: {
         });
       }
 
-      return rankTopBusOptions(options, 3);
+      return {
+        options: rankTopBusOptions(options, 3),
+        reverseFeederMatches: rawReverseFeeders
+      };
     }
   }
 
@@ -1031,56 +1073,58 @@ async function synthesizeIntercityWithFeeders(params: {
     status: idx === 0 ? ('user_stop' as const) : ('upcoming' as const)
   }));
 
-  return [
-    {
-      rank: 1,
-      is_transfer: false,
-      route: {
-        route_id: intercityRouteId,
-        short_name: intercityShortName,
-        long_name: `בין-עירוני: חוף הכרמל ➔ ${destination.place_name}`,
-        direction_id: 0,
-        direction_label: `${destination.place_name} (~${distToDestKm} км)`,
-        available_directions: []
-      },
-      origin_stop: {
-        stop_id: HOF_HACARMEL_HUB.stop_id,
-        stop_code: HOF_HACARMEL_HUB.stop_code,
-        stop_name: HOF_HACARMEL_HUB.stop_name,
-        stop_name_he: HOF_HACARMEL_HUB.stop_name_he,
-        stop_sequence: 1,
-        lat: HOF_HACARMEL_HUB.lat,
-        lon: HOF_HACARMEL_HUB.lon,
-        distance_meters: Math.round(distOriginToHofM)
-      },
-      dest_stop: {
-        stop_id: waypoints[waypoints.length - 1].stop_id,
-        stop_code: waypoints[waypoints.length - 1].stop_code,
-        stop_name: destination.place_name,
-        stop_name_he: destination.place_name,
-        stop_sequence: waypoints.length,
-        lat: destination.lat,
-        lon: destination.lon
-      },
-      bus: {
-        vehicle_id: isJerusalem ? 'egged-940-exp' : 'egged-900-exp',
-        lat: HOF_HACARMEL_HUB.lat,
-        lon: HOF_HACARMEL_HUB.lon,
-        bearing: 180,
-        recorded_at_time: now.toISOString(),
-        current_stop_sequence: 1,
-        speed_kmh: 75,
-        stops_away: 1,
-        eta_minutes: 5
-      },
-      eta_to_boarding_min: 5,
-      stops_between: waypoints.length,
-      ride_duration_min: rideMin,
-      total_arrival_min: rideMin + 5,
-      estimated_arrival_time: formatTimeHHMM(arrivalDate),
-      timeline_stops: timelineStops
-    }
-  ];
+  return {
+    options: [
+      {
+        rank: 1,
+        is_transfer: false,
+        route: {
+          route_id: intercityRouteId,
+          short_name: intercityShortName,
+          long_name: `בין-עירוני: חוף הכרמל ➔ ${destination.place_name}`,
+          direction_id: 0,
+          direction_label: `${destination.place_name} (~${distToDestKm} км)`,
+          available_directions: []
+        },
+        origin_stop: {
+          stop_id: HOF_HACARMEL_HUB.stop_id,
+          stop_code: HOF_HACARMEL_HUB.stop_code,
+          stop_name: HOF_HACARMEL_HUB.stop_name,
+          stop_name_he: HOF_HACARMEL_HUB.stop_name_he,
+          stop_sequence: 1,
+          lat: HOF_HACARMEL_HUB.lat,
+          lon: HOF_HACARMEL_HUB.lon,
+          distance_meters: Math.round(distOriginToHofM)
+        },
+        dest_stop: {
+          stop_id: waypoints[waypoints.length - 1].stop_id,
+          stop_code: waypoints[waypoints.length - 1].stop_code,
+          stop_name: destination.place_name,
+          stop_name_he: destination.place_name,
+          stop_sequence: waypoints.length,
+          lat: destination.lat,
+          lon: destination.lon
+        },
+        bus: {
+          vehicle_id: isJerusalem ? 'egged-940-exp' : 'egged-900-exp',
+          lat: HOF_HACARMEL_HUB.lat,
+          lon: HOF_HACARMEL_HUB.lon,
+          bearing: 180,
+          recorded_at_time: now.toISOString(),
+          current_stop_sequence: 1,
+          speed_kmh: 75,
+          stops_away: 1,
+          eta_minutes: 5
+        },
+        eta_to_boarding_min: 5,
+        stops_between: waypoints.length,
+        ride_duration_min: rideMin,
+        total_arrival_min: rideMin + 5,
+        estimated_arrival_time: formatTimeHHMM(arrivalDate),
+        timeline_stops: timelineStops
+      }
+    ]
+  };
 }
 
 async function buildLegTimelineSlice(
@@ -1088,9 +1132,11 @@ async function buildLegTimelineSlice(
   directionId: 0 | 1,
   startSequence: number,
   endSequence: number,
-  busSequence: number
+  busSequence: number,
+  loadStops: (r: string, d: 0 | 1) => Promise<RouteStopCoord[]> = (r, d) =>
+    supabaseService.getDirectionStopCoords(r, d)
 ) {
-  const allStops = await supabaseService.getDirectionStopCoords(routeId, directionId);
+  const allStops = await loadStops(routeId, directionId);
   const minSeq = Math.max(1, Math.min(busSequence, startSequence));
   const slice = allStops.filter((s) => s.stop_sequence >= minSeq && s.stop_sequence <= endSequence);
   const chosen = slice.length > 0 ? slice : allStops;
@@ -1131,74 +1177,120 @@ export async function planBestBusesToDestination(
 ): Promise<LiveBusStatusResponse> {
   const { userLocation, destination, entryContext, routeIdsFilter, allowColdBootstrap = true } = params;
 
-  const [rawDirect, rawTransfersAll] = await Promise.all([
-    supabaseService.findDirectTrips(
-      userLocation.lat,
-      userLocation.lon,
-      destination.lat,
-      destination.lon,
-      650
-    ),
-    supabaseService.findTransferTrips(
-      userLocation.lat,
-      userLocation.lon,
-      destination.lat,
-      destination.lon,
-      650,
-      2
-    )
-  ]);
-
-  const rawTransfer: TransferRouteMatch[] = rawTransfersAll
-    .filter((t) => Number(t.transfers_count ?? 1) === 1)
-    .map((t) => ({
-      leg1_route_id: t.leg1_route_id,
-      leg1_route_short_name: t.leg1_route_short_name,
-      leg1_route_long_name: t.leg1_route_long_name,
-      leg1_direction_id: t.leg1_direction_id,
-      origin_stop_id: t.origin_stop_id,
-      origin_stop_code: t.origin_stop_code,
-      origin_stop_name: t.origin_stop_name,
-      origin_stop_name_he: t.origin_stop_name_he,
-      origin_stop_sequence: t.origin_stop_sequence,
-      origin_lat: t.origin_lat,
-      origin_lon: t.origin_lon,
-      xfer_alight_stop_id: t.xfer1_alight_stop_id,
-      xfer_alight_stop_code: t.xfer1_alight_stop_code,
-      xfer_alight_stop_name: t.xfer1_alight_stop_name,
-      xfer_alight_stop_name_he: t.xfer1_alight_stop_name_he,
-      xfer_alight_stop_sequence: t.xfer1_alight_stop_sequence,
-      xfer_alight_lat: t.xfer1_alight_lat,
-      xfer_alight_lon: t.xfer1_alight_lon,
-      leg1_stops_between: t.leg1_stops_between,
-      transfer_walk_meters_actual: t.xfer1_walk_meters,
-      leg2_route_id: t.leg2_route_id,
-      leg2_route_short_name: t.leg2_route_short_name,
-      leg2_route_long_name: t.leg2_route_long_name,
-      leg2_direction_id: t.leg2_direction_id,
-      xfer_board_stop_id: t.xfer1_board_stop_id,
-      xfer_board_stop_code: t.xfer1_board_stop_code,
-      xfer_board_stop_name: t.xfer1_board_stop_name,
-      xfer_board_stop_name_he: t.xfer1_board_stop_name_he,
-      xfer_board_stop_sequence: t.xfer1_board_stop_sequence,
-      xfer_board_lat: t.xfer1_board_lat,
-      xfer_board_lon: t.xfer1_board_lon,
-      dest_stop_id: t.dest_stop_id,
-      dest_stop_code: t.dest_stop_code,
-      dest_stop_name: t.dest_stop_name,
-      dest_stop_name_he: t.dest_stop_name_he,
-      dest_stop_sequence: t.dest_stop_sequence,
-      dest_lat: t.dest_lat,
-      dest_lon: t.dest_lon,
-      leg2_stops_between: t.leg2_stops_between
-    }));
-
-  const twoTransferRows: TwoTransferTripMatch[] = rawTransfersAll.filter(
-    (t) => Number(t.transfers_count ?? 1) === 2 && Boolean(t.leg3_route_id)
+  const pairCacheKey = buildRoutePairCacheKey(
+    userLocation.lat,
+    userLocation.lon,
+    destination.lat,
+    destination.lon
   );
+  const cachedPair = await redisService.getCachedRoutePair<CachedRoutePairPayload>(pairCacheKey);
 
-  let directMatches = filterValidDirectionMatches(rawDirect);
-  let transferMatches = filterValidTransferMatches(rawTransfer);
+  const directionStopsMap = new Map<string, RouteStopCoord[]>();
+  if (cachedPair?.direction_stops_cache) {
+    for (const [k, v] of Object.entries(cachedPair.direction_stops_cache)) {
+      directionStopsMap.set(k, v);
+    }
+  }
+
+  const getDirectionStops = async (
+    routeId: string,
+    directionId: 0 | 1
+  ): Promise<RouteStopCoord[]> => {
+    const key = `${routeId}:${directionId}`;
+    const cached = directionStopsMap.get(key);
+    if (cached) return cached;
+    const loaded = await supabaseService.getDirectionStopCoords(routeId, directionId);
+    directionStopsMap.set(key, loaded);
+    return loaded;
+  };
+
+  let routePairCacheHit = false;
+  let directMatches: DirectRouteMatch[] = [];
+  let transferMatches: TransferRouteMatch[] = [];
+  let twoTransferRows: TwoTransferTripMatch[] = [];
+
+  if (cachedPair) {
+    routePairCacheHit = true;
+    directMatches = cachedPair.direct_matches ?? [];
+    transferMatches = cachedPair.transfer_matches ?? [];
+    twoTransferRows = cachedPair.two_transfer_matches ?? [];
+    console.log(
+      `[TripPlanner] Route-pair CACHE HIT (${pairCacheKey}) — reusing static topology, refreshing live Redis ETAs`
+    );
+  } else {
+    const [rawDirect, rawTransfersAll] = await Promise.all([
+      supabaseService.findDirectTrips(
+        userLocation.lat,
+        userLocation.lon,
+        destination.lat,
+        destination.lon,
+        650
+      ),
+      supabaseService.findTransferTrips(
+        userLocation.lat,
+        userLocation.lon,
+        destination.lat,
+        destination.lon,
+        650,
+        2
+      )
+    ]);
+
+    const rawTransfer: TransferRouteMatch[] = rawTransfersAll
+      .filter((t) => Number(t.transfers_count ?? 1) === 1)
+      .map((t) => ({
+        leg1_route_id: t.leg1_route_id,
+        leg1_route_short_name: t.leg1_route_short_name,
+        leg1_route_long_name: t.leg1_route_long_name,
+        leg1_direction_id: t.leg1_direction_id,
+        origin_stop_id: t.origin_stop_id,
+        origin_stop_code: t.origin_stop_code,
+        origin_stop_name: t.origin_stop_name,
+        origin_stop_name_he: t.origin_stop_name_he,
+        origin_stop_sequence: t.origin_stop_sequence,
+        origin_lat: t.origin_lat,
+        origin_lon: t.origin_lon,
+        xfer_alight_stop_id: t.xfer1_alight_stop_id,
+        xfer_alight_stop_code: t.xfer1_alight_stop_code,
+        xfer_alight_stop_name: t.xfer1_alight_stop_name,
+        xfer_alight_stop_name_he: t.xfer1_alight_stop_name_he,
+        xfer_alight_stop_sequence: t.xfer1_alight_stop_sequence,
+        xfer_alight_lat: t.xfer1_alight_lat,
+        xfer_alight_lon: t.xfer1_alight_lon,
+        leg1_stops_between: t.leg1_stops_between,
+        transfer_walk_meters_actual: t.xfer1_walk_meters,
+        leg2_route_id: t.leg2_route_id,
+        leg2_route_short_name: t.leg2_route_short_name,
+        leg2_route_long_name: t.leg2_route_long_name,
+        leg2_direction_id: t.leg2_direction_id,
+        xfer_board_stop_id: t.xfer1_board_stop_id,
+        xfer_board_stop_code: t.xfer1_board_stop_code,
+        xfer_board_stop_name: t.xfer1_board_stop_name,
+        xfer_board_stop_name_he: t.xfer1_board_stop_name_he,
+        xfer_board_stop_sequence: t.xfer1_board_stop_sequence,
+        xfer_board_lat: t.xfer1_board_lat,
+        xfer_board_lon: t.xfer1_board_lon,
+        dest_stop_id: t.dest_stop_id,
+        dest_stop_code: t.dest_stop_code,
+        dest_stop_name: t.dest_stop_name,
+        dest_stop_name_he: t.dest_stop_name_he,
+        dest_stop_sequence: t.dest_stop_sequence,
+        dest_lat: t.dest_lat,
+        dest_lon: t.dest_lon,
+        leg2_stops_between: t.leg2_stops_between
+      }));
+
+    twoTransferRows = rawTransfersAll.filter(
+      (t) => Number(t.transfers_count ?? 1) === 2 && Boolean(t.leg3_route_id)
+    );
+
+    directMatches = filterValidDirectionMatches(rawDirect);
+    transferMatches = filterValidTransferMatches(rawTransfer);
+  }
+
+  const unfilteredDirect = directMatches;
+  const unfilteredTransfer = transferMatches;
+  const unfilteredTwoTransfer = twoTransferRows;
 
   if (routeIdsFilter && routeIdsFilter.length > 0) {
     const filteredDirect = directMatches.filter((m) => routeIdsFilter.includes(m.route_id));
@@ -1243,7 +1335,7 @@ export async function planBestBusesToDestination(
   const directCandidates: RecommendedBusOption[] = [];
 
   for (const match of directMatches) {
-    const allStops = await supabaseService.getDirectionStopCoords(match.route_id, match.direction_id);
+    const allStops = await getDirectionStops(match.route_id, match.direction_id);
     const closestOrigin = findClosestValidOriginStop(
       allStops,
       userLocation.lat,
@@ -1281,7 +1373,8 @@ export async function planBestBusesToDestination(
       match.direction_id,
       originSeq,
       match.dest_stop_sequence,
-      busInfo.current_stop_sequence
+      busInfo.current_stop_sequence,
+      getDirectionStops
     );
 
     directCandidates.push({
@@ -1347,8 +1440,8 @@ export async function planBestBusesToDestination(
   const transferCandidates: RecommendedBusOption[] = [];
   for (const match of orderedTransferMatches) {
     const [leg1AllStops, leg2AllStops] = await Promise.all([
-      supabaseService.getDirectionStopCoords(match.leg1_route_id, match.leg1_direction_id),
-      supabaseService.getDirectionStopCoords(match.leg2_route_id, match.leg2_direction_id)
+      getDirectionStops(match.leg1_route_id, match.leg1_direction_id),
+      getDirectionStops(match.leg2_route_id, match.leg2_direction_id)
     ]);
 
     const closestOrigin = findClosestValidOriginStop(
@@ -1414,14 +1507,16 @@ export async function planBestBusesToDestination(
         match.leg1_direction_id,
         originSeq,
         match.xfer_alight_stop_sequence,
-        leg1Bus.busInfo.current_stop_sequence
+        leg1Bus.busInfo.current_stop_sequence,
+        getDirectionStops
       ),
       buildLegTimelineSlice(
         match.leg2_route_id,
         match.leg2_direction_id,
         match.xfer_board_stop_sequence,
         match.dest_stop_sequence,
-        leg2Bus.busInfo.current_stop_sequence
+        leg2Bus.busInfo.current_stop_sequence,
+        getDirectionStops
       )
     ]);
 
@@ -1547,9 +1642,9 @@ export async function planBestBusesToDestination(
       const leg3Dir: 0 | 1 = Number(row.leg3_direction_id) === 1 ? 1 : 0;
 
       const [leg1Stops, leg2Stops, leg3Stops] = await Promise.all([
-        supabaseService.getDirectionStopCoords(row.leg1_route_id, leg1Dir),
-        supabaseService.getDirectionStopCoords(row.leg2_route_id, leg2Dir),
-        supabaseService.getDirectionStopCoords(row.leg3_route_id, leg3Dir)
+        getDirectionStops(row.leg1_route_id, leg1Dir),
+        getDirectionStops(row.leg2_route_id, leg2Dir),
+        getDirectionStops(row.leg3_route_id, leg3Dir)
       ]);
       const leg1State = (await resolveRouteLiveState(row.leg1_route_id, leg1Dir, allowColdBootstrap)).state;
       const leg1Bus = buildBusInfoForStop(
@@ -1674,14 +1769,16 @@ export async function planBestBusesToDestination(
         leg1Dir,
         row.origin_stop_sequence,
         row.xfer1_alight_stop_sequence,
-        leg1Bus.busInfo.current_stop_sequence
+        leg1Bus.busInfo.current_stop_sequence,
+        getDirectionStops
       );
       const leg2Timeline = await buildLegTimelineSlice(
         row.leg2_route_id,
         leg2Dir,
         row.xfer1_board_stop_sequence,
         row.xfer2_alight_stop_sequence ?? row.dest_stop_sequence,
-        leg2Bus.busInfo.current_stop_sequence
+        leg2Bus.busInfo.current_stop_sequence,
+        getDirectionStops
       );
 
       transferCandidates.push({
@@ -1836,14 +1933,54 @@ export async function planBestBusesToDestination(
   );
 
   let effectiveOptions = selectedOptions;
+  let intercityFeederMatches: DirectRouteMatch[] | undefined;
+  let intercityReverseFeederMatches: DirectRouteMatch[] | undefined;
+
   if (effectiveOptions.length === 0 && distToDestKm > 15) {
-    effectiveOptions = await synthesizeIntercityWithFeeders({
+    const intercityRes = await synthesizeIntercityWithFeeders({
       userLocation,
       destination,
       distToDestKm,
       now,
-      allowColdBootstrap
+      allowColdBootstrap,
+      cachedFeederMatches: cachedPair?.intercity_feeder_matches,
+      cachedReverseFeederMatches: cachedPair?.intercity_reverse_feeder_matches,
+      loadStops: getDirectionStops
     });
+    effectiveOptions = intercityRes.options;
+    intercityFeederMatches = intercityRes.feederMatches;
+    intercityReverseFeederMatches = intercityRes.reverseFeederMatches;
+  }
+
+  if (
+    !routePairCacheHit &&
+    (unfilteredDirect.length > 0 ||
+      unfilteredTransfer.length > 0 ||
+      unfilteredTwoTransfer.length > 0 ||
+      Boolean(intercityFeederMatches?.length) ||
+      Boolean(intercityReverseFeederMatches?.length))
+  ) {
+    const directionStopsCache: Record<string, RouteStopCoord[]> = {};
+    for (const [k, v] of directionStopsMap.entries()) {
+      directionStopsCache[k] = v;
+    }
+
+    const cachePayload: CachedRoutePairPayload = {
+      cached_at: now.toISOString(),
+      direct_matches: unfilteredDirect,
+      transfer_matches: unfilteredTransfer,
+      two_transfer_matches: unfilteredTwoTransfer,
+      ...(intercityFeederMatches ? { intercity_feeder_matches: intercityFeederMatches } : {}),
+      ...(intercityReverseFeederMatches
+        ? { intercity_reverse_feeder_matches: intercityReverseFeederMatches }
+        : {}),
+      direction_stops_cache: directionStopsCache
+    };
+
+    await redisService.setCachedRoutePair(pairCacheKey, cachePayload, ROUTE_PAIR_TTL_SECONDS);
+    console.log(
+      `[TripPlanner] Route-pair CACHE MISS (${pairCacheKey}) — stored static topology in Redis (TTL ${ROUTE_PAIR_TTL_SECONDS}s)`
+    );
   }
 
   const rawOptionsList =
@@ -1912,7 +2049,7 @@ export async function planBestBusesToDestination(
     trip_options: tripOptions,
     render_mode: 'interactive',
     updated_at: now.toISOString(),
-    cache_hit: anyCacheHit,
+    cache_hit: routePairCacheHit || anyCacheHit,
     user_location: userLocation,
     destination,
     recommended_options: recommendedOptions,
