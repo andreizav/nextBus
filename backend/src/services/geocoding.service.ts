@@ -1,8 +1,50 @@
 import crypto from 'node:crypto';
 import { redisService } from './redis.service.js';
-import type { GeocodedDestination } from '../types/bus.types.js';
+import { supabaseService } from './supabase.service.js';
+import type {
+  DestinationGranularity,
+  GeocodedDestination,
+  ResolvedStopOption
+} from '../types/bus.types.js';
 
 const GEO_CACHE_TTL_SECONDS = 86_400; // 24 hours
+
+export interface DestinationClassification {
+  granularity: DestinationGranularity;
+  cleanedQuery: string;
+  cityName?: string;
+  streetName?: string;
+  houseNumber?: string;
+}
+
+const KNOWN_CITIES: Array<{ canonical: string; regex: RegExp; cityTokenRegex: RegExp }> = [
+  { canonical: 'חיפה', regex: /^(?:חיפה|хайф[аеуы]|haifa)$/i, cityTokenRegex: /(?:חיפה|хайф[аеуы]|haifa)/i },
+  { canonical: 'טירת כרמל', regex: /^(?:טירת\s*כרמל|тират[- ]?кармел[ьяе]?|tirat\s*carmel)$/i, cityTokenRegex: /(?:טירת\s*כרמל|тират[- ]?кармел[ьяе]?|tirat\s*carmel)/i },
+  { canonical: 'תל אביב', regex: /^(?:תל[- ]?אביב(?:\s*יפו)?|тель[- ]?авив[аеу]?|tel[- ]?aviv(?:-yafo)?|tlv)$/i, cityTokenRegex: /(?:תל[- ]?אביב|тель[- ]?авив[аеу]?|tel[- ]?aviv|\btlv\b)/i },
+  { canonical: 'ירושלים', regex: /^(?:ירושלים|иерусалим[аеу]?|jerusalem)$/i, cityTokenRegex: /(?:ירושלים|иерусалим[аеу]?|jerusalem)/i },
+  { canonical: 'אשדוד', regex: /^(?:אשדוד|ашдод[аеу]?|ashdod)$/i, cityTokenRegex: /(?:אשדוד|ашдод[аеу]?|ashdod)/i },
+  { canonical: 'קריית גת', regex: /^(?:קרי?ית\s*גת|кирьят[- ]?гат[аеу]?|kiryat\s*gat)$/i, cityTokenRegex: /(?:קרי?ית\s*גת|кирьят[- ]?гат[аеу]?|kiryat\s*gat)/i },
+  { canonical: 'נתניה', regex: /^(?:נתניה|нетани[яию]|netanya)$/i, cityTokenRegex: /(?:נתניה|нетани[яию]|netanya)/i },
+  { canonical: 'באר שבע', regex: /^(?:באר\s*שבע|беэр[- ]?шев[аеу]|beer\s*sheva)$/i, cityTokenRegex: /(?:באר\s*שבע|беэр[- ]?шев[аеу]|beer\s*sheva)/i },
+  { canonical: 'אשקלון', regex: /^(?:אשקלון|ашкелон[аеу]?|ashkelon)$/i, cityTokenRegex: /(?:אשקלון|ашкелон[аеу]?|ashkelon)/i },
+  { canonical: 'חדרה', regex: /^(?:חדרה|хадер[аеу]|hadera)$/i, cityTokenRegex: /(?:חדרה|хадер[аеу]|hadera)/i },
+  { canonical: 'עכו', regex: /^(?:עכו|акко|acre|akko)$/i, cityTokenRegex: /(?:עכו|\bакко\b|\bacre\b|\bakko\b)/i },
+  { canonical: 'נהריה', regex: /^(?:נהריה|нагари[яию]|nahariya)$/i, cityTokenRegex: /(?:נהריה|нагари[яию]|nahariya)/i },
+  { canonical: 'ראשון לציון', regex: /^(?:ראשון\s*לציון|ришон[- ]?ле[- ]?цион[аеу]?|rishon\s*lezion)$/i, cityTokenRegex: /(?:ראשון\s*לציון|ришон[- ]?ле[- ]?цион[аеу]?|rishon\s*lezion)/i },
+  { canonical: 'רחובות', regex: /^(?:רחובות|реховот[аеу]?|rehovot)$/i, cityTokenRegex: /(?:רחובות|реховот[аеу]?|rehovot)/i },
+  { canonical: 'פתח תקווה', regex: /^(?:פתח\s*תקווה|петах[- ]?тикв[аеу]|petah\s*tikva)$/i, cityTokenRegex: /(?:פתח\s*תקווה|петах[- ]?тикв[аеу]|petah\s*tikva)/i },
+  { canonical: 'הרצליה', regex: /^(?:הרצליה|герцли[яию]|herzliya)$/i, cityTokenRegex: /(?:הרצליה|герцли[яию]|herzliya)/i },
+  { canonical: 'אילת', regex: /^(?:אילת|эйлат[аеу]?|eilat)$/i, cityTokenRegex: /(?:אילת|эйлат[аеу]?|eilat)/i }
+];
+
+const KNOWN_STREET_ROOTS =
+  /(?:חורב|horev|хорев|הרצל|herzl|герцл|פרויד|freud|фрейд|מוריה|moriah|мория|רוטשילד|rothschild|ротшильд|דיזנגוף|dizengoff|дизенгоф|ארלוזורוב|arlozorov|арлозоров|יפו|jaffa|яффо|פיק["']?א|pika|пика|אלנבי|allenby|алленби|איינשטיין|einstein|эйнштейн|אבא\s*חושי|abba\s*hushi|аба\s*хуши|ז["']?בוטינסקי|jabotinsky|жаботинск|ויצמן|weizmann|вейцман|נרקיסים|narkisim|наркисим|ההגנה|ha?hagana|ха-?хагана|הנשיא|hanassi|ха-?наси)/i;
+
+const STREET_PREFIX_REGEX =
+  /(?:^|\s)(?:улиц[аеуы]|ул\.?|на\s+улицу|проспект|пр-?т|бульвар|шоссе|רחוב|רח׳|שדרות|שד׳|דרך|street|st\.?|ave\.?|avenue|blvd\.?|boulevard|rd\.?|road)(?=\s|$)/i;
+
+const POI_KEYWORD_REGEX =
+  /(?:больниц|клиник|поликлиник|госпитал|университет|институт|техн?ион|каньон|торгов|центр(?!\s*улиц)|вокзал|автостанц|тах?ана\s*мерказит|аэропорт|бен[- ]?гурион|рамбам|азриэли|савидор|дизенгоф\s*центр|матам|хоф\s*(?:ха)?кармель|гранд\s*каньон|адар|בית\s*חולים|מרפאה|קופת\s*חולים|אוניברסיט|טכניון|קניון|תחנה\s*מרכזית|ת\.\s*מרכזית|רכבת|נמל\s*תעופה|מרכז\s*חורב|מרכז\s*הכרמל|hospital|clinic|university|technion|mall|station|airport|azrieli|rambam|savidor|matam|hof\s*ha?carmel|grand\s*canyon)/i;
 
 interface GooglePlacesTextSearchResponse {
   status: string;
@@ -90,6 +132,28 @@ const ISRAEL_GAZETTEER: IsraelLandmark[] = [
   },
 
   // --- Southern & Central Intercity Cities ---
+  // --- Northern & Central Intercity Cities ---
+  {
+    patterns: [/קי?רי?ית\s*גת|кирьят[- ]?гат|kiryat\s*gat/i],
+    lat: 31.6095,
+    lon: 34.7642,
+    place_name: 'Кирьят-Гат — Центральная автостанция (קריית גת - תחנה מרכזית)',
+    formatted_address: 'Kiryat Gat Central Bus Station, Israel'
+  },
+  {
+    patterns: [/^חיפה$|^хайф[аеуы]?$|^haifa$/i],
+    lat: 32.7934,
+    lon: 34.9590,
+    place_name: 'Хайфа — ת. מרכזית חוף הכרמל (Haifa)',
+    formatted_address: 'Haifa Hof HaCarmel Central Station, Haifa, Israel'
+  },
+  {
+    patterns: [/эйлат|eilat|אילת/i],
+    lat: 29.5569,
+    lon: 34.9498,
+    place_name: 'Эйлат (אילת — תחנה מרכזית)',
+    formatted_address: 'Eilat Central Bus Station, Israel'
+  },
   {
     patterns: [/ашдод|ashdod|אשדוד/i],
     lat: 31.7978,
@@ -376,23 +440,131 @@ export function stripConversationalPrefix(rawQuery: string): string {
     .trim();
 }
 
+function stripLeadingDirectionPreposition(text: string): string {
+  const trimmed = text.trim();
+  const stripped = trimmed
+    .replace(/^(?:в|во|до|на|к|по|to)\s+/i, '')
+    .trim();
+  if (/^ל(?:רחוב|מרכז|חיפה|תל|ירושלים|אשדוד|קריית|נתניה|טירת|באר|אשקלון|חדרה|אילת)/.test(stripped)) {
+    return stripped.slice(1).trim();
+  }
+  return stripped || trimmed;
+}
+
 /**
- * Resolves free-form destination text (Russian / Hebrew / English) into coordinates
- * via Google Places / Geocoding API (when GOOGLE_MAPS_API_KEY is configured),
- * falling back to Israel-wide gazetteer / OpenStreetMap Nominatim, with 24h Redis caching.
+ * Classifies free-form destination text into:
+ * - "city": city-only query -> resolves to central bus station / transit hub
+ * - "address": street + house number -> geocodes coordinates + snaps to nearest stop (~450-500m)
+ * - "poi": facility/hospital/mall/university -> geocodes coordinates + snaps to nearest stop
+ * - "street": street name only (no house number, no POI) -> picks most popular hub stop on street + alternatives
+ */
+export function classifyDestinationGranularity(rawQuery: string): DestinationClassification {
+  const withoutConv = stripConversationalPrefix(rawQuery);
+  const cleanedQuery = stripLeadingDirectionPreposition(withoutConv || rawQuery.trim());
+
+  let detectedCity: string | undefined;
+  for (const city of KNOWN_CITIES) {
+    if (city.cityTokenRegex.test(cleanedQuery)) {
+      detectedCity = city.canonical;
+      break;
+    }
+  }
+
+  // Strip country suffix & leading/trailing punctuation when testing pure city query
+  const pureCityCandidate = cleanedQuery
+    .replace(/(?:,\s*)?(?:израиль|israel|ישראל)$/i, '')
+    .replace(/^[\s,.-]+|[\s,.-]+$/g, '')
+    .trim();
+
+  for (const city of KNOWN_CITIES) {
+    if (city.regex.test(pureCityCandidate)) {
+      return {
+        granularity: 'city',
+        cleanedQuery: pureCityCandidate,
+        cityName: city.canonical
+      };
+    }
+  }
+
+  // Check if explicit house number is present alongside non-numeric text (e.g., "Хорев 12, Хайфа", "Herzl 49")
+  const hasStreetOrPlaceWord = /[a-zа-яёא-ת]{2,}/i.test(cleanedQuery);
+  const houseMatch = hasStreetOrPlaceWord
+    ? cleanedQuery.match(/(?:^|\s)(\d{1,4}[אa-z]?)(?:\s*,|\s+|$)/i)
+    : null;
+  const houseNumber = houseMatch?.[1];
+  const hasExplicitPoi = POI_KEYWORD_REGEX.test(cleanedQuery);
+
+  if (houseNumber) {
+    const streetCandidate = cleanedQuery
+      .replace(new RegExp(`\\b${houseNumber}\\b`, 'i'), ' ')
+      .replace(/,/g, ' ')
+      .replace(STREET_PREFIX_REGEX, ' ')
+      .replace(/(?:חיפה|хайф[аеуы]|haifa|תל[- ]?אביב|тель[- ]?авив[аеу]?|tel[- ]?aviv|ירושלים|иерусалим[аеу]?|jerusalem|טירת\s*כרמל|тират[- ]?кармел[ьяе]?|tirat\s*carmel)/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    return {
+      granularity: 'address',
+      cleanedQuery,
+      cityName: detectedCity,
+      streetName: streetCandidate || undefined,
+      houseNumber
+    };
+  }
+
+  if (hasExplicitPoi) {
+    return {
+      granularity: 'poi',
+      cleanedQuery,
+      cityName: detectedCity
+    };
+  }
+
+  const hasStreetMarker = STREET_PREFIX_REGEX.test(cleanedQuery);
+  const hasKnownStreet = KNOWN_STREET_ROOTS.test(cleanedQuery);
+
+  if (hasStreetMarker || hasKnownStreet) {
+    const streetPart = cleanedQuery
+      .replace(/,/g, ' ')
+      .replace(STREET_PREFIX_REGEX, ' ')
+      .replace(/(?:^|\s)(?:в\s+городе|города|город|г\.|בחיפה|בתל\s*אביב|בירושלים)\s*/gi, ' ')
+      .replace(/(?:חיפה|хайф[аеуы]|haifa|תל[- ]?אביב|тель[- ]?авив[аеу]?|tel[- ]?aviv|ירושלים|иерусалим[аеу]?|jerusalem|טירת\s*כרמל|тират[- ]?кармел[ьяе]?|tirat\s*carmel)/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    return {
+      granularity: 'street',
+      cleanedQuery,
+      cityName: detectedCity,
+      streetName: streetPart || cleanedQuery
+    };
+  }
+
+  return {
+    granularity: 'poi',
+    cleanedQuery,
+    cityName: detectedCity
+  };
+}
+
+/**
+ * Resolves free-form destination text (Russian / Hebrew / English) into coordinates + GTFS stop metadata:
+ * - city -> GTFS central bus station / transit hub (`findCentralStopForCity`)
+ * - street -> popular stop on street + alternatives (`findPopularStopOnStreet`)
+ * - address / poi -> Google Places/Geocoding -> Gazetteer -> OSM Nominatim + nearest walking-radius GTFS stop
  */
 export async function resolveDestinationText(
   query: string,
   userLocation: { lat: number; lon: number }
 ): Promise<GeocodedDestination> {
-  const cleaned = stripConversationalPrefix(query);
-  const trimmed = cleaned || query.trim();
+  const classification = classifyDestinationGranularity(query);
+  const trimmed = classification.cleanedQuery || query.trim();
   if (!trimmed) {
     throw new Error('Destination query cannot be empty');
   }
 
   const queryHash = computeQueryHash(trimmed);
-  const cacheKey = `geo:cache:${queryHash}`;
+  const cacheKey = `geo:v2:cache:${queryHash}`;
 
   const cached = await redisService.getJson<GeocodedDestination>(cacheKey);
   if (cached) {
@@ -402,11 +574,56 @@ export async function resolveDestinationText(
   let resolved: GeocodedDestination | null = null;
   const apiKey = process.env.GOOGLE_MAPS_API_KEY?.trim();
 
-  if (apiKey && !apiKey.startsWith('your-')) {
+  // 1. City-only -> Central Bus Station / Hub via GTFS/PostGIS
+  if (classification.granularity === 'city' && classification.cityName) {
+    const centralStop = await supabaseService.findCentralStopForCity(classification.cityName);
+    if (centralStop) {
+      resolved = {
+        lat: centralStop.lat,
+        lon: centralStop.lon,
+        place_name: centralStop.stop_name_he || centralStop.stop_name,
+        formatted_address: `${centralStop.stop_name} (${classification.cityName})`,
+        source: 'gtfs_db',
+        destination_granularity: 'city',
+        city_name: classification.cityName,
+        resolved_stop: centralStop
+      };
+    }
+  }
+
+  // 2. Street-only (no house number, no POI) -> Most popular stop on street + alternatives
+  if (!resolved && classification.granularity === 'street') {
+    const streetStops = await supabaseService.findPopularStopOnStreet(
+      classification.streetName || trimmed,
+      classification.cityName,
+      userLocation.lat,
+      userLocation.lon
+    );
+    if (streetStops.length > 0) {
+      const topStop = streetStops[0];
+      resolved = {
+        lat: topStop.lat,
+        lon: topStop.lon,
+        place_name: topStop.stop_name_he || topStop.stop_name,
+        formatted_address: `${topStop.stop_name}${classification.cityName ? `, ${classification.cityName}` : ''}`,
+        source: 'gtfs_db',
+        destination_granularity: 'street',
+        city_name: classification.cityName,
+        street_name: classification.streetName,
+        resolved_stop: topStop,
+        alternative_street_stops: streetStops
+      };
+    }
+  }
+
+  // 3. Specific address / POI (or fallback when GTFS has no city/street hub) -> Geocoders
+  if (!resolved && apiKey && !apiKey.startsWith('your-')) {
     resolved = await queryGooglePlacesOrGeocoding(trimmed, userLocation, apiKey);
   }
 
-  if (!resolved) {
+  // For specific numbered addresses (e.g. "Хорев 12, Хайфа"), prefer exact geocoder/Nominatim coordinates
+  // before falling back to generic street landmarks in the offline gazetteer.
+  if (!resolved && classification.granularity !== 'address') {
     const landmark = ISRAEL_GAZETTEER.find((item) =>
       item.patterns.some((pattern) => pattern.test(trimmed))
     );
@@ -426,6 +643,22 @@ export async function resolveDestinationText(
   }
 
   if (!resolved) {
+    const landmark = ISRAEL_GAZETTEER.find((item) =>
+      item.patterns.some((pattern) => pattern.test(trimmed))
+    );
+    if (landmark) {
+      resolved = {
+        lat: landmark.lat,
+        lon: landmark.lon,
+        place_name: landmark.place_name,
+        formatted_address: landmark.formatted_address,
+        source: 'gazetteer'
+      };
+    }
+  }
+
+  if (!resolved) {
+    // Still avoid silently snapping to userLocation; check Nominatim without city restriction or keep exact label
     resolved = {
       lat: userLocation.lat,
       lon: userLocation.lon,
@@ -435,6 +668,23 @@ export async function resolveDestinationText(
     };
   }
 
-  await redisService.setJson(cacheKey, resolved, GEO_CACHE_TTL_SECONDS);
-  return resolved;
+  // Attach granularity & nearest physical stop in walking radius (~450-500m) for address/POI/city
+  let nearestStop: ResolvedStopOption | undefined = resolved.resolved_stop;
+  if (!nearestStop) {
+    const stopsNearby = await supabaseService.findNearestStopsToPoint(resolved.lat, resolved.lon, 480);
+    if (stopsNearby.length > 0) {
+      nearestStop = stopsNearby[0];
+    }
+  }
+
+  const enriched: GeocodedDestination = {
+    ...resolved,
+    destination_granularity: resolved.destination_granularity ?? classification.granularity,
+    ...(classification.cityName && !resolved.city_name ? { city_name: classification.cityName } : {}),
+    ...(classification.streetName && !resolved.street_name ? { street_name: classification.streetName } : {}),
+    ...(nearestStop ? { resolved_stop: nearestStop } : {})
+  };
+
+  await redisService.setJson(cacheKey, enriched, GEO_CACHE_TTL_SECONDS);
+  return enriched;
 }

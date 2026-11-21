@@ -8,6 +8,7 @@ import {
   filterApproachingVehicles,
   filterValidDirectionMatches,
   filterValidTransferMatches,
+  filterValidTwoTransferMatches,
   planBestBusesToDestination,
   rankTopBusOptions,
   selectBestSingleOption,
@@ -521,6 +522,119 @@ describe('Trip Planner A -> B matching and Top-3 ranking', () => {
 
         const secondEta = secondRes.recommended_options?.[0]?.eta_to_boarding_min ?? 99;
         expect(secondEta).toBeLessThan(firstEta);
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
+  });
+
+  describe('Strict GTFS route & transfer validation (no fabricated lines)', () => {
+    it('rejects 2-transfer chains with repeated route IDs or invalid stop sequences', () => {
+      const valid = {
+        transfers_count: 2 as const,
+        leg1_route_id: 'r1',
+        leg1_route_short_name: '49',
+        leg1_route_long_name: 'L49',
+        leg1_direction_id: 0 as const,
+        origin_stop_id: 's1',
+        origin_stop_code: '1',
+        origin_stop_name: 'O',
+        origin_stop_name_he: 'O',
+        origin_stop_sequence: 1,
+        origin_lat: 32.7,
+        origin_lon: 34.9,
+        xfer1_alight_stop_id: 'x1a',
+        xfer1_alight_stop_code: '2',
+        xfer1_alight_stop_name: 'X1A',
+        xfer1_alight_stop_name_he: 'X1A',
+        xfer1_alight_stop_sequence: 10,
+        xfer1_alight_lat: 32.79,
+        xfer1_alight_lon: 34.95,
+        leg1_stops_between: 9,
+        xfer1_walk_meters: 50,
+        leg2_route_id: 'r2',
+        leg2_route_short_name: '910',
+        leg2_route_long_name: 'L910',
+        leg2_direction_id: 0 as const,
+        xfer1_board_stop_id: 'x1b',
+        xfer1_board_stop_code: '3',
+        xfer1_board_stop_name: 'X1B',
+        xfer1_board_stop_name_he: 'X1B',
+        xfer1_board_stop_sequence: 1,
+        xfer1_board_lat: 32.79,
+        xfer1_board_lon: 34.95,
+        xfer2_alight_stop_id: 'x2a',
+        xfer2_alight_stop_code: '4',
+        xfer2_alight_stop_name: 'X2A',
+        xfer2_alight_stop_name_he: 'X2A',
+        xfer2_alight_stop_sequence: 5,
+        xfer2_alight_lat: 32.08,
+        xfer2_alight_lon: 34.79,
+        leg2_stops_between: 4,
+        xfer2_walk_meters: 0,
+        leg3_route_id: 'r3',
+        leg3_route_short_name: '280',
+        leg3_route_long_name: 'L280',
+        leg3_direction_id: 0 as const,
+        xfer2_board_stop_id: 'x2b',
+        xfer2_board_stop_code: '5',
+        xfer2_board_stop_name: 'X2B',
+        xfer2_board_stop_name_he: 'X2B',
+        xfer2_board_stop_sequence: 1,
+        xfer2_board_lat: 32.08,
+        xfer2_board_lon: 34.79,
+        dest_stop_id: 'd1',
+        dest_stop_code: '6',
+        dest_stop_name: 'D',
+        dest_stop_name_he: 'D',
+        dest_stop_sequence: 3,
+        dest_lat: 31.79,
+        dest_lon: 34.65,
+        leg3_stops_between: 2
+      };
+
+      const invalidDuplicateRoute = { ...valid, leg3_route_id: 'r1' };
+      const invalidSeq = { ...valid, xfer2_board_stop_sequence: 5, dest_stop_sequence: 2 };
+
+      const filtered = filterValidTwoTransferMatches([valid, invalidDuplicateRoute, invalidSeq]);
+      expect(filtered).toHaveLength(1);
+      expect(filtered[0].leg3_route_id).toBe('r3');
+    });
+
+    it('returns no_verified_route and nearest_confirmed_hub instead of guessing an unverified intercity bus', async () => {
+      vi.spyOn(redisService, 'getCachedRoutePair').mockResolvedValue(null);
+      vi.spyOn(supabaseService, 'findDirectTrips').mockResolvedValue([]);
+      vi.spyOn(supabaseService, 'findTransferTrips').mockResolvedValue([]);
+      vi.spyOn(supabaseService, 'findNearestConfirmedHub').mockResolvedValue({
+        stop_id: 'stop-42658',
+        stop_code: '42658',
+        stop_name: 'Hof HaCarmel Central Station',
+        stop_name_he: 'ת. מרכזית חוף הכרמל (חיפה)',
+        stop_sequence: 1,
+        lat: 32.7934,
+        lon: 34.959,
+        distance_meters: 2100
+      });
+
+      try {
+        const res = await planBestBusesToDestination({
+          userLocation: { lat: 32.7618, lon: 34.9711 },
+          destination: {
+            lat: 29.5569,
+            lon: 34.9498,
+            place_name: 'אילת - תחנה מרכזית',
+            formatted_address: 'Eilat, Israel',
+            destination_granularity: 'city'
+          },
+          entryContext: 'standalone',
+          allowColdBootstrap: false
+        });
+
+        expect(res.no_verified_route).toBe(true);
+        expect(res.trip_options).toEqual([]);
+        expect(res.recommended_options).toEqual([]);
+        expect(res.routing_notice?.nearest_confirmed_hub?.stop_id).toBe('stop-42658');
+        expect(res.routing_notice?.message_ru).toContain('Подтверждённой автобусной связки GTFS');
       } finally {
         vi.restoreAllMocks();
       }

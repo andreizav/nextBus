@@ -3,8 +3,10 @@ import pg from 'pg';
 import { haversineDistanceMeters } from './eta.service.js';
 import type {
   DirectRouteMatch,
+  ResolvedStopOption,
   StopTimelineItem,
-  TransferRouteMatch
+  TransferRouteMatch,
+  UserStopInfo
 } from '../types/bus.types.js';
 
 export interface NearestStopRpcRow {
@@ -841,30 +843,37 @@ class SupabaseService {
         if (candidates.length > 0) {
           return candidates.sort((a, b) => a.distance_meters - b.distance_meters);
         }
+        return [];
       } catch (err) {
         console.warn('[Supabase] Table scan fallback error:', (err as Error).message);
       }
     }
 
+    if (this.pgPool || this.client) {
+      return [];
+    }
+
     const fallbackStop = await this.findNearestStopForLine(cleanedLine, userLat, userLon);
-    return [
-      {
-        route_id: fallbackStop.route_id,
-        line_number: fallbackStop.route_short_name,
-        route_long_name: fallbackStop.route_long_name,
-        direction_id: fallbackStop.direction_id,
-        origin_he: fallbackStop.direction_id === 0 ? 'טירת כרמל' : 'חוף הכרמל חיפה',
-        destination_he: fallbackStop.direction_id === 0 ? 'חוף הכרמל חיפה' : 'טירת כרמל',
-        nearest_stop_id: fallbackStop.stop_id,
-        nearest_stop_code: fallbackStop.stop_code,
-        nearest_stop_name: fallbackStop.stop_name,
-        nearest_stop_name_he: fallbackStop.stop_name_he,
-        nearest_stop_sequence: fallbackStop.stop_sequence,
-        stop_lat: fallbackStop.stop_lat,
-        stop_lon: fallbackStop.stop_lon,
-        distance_meters: fallbackStop.distance_meters
-      }
-    ];
+    return fallbackStop.distance_meters <= 3500
+      ? [
+          {
+            route_id: fallbackStop.route_id,
+            line_number: fallbackStop.route_short_name,
+            route_long_name: fallbackStop.route_long_name,
+            direction_id: fallbackStop.direction_id,
+            origin_he: fallbackStop.direction_id === 0 ? 'טירת כרמל' : 'חוף הכרמל חיפה',
+            destination_he: fallbackStop.direction_id === 0 ? 'חוף הכרמל חיפה' : 'טירת כרמל',
+            nearest_stop_id: fallbackStop.stop_id,
+            nearest_stop_code: fallbackStop.stop_code,
+            nearest_stop_name: fallbackStop.stop_name,
+            nearest_stop_name_he: fallbackStop.stop_name_he,
+            nearest_stop_sequence: fallbackStop.stop_sequence,
+            stop_lat: fallbackStop.stop_lat,
+            stop_lon: fallbackStop.stop_lon,
+            distance_meters: fallbackStop.distance_meters
+          }
+        ]
+      : [];
   }
 
   async findDirectTrips(
@@ -1114,6 +1123,549 @@ class SupabaseService {
     }
 
     return [];
+  }
+
+  private resolveCityKeywords(cityName: string): string[] {
+    const q = cityName.trim().toLowerCase();
+    if (/חיפה|хайф|haifa/.test(q)) return ['חיפה', 'haifa'];
+    if (/טירת|тират|tirat/.test(q)) return ['טירת כרמל', 'tirat carmel'];
+    if (/תל.?אביב|тель.?авив|tel.?aviv|\btlv\b/.test(q)) return ['תל אביב', 'tel aviv'];
+    if (/ירושלים|иерусалим|jerusalem/.test(q)) return ['ירושלים', 'jerusalem'];
+    if (/אשדוד|ашдод|ashdod/.test(q)) return ['אשדוד', 'ashdod'];
+    if (/קריית.?גת|קרית.?גת|кирьят.?гат|kiryat.?gat/.test(q)) return ['קריית גת', 'kiryat gat'];
+    if (/נתניה|нетани|netanya/.test(q)) return ['נתניה', 'netanya'];
+    if (/אשקלון|ашкелон|ashkelon/.test(q)) return ['אשקלון', 'ashkelon'];
+    if (/באר.?שבע|беэр.?шев|beer.?sheva/.test(q)) return ['באר שבע', 'beer sheva'];
+    if (/חדרה|хадер|hadera/.test(q)) return ['חדרה', 'hadera'];
+    if (/עכו|акко|acre|akko/.test(q)) return ['עכו', 'acre', 'akko'];
+    if (/נהריה|нагари|nahariya/.test(q)) return ['נהריה', 'nahariya'];
+    return [cityName.trim()];
+  }
+
+  private resolveStreetKeywords(streetName: string): string[] {
+    const q = streetName
+      .trim()
+      .toLowerCase()
+      .replace(/^(?:улица|ул\.?|на\s+улицу|проспект|пр\.?|бульвар|street|st\.?|ave\.?|blvd\.?|רחוב|רח׳|שדרות|שד׳)\s+/i, '')
+      .trim();
+    if (/חורב|хорев|horev/.test(q)) return ['חורב', 'horev'];
+    if (/הרצל|герцл|herzl/.test(q)) return ['הרצל', 'herzl'];
+    if (/פרויד|фрейд|freud/.test(q)) return ['פרויד', 'freud'];
+    if (/מוריה|мория|moriah/.test(q)) return ['מוריה', 'moriah'];
+    if (/פיק|пика|pika/.test(q)) return ['פיק', 'pika'];
+    if (/איינשטיין|эйнштейн|einstein/.test(q)) return ['איינשטיין', 'einstein'];
+    if (/אבא.?חושי|аба.?хуши|abba.?hushi/.test(q)) return ['אבא חושי', 'abba hushi'];
+    if (/רוטשילד|ротшильд|rothschild/.test(q)) return ['רוטשילד', 'rothschild'];
+    if (/דיזנגוף|дизенгоф|dizengoff/.test(q)) return ['דיזנגוף', 'dizengoff'];
+    if (/ארלוזורוב|арлозоров|arlozorov/.test(q)) return ['ארלוזורוב', 'arlozorov'];
+    if (/יפו|яффо|jaffa/.test(q)) return ['יפו', 'jaffa'];
+    if (/ויצמן|вейцман|weizmann/.test(q)) return ['ויצמן', 'weizmann'];
+    if (/ז.?בוטינסקי|жаботинск|jabotinsky/.test(q)) return ['בוטינסקי', 'jabotinsky'];
+    if (/הנשיא|ха-?наси|hanassi/.test(q)) return ['הנשיא', 'hanassi'];
+    if (/ההגנה|ха-?хагана|hagana/.test(q)) return ['ההגנה', 'hagana'];
+    if (/נרקיסים|наркисим|narkisim/.test(q)) return ['נרקיסים', 'narkisim'];
+    return q ? [q] : [];
+  }
+
+  private mapResolvedStopRow(row: Record<string, unknown>): ResolvedStopOption {
+    return {
+      stop_id: String(row.stop_id),
+      stop_code: String(row.stop_code ?? row.stop_id),
+      stop_name: String(row.stop_name),
+      stop_name_he: String(row.stop_name_he ?? row.stop_name),
+      lat: Number(row.stop_lat ?? row.lat),
+      lon: Number(row.stop_lon ?? row.lon),
+      ...(row.routes_count !== undefined ? { routes_count: Number(row.routes_count) } : {}),
+      ...(row.distance_meters !== undefined && row.distance_meters !== null
+        ? { distance_meters: Math.round(Number(row.distance_meters)) }
+        : {}),
+      ...(row.is_central_hub !== undefined ? { is_central_hub: Boolean(row.is_central_hub) } : {}),
+      ...(row.is_hub !== undefined ? { is_hub: Boolean(row.is_hub) } : {})
+    };
+  }
+
+  /**
+   * Finds the primary central bus station or main transit hub of a city via GTFS/PostGIS.
+   */
+  async findCentralStopForCity(cityName: string): Promise<ResolvedStopOption | null> {
+    this.ensureInit();
+    const cleaned = cityName.trim();
+    if (!cleaned) return null;
+
+    if (this.client) {
+      try {
+        const { data, error } = await this.client.rpc('find_central_stop_for_city', {
+          city_name: cleaned
+        });
+        const row = Array.isArray(data) ? data[0] : data;
+        if (!error && row && typeof row.stop_id === 'string') {
+          return this.mapResolvedStopRow(row as Record<string, unknown>);
+        }
+      } catch (err) {
+        console.warn('[Supabase] find_central_stop_for_city RPC fallback:', (err as Error).message);
+      }
+    }
+
+    if (this.pgPool) {
+      try {
+        const res = await this.pgPool.query(
+          `SELECT * FROM find_central_stop_for_city($1)`,
+          [cleaned]
+        );
+        if (res.rows[0]) {
+          return this.mapResolvedStopRow(res.rows[0] as Record<string, unknown>);
+        }
+      } catch (err) {
+        console.warn('[PostgreSQL] find_central_stop_for_city query error:', (err as Error).message);
+      }
+    }
+
+    // PostgREST fallback scan on stops + route_stops when RPC isn't installed remotely
+    if (this.client) {
+      try {
+        const keywords = this.resolveCityKeywords(cleaned);
+        const orFilter = keywords
+          .flatMap((kw) => [`stop_name.ilike.%${kw}%`, `stop_name_he.ilike.%${kw}%`])
+          .join(',');
+        const { data: stopsData } = await this.client
+          .from('stops')
+          .select('stop_id, stop_code, stop_name, stop_name_he')
+          .or(orFilter)
+          .limit(30);
+
+        if (stopsData && stopsData.length > 0) {
+          const stopIds = stopsData.map((s) => String(s.stop_id));
+          const { data: rsData } = await this.client
+            .from('route_stops')
+            .select('stop_id, route_id')
+            .in('stop_id', stopIds);
+
+          const routeMap = new Map<string, Set<string>>();
+          for (const rs of rsData ?? []) {
+            const sid = String(rs.stop_id);
+            const set = routeMap.get(sid) ?? new Set<string>();
+            set.add(String(rs.route_id));
+            routeMap.set(sid, set);
+          }
+
+          const scoreStop = (s: { stop_id: string; stop_name: string; stop_name_he?: string | null }) => {
+            const txt = `${s.stop_name} ${s.stop_name_he ?? ''}`;
+            const isCbs = /(תחנה\s*מרכזית|ת\.\s*מרכזית|Central Bus Station|רציפים בינעירוני)/i.test(txt) ? 100 : 0;
+            const isHub = /(רכבת\s*מרכז|מסוף|סבידור|חוף\s*הכרמל|Central Train|Savidor|Hof HaCarmel)/i.test(txt) ? 80 : 0;
+            const isDrop = /הורדה/i.test(txt) ? -15 : 0;
+            const routesCnt = routeMap.get(s.stop_id)?.size ?? 0;
+            return isCbs + isHub + isDrop + routesCnt * 3;
+          };
+
+          const ranked = [...stopsData].sort((a, b) => scoreStop(b) - scoreStop(a));
+          const best = ranked[0];
+          // Retrieve coordinates via getDirectionStopCoords if associated with a route
+          const bestRouteId = Array.from(routeMap.get(String(best.stop_id)) ?? [])[0];
+          if (bestRouteId) {
+            const coords =
+              (await this.getDirectionStopCoords(bestRouteId, 0)).find((c) => c.stop_id === best.stop_id) ??
+              (await this.getDirectionStopCoords(bestRouteId, 1)).find((c) => c.stop_id === best.stop_id);
+            if (coords) {
+              return {
+                stop_id: coords.stop_id,
+                stop_code: coords.stop_code,
+                stop_name: coords.stop_name,
+                stop_name_he: coords.stop_name_he,
+                lat: coords.lat,
+                lon: coords.lon,
+                routes_count: routeMap.get(String(best.stop_id))?.size ?? 1,
+                is_central_hub: scoreStop(best) >= 80
+              };
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[Supabase] findCentralStopForCity table fallback error:', (err as Error).message);
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Finds stops along a named street corridor, ordered by route connectivity (`route_stops` count),
+   * hub markers, and optional proximity. Returns up to 6 stops (primary popular stop + alternatives).
+   */
+  async findPopularStopOnStreet(
+    streetName: string,
+    cityHint?: string,
+    nearLat?: number,
+    nearLon?: number
+  ): Promise<ResolvedStopOption[]> {
+    this.ensureInit();
+    const cleaned = streetName.trim();
+    if (!cleaned) return [];
+
+    if (this.client) {
+      try {
+        const { data, error } = await this.client.rpc('find_popular_stop_on_street', {
+          street_name: cleaned,
+          city_hint: cityHint ?? null,
+          near_lat: nearLat ?? null,
+          near_lon: nearLon ?? null
+        });
+        if (!error && Array.isArray(data) && data.length > 0) {
+          return data.map((row) => this.mapResolvedStopRow(row as Record<string, unknown>));
+        }
+      } catch (err) {
+        console.warn('[Supabase] find_popular_stop_on_street RPC fallback:', (err as Error).message);
+      }
+    }
+
+    if (this.pgPool) {
+      try {
+        const res = await this.pgPool.query(
+          `SELECT * FROM find_popular_stop_on_street($1, $2, $3, $4)`,
+          [cleaned, cityHint ?? null, nearLat ?? null, nearLon ?? null]
+        );
+        if (res.rows.length > 0) {
+          return res.rows.map((row) => this.mapResolvedStopRow(row as Record<string, unknown>));
+        }
+      } catch (err) {
+        console.warn('[PostgreSQL] find_popular_stop_on_street error:', (err as Error).message);
+      }
+    }
+
+    if (this.client) {
+      try {
+        const stKeywords = this.resolveStreetKeywords(cleaned);
+        if (stKeywords.length === 0) return [];
+        const orFilter = stKeywords
+          .flatMap((kw) => [`stop_name.ilike.%${kw}%`, `stop_name_he.ilike.%${kw}%`])
+          .join(',');
+        const { data: stopsData } = await this.client
+          .from('stops')
+          .select('stop_id, stop_code, stop_name, stop_name_he')
+          .or(orFilter)
+          .limit(20);
+
+        if (stopsData && stopsData.length > 0) {
+          const stopIds = stopsData.map((s) => String(s.stop_id));
+          const { data: rsData } = await this.client
+            .from('route_stops')
+            .select('stop_id, route_id, direction_id')
+            .in('stop_id', stopIds);
+
+          const routeCount = new Map<string, Set<string>>();
+          const sampleDir = new Map<string, { routeId: string; dir: 0 | 1 }>();
+          for (const rs of rsData ?? []) {
+            const sid = String(rs.stop_id);
+            const set = routeCount.get(sid) ?? new Set<string>();
+            set.add(String(rs.route_id));
+            routeCount.set(sid, set);
+            if (!sampleDir.has(sid)) {
+              sampleDir.set(sid, {
+                routeId: String(rs.route_id),
+                dir: Number(rs.direction_id) === 1 ? 1 : 0
+              });
+            }
+          }
+
+          const cityKeywords = cityHint ? this.resolveCityKeywords(cityHint) : [];
+          const cityFiltered =
+            cityKeywords.length > 0
+              ? stopsData.filter((s) =>
+                  cityKeywords.some((ck) =>
+                    `${s.stop_name} ${s.stop_name_he ?? ''}`.toLowerCase().includes(ck.toLowerCase())
+                  )
+                )
+              : [];
+          const pool = cityFiltered.length > 0 ? cityFiltered : stopsData;
+
+          const resolved: ResolvedStopOption[] = [];
+          for (const s of pool) {
+            const ref = sampleDir.get(String(s.stop_id));
+            if (!ref) continue;
+            const coords = (await this.getDirectionStopCoords(ref.routeId, ref.dir)).find(
+              (c) => c.stop_id === s.stop_id
+            );
+            if (!coords) continue;
+            const dist =
+              nearLat !== undefined && nearLon !== undefined
+                ? Math.round(haversineDistanceMeters(nearLat, nearLon, coords.lat, coords.lon))
+                : undefined;
+            resolved.push({
+              stop_id: coords.stop_id,
+              stop_code: coords.stop_code,
+              stop_name: coords.stop_name,
+              stop_name_he: coords.stop_name_he,
+              lat: coords.lat,
+              lon: coords.lon,
+              routes_count: routeCount.get(String(s.stop_id))?.size ?? 1,
+              distance_meters: dist,
+              is_hub: /(מרכז|קניון|צומת|מרפאה|Center|Mall|Junction|Clinic)/i.test(
+                `${coords.stop_name} ${coords.stop_name_he}`
+              )
+            });
+          }
+
+          return resolved
+            .sort((a, b) => (b.routes_count ?? 0) - (a.routes_count ?? 0) || (a.distance_meters ?? 0) - (b.distance_meters ?? 0))
+            .slice(0, 6);
+        }
+      } catch (err) {
+        console.warn('[Supabase] findPopularStopOnStreet fallback error:', (err as Error).message);
+      }
+    }
+
+    return [];
+  }
+
+  /**
+   * Finds nearest physical bus stops around `(lat, lon)` within walking radius (~450m, expanding if needed).
+   */
+  async findNearestStopsToPoint(
+    lat: number,
+    lon: number,
+    radiusMeters = 480
+  ): Promise<ResolvedStopOption[]> {
+    this.ensureInit();
+    const radii = Array.from(new Set([radiusMeters, Math.max(1200, radiusMeters)]));
+
+    if (this.pgPool) {
+      for (const radius of radii) {
+        try {
+          const res = await this.pgPool.query(
+            `WITH target AS (
+               SELECT ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography AS geog
+             )
+             SELECT
+               s.stop_id,
+               s.stop_code,
+               s.stop_name,
+               COALESCE(s.stop_name_he, s.stop_name) AS stop_name_he,
+               ST_Y(s.location::geometry)::FLOAT AS stop_lat,
+               ST_X(s.location::geometry)::FLOAT AS stop_lon,
+               COUNT(DISTINCT rs.route_id)::INT AS routes_count,
+               ROUND(ST_Distance(s.location, t.geog))::INT AS distance_meters
+             FROM stops s
+             CROSS JOIN target t
+             LEFT JOIN route_stops rs ON rs.stop_id = s.stop_id
+             WHERE ST_DWithin(s.location, t.geog, $3)
+             GROUP BY s.stop_id, s.stop_code, s.stop_name, s.stop_name_he, s.location, t.geog
+             ORDER BY ST_Distance(s.location, t.geog) ASC
+             LIMIT 5`,
+            [lat, lon, radius]
+          );
+          if (res.rows.length > 0) {
+            return res.rows.map((r) => this.mapResolvedStopRow(r as Record<string, unknown>));
+          }
+        } catch (err) {
+          console.warn('[PostgreSQL] findNearestStopsToPoint error:', (err as Error).message);
+        }
+      }
+    }
+
+    // Fallback via nearby lines PostGIS / PostgREST
+    const nearbyLines = await this.getNearbyLinesAndTermini(lat, lon, Math.max(900, radiusMeters), 5);
+    if (nearbyLines.length > 0) {
+      const seen = new Set<string>();
+      const opts: ResolvedStopOption[] = [];
+      for (const l of nearbyLines) {
+        if (seen.has(l.nearest_stop_id)) continue;
+        seen.add(l.nearest_stop_id);
+        opts.push({
+          stop_id: l.nearest_stop_id,
+          stop_code: l.nearest_stop_code,
+          stop_name: l.nearest_stop_name,
+          stop_name_he: l.nearest_stop_name_he,
+          lat: l.stop_lat,
+          lon: l.stop_lon,
+          distance_meters: l.distance_meters
+        });
+      }
+      return opts;
+    }
+
+    return [];
+  }
+
+  /**
+   * Finds nearest confirmed major transit hub (central station or high-connectivity stop)
+   * to suggest when no verified bus route reaches a destination.
+   */
+  async findNearestConfirmedHub(lat: number, lon: number): Promise<UserStopInfo | null> {
+    this.ensureInit();
+
+    if (this.pgPool) {
+      try {
+        const res = await this.pgPool.query(
+          `WITH target AS (
+             SELECT ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography AS geog
+           )
+           SELECT
+             s.stop_id,
+             s.stop_code,
+             s.stop_name,
+             COALESCE(s.stop_name_he, s.stop_name) AS stop_name_he,
+             ST_Y(s.location::geometry)::FLOAT AS stop_lat,
+             ST_X(s.location::geometry)::FLOAT AS stop_lon,
+             ROUND(ST_Distance(s.location, t.geog))::INT AS distance_meters,
+             COUNT(DISTINCT rs.route_id)::INT AS routes_cnt
+           FROM stops s
+           CROSS JOIN target t
+           JOIN route_stops rs ON rs.stop_id = s.stop_id
+           WHERE COALESCE(s.stop_name_he, '') ~* '(תחנה\s*מרכזית|ת\.\s*מרכזית|רכבת\s*מרכז|מסוף|מרכז|חוף\s*הכרמל|סבידור)'
+              OR s.stop_name ~* '(Central Bus Station|Central Train|Hof HaCarmel|Savidor|Center)'
+           GROUP BY s.stop_id, s.stop_code, s.stop_name, s.stop_name_he, s.location, t.geog
+           ORDER BY ST_Distance(s.location, t.geog) ASC
+           LIMIT 1`,
+          [lat, lon]
+        );
+        const r = res.rows[0];
+        if (r) {
+          return {
+            stop_id: String(r.stop_id),
+            stop_code: String(r.stop_code),
+            stop_name: String(r.stop_name),
+            stop_name_he: String(r.stop_name_he),
+            stop_sequence: 1,
+            lat: Number(r.stop_lat),
+            lon: Number(r.stop_lon),
+            distance_meters: Number(r.distance_meters)
+          };
+        }
+      } catch (err) {
+        console.warn('[PostgreSQL] findNearestConfirmedHub error:', (err as Error).message);
+      }
+    }
+
+    const nearest = await this.findNearestStopsToPoint(lat, lon, 5000);
+    if (nearest[0]) {
+      return {
+        stop_id: nearest[0].stop_id,
+        stop_code: nearest[0].stop_code,
+        stop_name: nearest[0].stop_name,
+        stop_name_he: nearest[0].stop_name_he,
+        stop_sequence: 1,
+        lat: nearest[0].lat,
+        lon: nearest[0].lon,
+        distance_meters: nearest[0].distance_meters
+      };
+    }
+
+    return null;
+  }
+
+  /**
+   * Looks up whether a requested bus line exists in the database and returns its nearest stop
+   * without silently substituting an unrelated fallback route.
+   */
+  async lookupNearestStopForExistingLine(
+    lineNum: string,
+    userLat: number,
+    userLon: number
+  ): Promise<NearestStopRpcRow | null> {
+    this.ensureInit();
+    const cleaned = lineNum.trim();
+    if (!cleaned) return null;
+
+    if (this.pgPool) {
+      try {
+        const res = await this.pgPool.query(
+          `SELECT * FROM find_nearest_stop_for_line($1, $2, $3, NULL)`,
+          [cleaned, userLat, userLon]
+        );
+        if (res.rows[0]) {
+          const row = res.rows[0];
+          return {
+            route_id: String(row.route_id),
+            direction_id: Number(row.direction_id) === 1 ? 1 : 0,
+            stop_id: String(row.stop_id),
+            stop_sequence: Number(row.stop_sequence),
+            stop_code: String(row.stop_code ?? row.stop_id),
+            stop_name: String(row.stop_name),
+            stop_name_he: String(row.stop_name_he ?? row.stop_name),
+            stop_lat: Number(row.stop_lat),
+            stop_lon: Number(row.stop_lon),
+            route_short_name: String(row.route_short_name ?? cleaned),
+            route_long_name: String(row.route_long_name ?? `Line ${cleaned}`),
+            distance_meters: Math.round(Number(row.distance_meters ?? 0))
+          };
+        }
+        return null;
+      } catch (err) {
+        console.warn('[PostgreSQL] lookupNearestStopForExistingLine error:', (err as Error).message);
+      }
+    }
+
+    if (this.client) {
+      try {
+        const { data: exists } = await this.client
+          .from('routes')
+          .select('route_id')
+          .ilike('route_short_name', cleaned)
+          .limit(1);
+        if (!exists || exists.length === 0) return null;
+
+        const { data, error } = await this.client.rpc('find_nearest_stop_for_line', {
+          line_num: cleaned,
+          user_lat: userLat,
+          user_lon: userLon
+        });
+        const row = Array.isArray(data) ? data[0] : data;
+        if (!error && row && typeof row.stop_id === 'string') {
+          return {
+            route_id: String(row.route_id),
+            direction_id: Number(row.direction_id) === 1 ? 1 : 0,
+            stop_id: String(row.stop_id),
+            stop_sequence: Number(row.stop_sequence),
+            stop_code: String(row.stop_code ?? row.stop_id),
+            stop_name: String(row.stop_name),
+            stop_name_he: String(row.stop_name_he ?? row.stop_name),
+            stop_lat: Number(row.stop_lat),
+            stop_lon: Number(row.stop_lon),
+            route_short_name: String(row.route_short_name ?? cleaned),
+            route_long_name: String(row.route_long_name ?? `Line ${cleaned}`),
+            distance_meters: Math.round(Number(row.distance_meters ?? 0))
+          };
+        }
+      } catch {
+        return null;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Matches stops by stop code or free-form stop/landmark name in GTFS stops table.
+   */
+  async findStopsByNameQuery(
+    query: string,
+    nearLat?: number,
+    nearLon?: number
+  ): Promise<ResolvedStopOption[]> {
+    this.ensureInit();
+    const cleaned = query.trim();
+    if (!cleaned) return [];
+
+    if (/^\d{4,6}$/.test(cleaned) && this.pgPool) {
+      try {
+        const res = await this.pgPool.query(
+          `SELECT
+             s.stop_id, s.stop_code, s.stop_name, COALESCE(s.stop_name_he, s.stop_name) AS stop_name_he,
+             ST_Y(s.location::geometry)::FLOAT AS stop_lat, ST_X(s.location::geometry)::FLOAT AS stop_lon,
+             CASE WHEN $2::FLOAT IS NOT NULL AND $3::FLOAT IS NOT NULL
+               THEN ROUND(ST_Distance(s.location, ST_SetSRID(ST_MakePoint($3, $2), 4326)::geography))::INT
+               ELSE NULL::INT END AS distance_meters
+           FROM stops s WHERE s.stop_code = $1 LIMIT 3`,
+          [cleaned, nearLat ?? null, nearLon ?? null]
+        );
+        if (res.rows.length > 0) {
+          return res.rows.map((r) => this.mapResolvedStopRow(r as Record<string, unknown>));
+        }
+      } catch {
+        // Fallback below
+      }
+    }
+
+    return this.findPopularStopOnStreet(cleaned, undefined, nearLat, nearLon);
   }
 
   async upsertUserRouteHistoryRow(input: UpsertUserHistoryInput): Promise<void> {

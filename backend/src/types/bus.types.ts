@@ -1,6 +1,24 @@
 export type RenderMode = 'lite' | 'interactive';
 export type EntryContext = 'mcp' | 'standalone';
-export type IntentType = 'LINE_LOOKUP' | 'LINE_DISAMBIGUATION' | 'TRIP_PLANNER';
+export type IntentType =
+  | 'LINE_LOOKUP'
+  | 'LINE_DISAMBIGUATION'
+  | 'TRIP_PLANNER'
+  | 'LOCATION_MISMATCH';
+export type DestinationGranularity = 'city' | 'address' | 'street' | 'poi';
+
+export interface ResolvedStopOption {
+  stop_id: string;
+  stop_code: string;
+  stop_name: string;
+  stop_name_he: string;
+  lat: number;
+  lon: number;
+  routes_count?: number;
+  distance_meters?: number;
+  is_central_hub?: boolean;
+  is_hub?: boolean;
+}
 
 export interface LineCandidate {
   route_id: string;
@@ -73,7 +91,12 @@ export interface GeocodedDestination {
   lon: number;
   place_name: string;
   formatted_address: string;
-  source?: 'cache' | 'google_places' | 'google_geocoding' | 'osm_nominatim' | 'gazetteer' | 'mcp';
+  source?: 'cache' | 'google_places' | 'google_geocoding' | 'osm_nominatim' | 'gazetteer' | 'mcp' | 'gtfs_db';
+  destination_granularity?: DestinationGranularity;
+  city_name?: string;
+  street_name?: string;
+  resolved_stop?: ResolvedStopOption;
+  alternative_street_stops?: ResolvedStopOption[];
 }
 
 export interface DirectRouteMatch {
@@ -321,10 +344,48 @@ export interface LocalSuggestionsResponse {
   local_lines: LocalLineSuggestion[];
 }
 
+export interface ProposedOriginInfo {
+  label: string;
+  lat: number;
+  lon: number;
+  stop_id?: string;
+  stop_code?: string;
+  stop_name?: string;
+  stop_name_he?: string;
+  line_number?: string;
+  destination_query?: string;
+  original_query?: string;
+}
+
+export interface CurrentLocationSummary {
+  lat: number;
+  lon: number;
+  label: string;
+  nearest_stop_name?: string;
+  nearest_stop_name_he?: string;
+  distance_to_proposed_meters: number;
+}
+
+export interface RoutingNotice {
+  message_ru: string;
+  message_he: string;
+  message_en: string;
+  nearest_confirmed_hub?: UserStopInfo;
+}
+
 export interface LiveBusStatusResponse {
   user_id?: string;
   entry_context?: EntryContext;
   intent_type?: IntentType;
+  requires_confirmation?: boolean;
+  confirmation_type?: 'location_mismatch';
+  proposed_origin?: ProposedOriginInfo;
+  current_location_summary?: CurrentLocationSummary;
+  confirmation_prompt_ru?: string;
+  confirmation_prompt_he?: string;
+  confirmation_prompt_en?: string;
+  no_verified_route?: boolean;
+  routing_notice?: RoutingNotice;
   candidates?: LineCandidate[];
   trip_options?: TripOption[];
   returning_routes?: ReturningRouteSuggestion[];

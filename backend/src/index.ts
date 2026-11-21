@@ -80,7 +80,17 @@ const searchRoutesBodySchema = z.object({
   user_id: z.string().trim().max(128).optional(),
   route_id: z.string().trim().optional(),
   direction_id: z.union([z.literal(0), z.literal(1)]).optional(),
-  include_nearby_places: z.boolean().optional()
+  include_nearby_places: z.boolean().optional(),
+  ignore_user_location: z.boolean().optional(),
+  explicit_origin: z
+    .object({
+      lat: z.number().min(-90).max(90),
+      lon: z.number().min(-180).max(180),
+      label: z.string().trim().optional(),
+      stop_id: z.string().trim().optional()
+    })
+    .optional(),
+  preferred_dest_stop_id: z.string().trim().optional()
 });
 
 // 4. Standalone Smart Search & Intent Routing endpoint (lines, disambiguation, A->B transfers)
@@ -92,7 +102,17 @@ app.post('/api/search-routes', async (req: Request, res: Response) => {
       return;
     }
 
-    const { query, user_location, user_id, route_id, direction_id, include_nearby_places } = parsed.data;
+    const {
+      query,
+      user_location,
+      user_id,
+      route_id,
+      direction_id,
+      include_nearby_places,
+      ignore_user_location,
+      explicit_origin,
+      preferred_dest_stop_id
+    } = parsed.data;
     const result = await dispatchSearchIntent({
       query,
       userLocation: user_location,
@@ -100,10 +120,13 @@ app.post('/api/search-routes', async (req: Request, res: Response) => {
       routeId: route_id,
       directionId: direction_id,
       includeNearbyPlaces: include_nearby_places ?? false,
-      allowColdBootstrap: true
+      allowColdBootstrap: true,
+      ignoreUserLocation: ignore_user_location ?? false,
+      explicitOrigin: explicit_origin,
+      preferredDestStopId: preferred_dest_stop_id
     });
 
-    if (user_id) {
+    if (user_id && !result.requires_confirmation && !result.no_verified_route) {
       await recordSearchResultForUser(user_id, user_location, result).catch(() => undefined);
     }
 
@@ -178,6 +201,9 @@ app.get('/api/live-status', async (req: Request, res: Response) => {
         ? routeIdsParam.split(',').map((id) => id.trim()).filter(Boolean)
         : undefined;
       const destLabel = String(req.query.dest_label ?? 'Destination');
+      const preferredDestStopId = req.query.preferred_dest_stop_id
+        ? String(req.query.preferred_dest_stop_id).trim()
+        : undefined;
       const allowColdBootstrap = req.query.bootstrap === 'true';
 
       const tripStatus = await planBestBusesToDestination({
@@ -191,6 +217,7 @@ app.get('/api/live-status', async (req: Request, res: Response) => {
         },
         entryContext,
         routeIdsFilter,
+        preferredDestStopId,
         allowColdBootstrap
       });
 
@@ -198,7 +225,7 @@ app.get('/api/live-status', async (req: Request, res: Response) => {
         void pollingWorker.runCycle();
       }
 
-      if (userId && allowColdBootstrap) {
+      if (userId && allowColdBootstrap && !tripStatus.no_verified_route) {
         await recordSearchResultForUser(userId, { lat, lon }, tripStatus).catch(() => undefined);
       }
 
