@@ -84,17 +84,23 @@ import { VoiceRecognitionService } from '../../services/voice-recognition.servic
     `
       .search-shell {
         inline-size: 100%;
+        min-inline-size: 0;
+        max-inline-size: 100%;
       }
 
       .search-pill {
         display: flex;
         align-items: center;
-        gap: 0.55rem;
+        gap: 0.5rem;
+        inline-size: 100%;
+        min-inline-size: 0;
+        max-inline-size: 100%;
+        overflow: hidden;
         background: #dfe5ec;
         color: #1e293b;
         border-radius: 0.95rem;
         padding-block: 0.52rem;
-        padding-inline: 0.85rem;
+        padding-inline: 0.8rem;
         box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
         transition: box-shadow 0.15s ease;
       }

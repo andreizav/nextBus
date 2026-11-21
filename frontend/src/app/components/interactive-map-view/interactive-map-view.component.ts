@@ -215,60 +215,76 @@ import type {
     `
       .nb-map-card {
         display: grid;
+        grid-template-columns: minmax(0, 1fr);
         gap: 0.95rem;
         inline-size: 100%;
         min-inline-size: 0;
+        max-inline-size: 100%;
+        overflow: hidden;
         color: #f8fafc;
       }
 
       /* 1. Hero Metrics (identical proportions to Lite View) */
       .nb-map-hero {
         display: grid;
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
         align-items: end;
         text-align: center;
         gap: 0.5rem;
+        min-inline-size: 0;
+        max-inline-size: 100%;
         padding-block: 0.25rem 0.1rem;
       }
 
       .nb-map-metric-col {
         display: grid;
+        grid-template-columns: minmax(0, 1fr);
         gap: 0.2rem;
         justify-items: center;
+        min-inline-size: 0;
+        max-inline-size: 100%;
       }
 
       .nb-map-metric-main {
         color: #ffffff;
-        font-size: 3rem;
+        font-size: clamp(2.1rem, 8.5vw, 3rem);
         font-weight: 700;
         line-height: 1;
         letter-spacing: -0.03em;
         white-space: nowrap;
+        max-inline-size: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
 
       .nb-map-metric-main.is-compact {
-        font-size: 2rem;
+        font-size: clamp(1.25rem, 5.5vw, 2rem);
       }
 
       .nb-map-metric-unit {
-        font-size: 1.3rem;
+        font-size: clamp(0.95rem, 3.6vw, 1.3rem);
         font-weight: 700;
-        margin-inline-start: 0.25rem;
+        margin-inline-start: 0.2rem;
         letter-spacing: 0.02em;
       }
 
       .nb-map-metric-caption {
-        font-size: 0.84rem;
+        font-size: 0.82rem;
         color: #8b96a5;
         font-weight: 400;
+        max-inline-size: 100%;
+        overflow-wrap: anywhere;
       }
 
       /* 2. Direction Switch Bar */
       .nb-map-dir-bar {
         display: flex;
+        flex-wrap: wrap;
         align-items: center;
         justify-content: space-between;
-        gap: 0.6rem;
+        gap: 0.5rem;
+        min-inline-size: 0;
+        max-inline-size: 100%;
         background: rgba(255, 255, 255, 0.04);
         border: 1px solid rgba(255, 255, 255, 0.09);
         border-radius: 0.9rem;
@@ -280,7 +296,7 @@ import type {
         align-items: center;
         gap: 0.35rem;
         min-inline-size: 0;
-        flex: 1 1 auto;
+        flex: 1 1 120px;
       }
 
       .nb-map-dir-arrow {
@@ -293,6 +309,7 @@ import type {
         font-size: 0.78rem;
         color: #cbd5e1;
         font-weight: 500;
+        min-inline-size: 0;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
@@ -301,14 +318,16 @@ import type {
       .nb-map-dir-btn {
         display: inline-flex;
         align-items: center;
-        gap: 0.32rem;
+        gap: 0.3rem;
         flex-shrink: 0;
+        max-inline-size: 100%;
+        white-space: nowrap;
         background: rgba(48, 135, 246, 0.16);
         color: #93c5fd;
         border: 1px solid rgba(59, 130, 246, 0.45);
         border-radius: 999px;
-        padding: 0.32rem 0.7rem;
-        font-size: 0.75rem;
+        padding: 0.28rem 0.62rem;
+        font-size: 0.72rem;
         font-weight: 600;
         cursor: pointer;
         transition: all 0.15s ease;
@@ -323,13 +342,20 @@ import type {
       /* 3. Multi-Stop Trip Variants (Option 1 / 2 / 3) */
       .nb-map-variants {
         display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        min-inline-size: 0;
+        max-inline-size: 100%;
         gap: 0.4rem;
       }
 
       .nb-map-var-tab {
         display: grid;
+        grid-template-columns: minmax(0, 1fr);
         gap: 0.22rem;
         inline-size: 100%;
+        min-inline-size: 0;
+        max-inline-size: 100%;
+        overflow: hidden;
         text-align: start;
         background: rgba(255, 255, 255, 0.045);
         border: 1px solid rgba(255, 255, 255, 0.09);
@@ -354,9 +380,11 @@ import type {
 
       .nb-map-var-top {
         display: flex;
+        flex-wrap: wrap;
         align-items: center;
         justify-content: space-between;
-        gap: 0.5rem;
+        gap: 0.4rem;
+        min-inline-size: 0;
         font-size: 0.78rem;
         font-weight: 700;
       }
@@ -392,6 +420,8 @@ import type {
         flex-wrap: wrap;
         align-items: center;
         gap: 0.3rem;
+        min-inline-size: 0;
+        max-inline-size: 100%;
         font-size: 0.72rem;
         color: #9aa6b4;
       }
@@ -401,10 +431,12 @@ import type {
       }
 
       .nb-map-var-stop {
+        flex: 1 1 auto;
+        min-inline-size: 0;
+        max-inline-size: 100%;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
-        max-inline-size: 260px;
       }
 
       .nb-map-var-walk {
@@ -519,6 +551,8 @@ import type {
         justify-content: space-between;
         align-items: center;
         gap: 0.45rem;
+        min-inline-size: 0;
+        max-inline-size: 100%;
         padding-block: 0.52rem;
         padding-inline: 0.78rem;
         background: rgba(15, 23, 34, 0.78);
@@ -532,6 +566,10 @@ import type {
         align-items: center;
         gap: 0.28rem;
         min-inline-size: 0;
+        max-inline-size: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        overflow-wrap: anywhere;
       }
 
       .nb-hud-muted {
@@ -551,14 +589,20 @@ import type {
         border-radius: 0.85rem;
         padding: 0.55rem 0.75rem;
         display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        min-inline-size: 0;
+        max-inline-size: 100%;
+        overflow: hidden;
         gap: 0.4rem;
       }
 
       .nb-map-trip-row {
         display: flex;
+        flex-wrap: wrap;
         justify-content: space-between;
         align-items: center;
-        gap: 0.5rem;
+        gap: 0.45rem;
+        min-inline-size: 0;
         font-size: 0.8rem;
         font-weight: 600;
         color: #e2e8f0;
@@ -567,6 +611,7 @@ import type {
       .nb-map-dest-eta {
         color: #60a5fa;
         font-weight: 700;
+        flex-shrink: 0;
       }
 
       .nb-map-xfer-list {
@@ -574,6 +619,8 @@ import type {
         margin: 0;
         padding: 0;
         display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        min-inline-size: 0;
         gap: 0.32rem;
       }
 
@@ -581,8 +628,14 @@ import type {
         display: flex;
         align-items: baseline;
         gap: 0.45rem;
+        min-inline-size: 0;
         font-size: 0.75rem;
         color: #cbd5e1;
+      }
+
+      .nb-map-xfer-desc {
+        min-inline-size: 0;
+        overflow-wrap: anywhere;
       }
 
       .nb-map-xfer-badge {
@@ -604,11 +657,15 @@ import type {
         font-size: 0.78rem;
         line-height: 1.45;
         color: #cbd5e1;
+        overflow-wrap: anywhere;
       }
 
       /* 6. Cafes Nearby */
       .nb-map-offers {
         display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        min-inline-size: 0;
+        max-inline-size: 100%;
         gap: 0.48rem;
       }
 
@@ -620,6 +677,8 @@ import type {
 
       .nb-map-offers-grid {
         display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        min-inline-size: 0;
         gap: 0.45rem;
       }
 
@@ -629,6 +688,10 @@ import type {
         border-radius: 0.85rem;
         padding: 0.55rem 0.72rem;
         display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        min-inline-size: 0;
+        max-inline-size: 100%;
+        overflow: hidden;
         gap: 0.25rem;
       }
 
@@ -637,11 +700,14 @@ import type {
         justify-content: space-between;
         align-items: baseline;
         gap: 0.5rem;
+        min-inline-size: 0;
       }
 
       .nb-map-offer-name {
         font-size: 0.82rem;
         color: #f8fafc;
+        min-inline-size: 0;
+        overflow-wrap: anywhere;
       }
 
       .nb-map-offer-dist {
@@ -655,6 +721,7 @@ import type {
         margin: 0;
         font-size: 0.75rem;
         color: #9aa6b4;
+        overflow-wrap: anywhere;
       }
 
       .nb-map-offer-link {

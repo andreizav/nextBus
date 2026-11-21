@@ -330,43 +330,62 @@ const EMPTY_INITIAL_STATE: LiveBusStatusResponse = {
         background: linear-gradient(180deg, #222931 0%, #1d232b 100%);
         color: #f8fafc;
         inline-size: 100%;
-        max-inline-size: 420px;
+        max-inline-size: min(420px, 100%);
         margin-inline: auto;
         min-inline-size: 0;
+        overflow-x: clip;
         border: 1px solid rgba(255, 255, 255, 0.11);
         border-radius: 1.75rem;
         padding-block: 1.15rem 1.2rem;
         padding-inline: 1.15rem;
         display: grid;
+        grid-template-columns: minmax(0, 1fr);
         gap: 1rem;
         box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.08);
         transition: max-inline-size 0.2s ease;
       }
 
       .widget-shell.is-map-mode {
-        max-inline-size: 480px;
+        max-inline-size: min(480px, 100%);
+      }
+
+      @media (max-width: 400px) {
+        .widget-shell {
+          padding-block: 0.95rem 1rem;
+          padding-inline: 0.85rem;
+          border-radius: 1.35rem;
+        }
       }
 
       /* Subtle Micro Header */
       .micro-top-bar {
         display: flex;
+        flex-wrap: wrap;
         justify-content: space-between;
         align-items: center;
-        gap: 0.5rem;
+        column-gap: 0.45rem;
+        row-gap: 0.3rem;
+        min-inline-size: 0;
+        max-inline-size: 100%;
         margin-block: -0.25rem -0.35rem;
       }
 
       .micro-geo-btn {
         background: transparent;
         border: none;
-        padding: 0.2rem 0.35rem;
+        padding: 0.2rem 0.3rem;
         border-radius: 999px;
         color: #8b96a5;
         font-size: 0.72rem;
         font-weight: 500;
-        display: inline-flex;
-        align-items: center;
-        gap: 0.25rem;
+        display: block;
+        text-align: start;
+        flex: 0 1 auto;
+        min-inline-size: 0;
+        max-inline-size: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
         cursor: pointer;
       }
 
@@ -378,12 +397,15 @@ const EMPTY_INITIAL_STATE: LiveBusStatusResponse = {
       .micro-right {
         display: inline-flex;
         align-items: center;
-        gap: 0.4rem;
+        gap: 0.3rem;
+        flex-shrink: 0;
+        margin-inline-start: auto;
+        max-inline-size: 100%;
       }
 
       .micro-langs {
         display: inline-flex;
-        gap: 0.15rem;
+        gap: 0.1rem;
       }
 
       .micro-lang-btn,
@@ -391,9 +413,9 @@ const EMPTY_INITIAL_STATE: LiveBusStatusResponse = {
         background: transparent;
         border: none;
         color: #7c8796;
-        font-size: 0.68rem;
+        font-size: 0.66rem;
         font-weight: 700;
-        padding: 0.18rem 0.35rem;
+        padding: 0.18rem 0.28rem;
         border-radius: 0.4rem;
         cursor: pointer;
       }
@@ -411,6 +433,9 @@ const EMPTY_INITIAL_STATE: LiveBusStatusResponse = {
       /* Minimalist Empty Ready State */
       .minimal-ready {
         display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        min-inline-size: 0;
+        max-inline-size: 100%;
         gap: 0.9rem;
         padding-block: 0.35rem 0.25rem;
       }
@@ -418,6 +443,8 @@ const EMPTY_INITIAL_STATE: LiveBusStatusResponse = {
       .ready-head {
         text-align: center;
         display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        min-inline-size: 0;
         gap: 0.28rem;
       }
 
@@ -437,6 +464,9 @@ const EMPTY_INITIAL_STATE: LiveBusStatusResponse = {
 
       .sug-block {
         display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        min-inline-size: 0;
+        max-inline-size: 100%;
         gap: 0.42rem;
       }
 
@@ -458,13 +488,20 @@ const EMPTY_INITIAL_STATE: LiveBusStatusResponse = {
 
       .sug-list {
         display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        min-inline-size: 0;
+        max-inline-size: 100%;
         gap: 0.42rem;
       }
 
       .sug-card {
         display: grid;
+        grid-template-columns: minmax(0, 1fr);
         gap: 0.2rem;
         inline-size: 100%;
+        min-inline-size: 0;
+        max-inline-size: 100%;
+        overflow: hidden;
         text-align: start;
         background: rgba(255, 255, 255, 0.045);
         border: 1px solid rgba(255, 255, 255, 0.09);
@@ -491,6 +528,7 @@ const EMPTY_INITIAL_STATE: LiveBusStatusResponse = {
         align-items: center;
         gap: 0.48rem;
         min-inline-size: 0;
+        max-inline-size: 100%;
       }
 
       .sug-line-badge {
@@ -531,8 +569,11 @@ const EMPTY_INITIAL_STATE: LiveBusStatusResponse = {
         flex-wrap: wrap;
         align-items: center;
         gap: 0.3rem;
+        min-inline-size: 0;
+        max-inline-size: 100%;
         font-size: 0.71rem;
         color: #9aa6b4;
+        overflow-wrap: anywhere;
       }
 
       .defer-status {
@@ -545,7 +586,9 @@ const EMPTY_INITIAL_STATE: LiveBusStatusResponse = {
       /* Bottom Segmented Blue Pill Bar */
       .bottom-pill-bar {
         display: grid;
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        min-inline-size: 0;
+        max-inline-size: 100%;
         background: #1a54a6;
         border-radius: 999px;
         padding: 0.22rem;
@@ -557,14 +600,18 @@ const EMPTY_INITIAL_STATE: LiveBusStatusResponse = {
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        gap: 0.45rem;
+        gap: 0.4rem;
+        min-inline-size: 0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
         background: transparent;
         border: none;
         border-radius: 999px;
         padding-block: 0.62rem;
-        padding-inline: 0.75rem;
+        padding-inline: 0.55rem;
         color: rgba(255, 255, 255, 0.85);
-        font-size: 0.88rem;
+        font-size: 0.84rem;
         font-weight: 600;
         cursor: pointer;
         transition: background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;

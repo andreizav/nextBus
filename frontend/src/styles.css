@@ -19,6 +19,8 @@
 html {
   scrollbar-gutter: stable;
   overflow-y: scroll;
+  overflow-x: clip;
+  max-inline-size: 100%;
 }
 
 body {
@@ -26,10 +28,19 @@ body {
   padding-block: 1.5rem;
   padding-inline: 1rem;
   min-block-size: 100dvh;
+  max-inline-size: 100%;
+  overflow-x: clip;
   background: radial-gradient(circle at top center, #202830 0%, #161c22 70%);
   color: var(--nb-text-primary);
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
+}
+
+@media (max-width: 480px) {
+  body {
+    padding-block: 0.75rem;
+    padding-inline: 0.6rem;
+  }
 }
 
 nb-next-bus-widget,

@@ -222,6 +222,9 @@ import type {
     `
       .minimal-card-body {
         display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        min-inline-size: 0;
+        max-inline-size: 100%;
         gap: 1.15rem;
         padding-block: 0.35rem 0.25rem;
       }
@@ -229,51 +232,64 @@ import type {
       /* 1. Hero Metrics */
       .hero-metrics {
         display: grid;
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
         align-items: end;
         text-align: center;
         gap: 0.5rem;
+        min-inline-size: 0;
+        max-inline-size: 100%;
         padding-block: 0.35rem 0.15rem;
       }
 
       .metric-col {
         display: grid;
+        grid-template-columns: minmax(0, 1fr);
         gap: 0.2rem;
         justify-items: center;
+        min-inline-size: 0;
+        max-inline-size: 100%;
       }
 
       .metric-main {
         color: #ffffff;
-        font-size: 3.1rem;
+        font-size: clamp(2.1rem, 8.5vw, 3.1rem);
         font-weight: 700;
         line-height: 1;
         letter-spacing: -0.03em;
         white-space: nowrap;
+        max-inline-size: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
 
       .metric-main.is-compact {
-        font-size: 2.05rem;
+        font-size: clamp(1.25rem, 5.5vw, 2rem);
       }
 
       .metric-unit {
-        font-size: 1.35rem;
+        font-size: clamp(0.95rem, 3.6vw, 1.35rem);
         font-weight: 700;
-        margin-inline-start: 0.25rem;
+        margin-inline-start: 0.2rem;
         letter-spacing: 0.02em;
       }
 
       .metric-caption {
-        font-size: 0.85rem;
+        font-size: 0.82rem;
         color: #8b96a5;
         font-weight: 400;
+        max-inline-size: 100%;
+        overflow-wrap: anywhere;
       }
 
       /* 2. Minimalist Direction Switch Bar */
       .direction-bar {
         display: flex;
+        flex-wrap: wrap;
         align-items: center;
         justify-content: space-between;
-        gap: 0.6rem;
+        gap: 0.5rem;
+        min-inline-size: 0;
+        max-inline-size: 100%;
         background: rgba(255, 255, 255, 0.04);
         border: 1px solid rgba(255, 255, 255, 0.09);
         border-radius: 0.9rem;
@@ -285,7 +301,7 @@ import type {
         align-items: center;
         gap: 0.35rem;
         min-inline-size: 0;
-        flex: 1 1 auto;
+        flex: 1 1 120px;
       }
 
       .dir-arrow {
@@ -298,6 +314,7 @@ import type {
         font-size: 0.78rem;
         color: #cbd5e1;
         font-weight: 500;
+        min-inline-size: 0;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
@@ -306,14 +323,16 @@ import type {
       .direction-switch-btn {
         display: inline-flex;
         align-items: center;
-        gap: 0.32rem;
+        gap: 0.3rem;
         flex-shrink: 0;
+        max-inline-size: 100%;
+        white-space: nowrap;
         background: rgba(48, 135, 246, 0.16);
         color: #93c5fd;
         border: 1px solid rgba(59, 130, 246, 0.45);
         border-radius: 999px;
-        padding: 0.32rem 0.7rem;
-        font-size: 0.75rem;
+        padding: 0.28rem 0.62rem;
+        font-size: 0.72rem;
         font-weight: 600;
         cursor: pointer;
         transition: all 0.15s ease;
@@ -328,13 +347,20 @@ import type {
       /* 3. Multi-Stop Trip Variant Switcher (Option 1 / 2 / 3) */
       .variant-switcher {
         display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        min-inline-size: 0;
+        max-inline-size: 100%;
         gap: 0.4rem;
       }
 
       .variant-tab {
         display: grid;
+        grid-template-columns: minmax(0, 1fr);
         gap: 0.22rem;
         inline-size: 100%;
+        min-inline-size: 0;
+        max-inline-size: 100%;
+        overflow: hidden;
         text-align: start;
         background: rgba(255, 255, 255, 0.045);
         border: 1px solid rgba(255, 255, 255, 0.09);
@@ -359,9 +385,11 @@ import type {
 
       .var-top {
         display: flex;
+        flex-wrap: wrap;
         align-items: center;
         justify-content: space-between;
-        gap: 0.5rem;
+        gap: 0.4rem;
+        min-inline-size: 0;
         font-size: 0.78rem;
         font-weight: 700;
       }
@@ -397,6 +425,8 @@ import type {
         flex-wrap: wrap;
         align-items: center;
         gap: 0.3rem;
+        min-inline-size: 0;
+        max-inline-size: 100%;
         font-size: 0.72rem;
         color: #9aa6b4;
       }
@@ -406,10 +436,12 @@ import type {
       }
 
       .var-stop {
+        flex: 1 1 auto;
+        min-inline-size: 0;
+        max-inline-size: 100%;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
-        max-inline-size: 240px;
       }
 
       .var-walk {
@@ -424,14 +456,20 @@ import type {
         border-radius: 0.85rem;
         padding: 0.55rem 0.75rem;
         display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        min-inline-size: 0;
+        max-inline-size: 100%;
+        overflow: hidden;
         gap: 0.4rem;
       }
 
       .trip-dest-row {
         display: flex;
+        flex-wrap: wrap;
         justify-content: space-between;
         align-items: center;
-        gap: 0.5rem;
+        gap: 0.45rem;
+        min-inline-size: 0;
         font-size: 0.8rem;
         font-weight: 600;
         color: #e2e8f0;
@@ -440,6 +478,7 @@ import type {
       .dest-eta {
         color: #60a5fa;
         font-weight: 700;
+        flex-shrink: 0;
       }
 
       .transfer-legs-compact {
@@ -447,6 +486,8 @@ import type {
         margin: 0;
         padding: 0;
         display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        min-inline-size: 0;
         gap: 0.32rem;
       }
 
@@ -454,8 +495,14 @@ import type {
         display: flex;
         align-items: baseline;
         gap: 0.45rem;
+        min-inline-size: 0;
         font-size: 0.75rem;
         color: #cbd5e1;
+      }
+
+      .xfer-desc {
+        min-inline-size: 0;
+        overflow-wrap: anywhere;
       }
 
       .xfer-badge {
@@ -475,7 +522,11 @@ import type {
       /* 4. Minimalist Dashed Blue Vertical Timeline */
       .timeline-wrapper {
         display: grid;
-        padding-inline-start: 0.5rem;
+        grid-template-columns: minmax(0, 1fr);
+        min-inline-size: 0;
+        max-inline-size: 100%;
+        overflow: hidden;
+        padding-inline-start: 0.25rem;
       }
 
       .tl-row {
@@ -483,7 +534,9 @@ import type {
         grid-template-columns: 30px minmax(0, 1fr);
         align-items: center;
         min-block-size: 2.35rem;
-        gap: 0.75rem;
+        min-inline-size: 0;
+        max-inline-size: 100%;
+        gap: 0.65rem;
       }
 
       .tl-row.is-focus-row {
@@ -571,6 +624,8 @@ import type {
         align-items: center;
         gap: 0.45rem;
         min-inline-size: 0;
+        max-inline-size: 100%;
+        overflow: hidden;
       }
 
       .pin-content {
@@ -584,18 +639,23 @@ import type {
       }
 
       .near-you-label {
-        font-size: 1rem;
+        font-size: 0.96rem;
         font-weight: 600;
         color: #f8fafc;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
       .near-dist {
-        font-size: 0.76rem;
+        font-size: 0.74rem;
         color: #8b96a5;
+        flex-shrink: 0;
       }
 
       .dir-mini-btn {
         margin-inline-start: auto;
+        flex-shrink: 0;
         background: rgba(255, 255, 255, 0.08);
         color: #cbd5e1;
         border: 1px solid rgba(255, 255, 255, 0.12);
@@ -611,25 +671,27 @@ import type {
       }
 
       .stop-label {
+        flex: 1 1 auto;
+        min-inline-size: 0;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
       }
 
       .text-muted {
-        font-size: 0.96rem;
+        font-size: clamp(0.86rem, 3.5vw, 0.96rem);
         color: #7c8796;
         font-weight: 400;
       }
 
       .text-adjacent {
-        font-size: 1.03rem;
+        font-size: clamp(0.92rem, 3.8vw, 1.03rem);
         color: #dbe2ea;
         font-weight: 500;
       }
 
       .text-active {
-        font-size: 1.24rem;
+        font-size: clamp(1.05rem, 4.5vw, 1.24rem);
         color: #ffffff;
         font-weight: 700;
         letter-spacing: -0.01em;
