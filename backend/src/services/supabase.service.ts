@@ -1194,10 +1194,15 @@ class SupabaseService {
 
     const CORE_INTERCHANGES = [
       MAJOR_INTERCITY_HUBS.find((h) => h.name === 'Tel Aviv Savidor')!,
+      MAJOR_INTERCITY_HUBS.find((h) => h.name === 'Tel Aviv CBS')!,
       MAJOR_INTERCITY_HUBS.find((h) => h.name === 'Haifa Hof HaCarmel')!,
       MAJOR_INTERCITY_HUBS.find((h) => h.name === 'Haifa Merkazit HaMifratz')!,
       MAJOR_INTERCITY_HUBS.find((h) => h.name === 'Jerusalem CBS')!,
-      MAJOR_INTERCITY_HUBS.find((h) => h.name === "Be'er Sheva CBS")!
+      MAJOR_INTERCITY_HUBS.find((h) => h.name === "Be'er Sheva CBS")!,
+      MAJOR_INTERCITY_HUBS.find((h) => h.name === 'Rehovot CBS')!,
+      MAJOR_INTERCITY_HUBS.find((h) => h.name === 'Ashdod CBS')!,
+      MAJOR_INTERCITY_HUBS.find((h) => h.name === 'Netanya CBS')!,
+      MAJOR_INTERCITY_HUBS.find((h) => h.name === 'Hadera CBS')!
     ].filter(Boolean);
 
     const collected = new Map<string, { score: number; row: TwoTransferTripMatch }>();
@@ -1217,8 +1222,8 @@ class SupabaseService {
           for (const dH of dHubs) {
             if (dH.name === oH.name) continue;
             const [leg2List, leg3List] = await Promise.all([
-              this.findDirectRoutesBetweenPoints(oH.lat, oH.lon, dH.lat, dH.lon, 850),
-              this.findDirectRoutesBetweenPoints(dH.lat, dH.lon, destLat, destLon, 850)
+              this.findDirectRoutesBetweenPoints(oH.lat, oH.lon, dH.lat, dH.lon, 950),
+              this.findDirectRoutesBetweenPoints(dH.lat, dH.lon, destLat, destLon, Math.max(radiusMeters, 1000))
             ]);
             for (const l1 of leg1List.slice(0, 3)) {
               for (const l2 of leg2List.slice(0, 3)) {
@@ -1322,7 +1327,7 @@ class SupabaseService {
             oH.lon,
             core.lat,
             core.lon,
-            850
+            950
           );
           if (leg2List.length === 0) continue;
 
@@ -1331,7 +1336,7 @@ class SupabaseService {
             core.lon,
             destLat,
             destLon,
-            850
+            Math.max(radiusMeters, 1000)
           );
           for (const l1 of leg1List.slice(0, 3)) {
             for (const l2 of leg2List.slice(0, 3)) {

@@ -248,6 +248,17 @@ const ISRAEL_GAZETTEER: IsraelLandmark[] = [
     formatted_address: 'Herzl St, Rishon LeZion, Israel'
   },
   {
+    patterns: [
+      /(?:שכונת\s*)?רחובות\s*(?:ה?הולנדית|הולנד)/i,
+      /rehovot\s*(?:ha)?hollandit/i,
+      /реховот\s*(?:голланд|голландия)/i
+    ],
+    lat: 31.8913,
+    lon: 34.7796,
+    place_name: 'רחובות ההולנדית (שכונה)',
+    formatted_address: 'Har HaTsofim St, Rehovot Hollandit, Israel'
+  },
+  {
     patterns: [/реховот|rehovot|רחובות/i],
     lat: 31.8928,
     lon: 34.8113,

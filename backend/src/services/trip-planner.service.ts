@@ -394,16 +394,21 @@ export function buildTripOptions(
           stop_name: opt.origin_stop.stop_name,
           stop_name_he: opt.origin_stop.stop_name_he,
           eta_minutes: opt.eta_to_boarding_min,
-          scheduled_time: boardTime
+          scheduled_time: boardTime,
+          lat: opt.origin_stop.lat,
+          lon: opt.origin_stop.lon
         },
         alight_stop: {
           stop_id: opt.dest_stop.stop_id,
           stop_code: opt.dest_stop.stop_code,
           stop_name: opt.dest_stop.stop_name,
           stop_name_he: opt.dest_stop.stop_name_he,
-          stops_count: opt.stops_between
+          stops_count: opt.stops_between,
+          lat: opt.dest_stop.lat,
+          lon: opt.dest_stop.lon
         },
-        ride_duration_min: opt.ride_duration_min
+        ride_duration_min: opt.ride_duration_min,
+        timeline_stops: opt.timeline_stops
       };
 
       return {
@@ -431,16 +436,21 @@ export function buildTripOptions(
         stop_name: opt.origin_stop.stop_name,
         stop_name_he: opt.origin_stop.stop_name_he,
         eta_minutes: opt.eta_to_boarding_min,
-        scheduled_time: boardTime
+        scheduled_time: boardTime,
+        lat: opt.origin_stop.lat,
+        lon: opt.origin_stop.lon
       },
       alight_stop: {
         stop_id: xfer.alight_stop.stop_id,
         stop_code: xfer.alight_stop.stop_code,
         stop_name: xfer.alight_stop.stop_name,
         stop_name_he: xfer.alight_stop.stop_name_he,
-        stops_count: leg1StopsCount
+        stops_count: leg1StopsCount,
+        lat: xfer.alight_stop.lat,
+        lon: xfer.alight_stop.lon
       },
-      ride_duration_min: leg1RideMin
+      ride_duration_min: leg1RideMin,
+      timeline_stops: opt.timeline_stops
     };
 
     const leg2: TripLeg = {
@@ -454,18 +464,23 @@ export function buildTripOptions(
         stop_name: sec.board_stop.stop_name,
         stop_name_he: sec.board_stop.stop_name_he,
         eta_minutes: sec.bus.eta_minutes,
-        scheduled_time: xfer.next_bus_board_time
+        scheduled_time: xfer.next_bus_board_time,
+        lat: sec.board_stop.lat,
+        lon: sec.board_stop.lon
       },
       alight_stop: {
         stop_id: opt.dest_stop.stop_id,
         stop_code: opt.dest_stop.stop_code,
         stop_name: opt.dest_stop.stop_name,
         stop_name_he: opt.dest_stop.stop_name_he,
-        stops_count: sec.stops_between
+        stops_count: sec.stops_between,
+        lat: opt.dest_stop.lat,
+        lon: opt.dest_stop.lon
       },
       transfer_wait_min: xfer.wait_minutes,
       transfer_walk_meters: xfer.walk_meters,
-      ride_duration_min: sec.ride_duration_min
+      ride_duration_min: sec.ride_duration_min,
+      timeline_stops: sec.timeline_stops
     };
 
     return {
@@ -1258,81 +1273,6 @@ export async function planBestBusesToDestination(
         new Date(now.getTime() + (leg1Bus.etaMinutes + leg1RideMin + wait1Min + leg2RideMin + wait2Min) * 60_000)
       );
 
-      const legs: TripLeg[] = [
-        {
-          leg_type: 'BOARD_AND_RIDE',
-          line_number: row.leg1_route_short_name,
-          route_id: row.leg1_route_id,
-          direction_id: leg1Dir,
-          board_stop: {
-            stop_id: row.origin_stop_id,
-            stop_code: row.origin_stop_code,
-            stop_name: row.origin_stop_name,
-            stop_name_he: row.origin_stop_name_he,
-            eta_minutes: leg1Bus.etaMinutes,
-            scheduled_time: board1Time
-          },
-          alight_stop: {
-            stop_id: row.xfer1_alight_stop_id,
-            stop_code: row.xfer1_alight_stop_code,
-            stop_name: row.xfer1_alight_stop_name,
-            stop_name_he: row.xfer1_alight_stop_name_he,
-            stops_count: row.leg1_stops_between
-          },
-          ride_duration_min: leg1RideMin
-        },
-        {
-          leg_type: 'TRANSFER',
-          line_number: row.leg2_route_short_name,
-          route_id: row.leg2_route_id,
-          direction_id: leg2Dir,
-          board_stop: {
-            stop_id: row.xfer1_board_stop_id,
-            stop_code: row.xfer1_board_stop_code,
-            stop_name: row.xfer1_board_stop_name,
-            stop_name_he: row.xfer1_board_stop_name_he,
-            eta_minutes: leg2Bus.etaMinutes,
-            scheduled_time: board2Time
-          },
-          alight_stop: {
-            stop_id: row.xfer2_alight_stop_id,
-            stop_code: row.xfer2_alight_stop_code ?? row.xfer2_alight_stop_id,
-            stop_name: row.xfer2_alight_stop_name ?? row.xfer2_alight_stop_id,
-            stop_name_he: row.xfer2_alight_stop_name_he ?? row.xfer2_alight_stop_name ?? row.xfer2_alight_stop_id,
-            stops_count: row.leg2_stops_between
-          },
-          transfer_wait_min: wait1Min,
-          transfer_walk_meters: row.xfer1_walk_meters,
-          ride_duration_min: leg2RideMin
-        },
-        {
-          leg_type: 'TRANSFER',
-          line_number: row.leg3_route_short_name,
-          route_id: row.leg3_route_id,
-          direction_id: leg3Dir,
-          board_stop: {
-            stop_id: row.xfer2_board_stop_id,
-            stop_code: row.xfer2_board_stop_code ?? row.xfer2_board_stop_id,
-            stop_name: row.xfer2_board_stop_name ?? row.xfer2_board_stop_id,
-            stop_name_he: row.xfer2_board_stop_name_he ?? row.xfer2_board_stop_name ?? row.xfer2_board_stop_id,
-            eta_minutes: leg3Bus.etaMinutes,
-            scheduled_time: board3Time
-          },
-          alight_stop: {
-            stop_id: row.dest_stop_id,
-            stop_code: row.dest_stop_code,
-            stop_name: row.dest_stop_name,
-            stop_name_he: row.dest_stop_name_he,
-            stops_count: row.leg3_stops_between
-          },
-          transfer_wait_min: wait2Min,
-          transfer_walk_meters: row.xfer2_walk_meters,
-          ride_duration_min: leg3RideMin
-        }
-      ];
-
-      extraThreeLegOptions.set(`${row.leg1_route_id}:${row.dest_stop_id}`, legs);
-
       const leg1Timeline = await buildLegTimelineSlice(
         row.leg1_route_id,
         leg1Dir,
@@ -1349,6 +1289,104 @@ export async function planBestBusesToDestination(
         leg2Bus.busInfo.current_stop_sequence,
         getDirectionStops
       );
+      const leg3Timeline = await buildLegTimelineSlice(
+        row.leg3_route_id,
+        leg3Dir,
+        row.xfer2_board_stop_sequence ?? 1,
+        row.dest_stop_sequence,
+        leg3Bus.busInfo.current_stop_sequence,
+        getDirectionStops
+      );
+
+      const legs: TripLeg[] = [
+        {
+          leg_type: 'BOARD_AND_RIDE',
+          line_number: row.leg1_route_short_name,
+          route_id: row.leg1_route_id,
+          direction_id: leg1Dir,
+          board_stop: {
+            stop_id: row.origin_stop_id,
+            stop_code: row.origin_stop_code,
+            stop_name: row.origin_stop_name,
+            stop_name_he: row.origin_stop_name_he,
+            eta_minutes: leg1Bus.etaMinutes,
+            scheduled_time: board1Time,
+            lat: row.origin_lat,
+            lon: row.origin_lon
+          },
+          alight_stop: {
+            stop_id: row.xfer1_alight_stop_id,
+            stop_code: row.xfer1_alight_stop_code,
+            stop_name: row.xfer1_alight_stop_name,
+            stop_name_he: row.xfer1_alight_stop_name_he,
+            stops_count: row.leg1_stops_between,
+            lat: row.xfer1_alight_lat,
+            lon: row.xfer1_alight_lon
+          },
+          ride_duration_min: leg1RideMin,
+          timeline_stops: leg1Timeline
+        },
+        {
+          leg_type: 'TRANSFER',
+          line_number: row.leg2_route_short_name,
+          route_id: row.leg2_route_id,
+          direction_id: leg2Dir,
+          board_stop: {
+            stop_id: row.xfer1_board_stop_id,
+            stop_code: row.xfer1_board_stop_code,
+            stop_name: row.xfer1_board_stop_name,
+            stop_name_he: row.xfer1_board_stop_name_he,
+            eta_minutes: leg2Bus.etaMinutes,
+            scheduled_time: board2Time,
+            lat: row.xfer1_board_lat,
+            lon: row.xfer1_board_lon
+          },
+          alight_stop: {
+            stop_id: row.xfer2_alight_stop_id ?? row.xfer2_board_stop_id ?? row.dest_stop_id,
+            stop_code: row.xfer2_alight_stop_code ?? row.xfer2_board_stop_code ?? row.dest_stop_code,
+            stop_name: row.xfer2_alight_stop_name ?? row.xfer2_board_stop_name ?? row.dest_stop_name,
+            stop_name_he: row.xfer2_alight_stop_name_he ?? row.xfer2_board_stop_name_he ?? row.dest_stop_name_he,
+            stops_count: row.leg2_stops_between,
+            lat: row.xfer2_alight_lat ?? row.xfer2_board_lat ?? row.dest_lat,
+            lon: row.xfer2_alight_lon ?? row.xfer2_board_lon ?? row.dest_lon
+          },
+          transfer_wait_min: wait1Min,
+          transfer_walk_meters: row.xfer1_walk_meters,
+          ride_duration_min: leg2RideMin,
+          timeline_stops: leg2Timeline
+        },
+        {
+          leg_type: 'TRANSFER',
+          line_number: row.leg3_route_short_name,
+          route_id: row.leg3_route_id,
+          direction_id: leg3Dir,
+          board_stop: {
+            stop_id: row.xfer2_board_stop_id,
+            stop_code: row.xfer2_board_stop_code ?? row.xfer2_board_stop_id,
+            stop_name: row.xfer2_board_stop_name ?? row.xfer2_board_stop_id,
+            stop_name_he: row.xfer2_board_stop_name_he ?? row.xfer2_board_stop_name ?? row.xfer2_board_stop_id,
+            eta_minutes: leg3Bus.etaMinutes,
+            scheduled_time: board3Time,
+            lat: row.xfer2_board_lat ?? row.xfer2_alight_lat ?? row.dest_lat,
+            lon: row.xfer2_board_lon ?? row.xfer2_alight_lon ?? row.dest_lon
+          },
+          alight_stop: {
+            stop_id: row.dest_stop_id,
+            stop_code: row.dest_stop_code,
+            stop_name: row.dest_stop_name,
+            stop_name_he: row.dest_stop_name_he,
+            stops_count: row.leg3_stops_between,
+            lat: row.dest_lat,
+            lon: row.dest_lon
+          },
+          transfer_wait_min: wait2Min,
+          transfer_walk_meters: row.xfer2_walk_meters,
+          ride_duration_min: leg3RideMin,
+          timeline_stops: leg3Timeline
+        }
+      ];
+
+      extraThreeLegOptions.set(`${row.leg1_route_id}:${row.dest_stop_id}`, legs);
 
       transferCandidates.push({
         rank: 1,
@@ -1430,7 +1468,8 @@ export async function planBestBusesToDestination(
             stop_name_he: row.xfer1_board_stop_name_he,
             stop_sequence: row.xfer1_board_stop_sequence,
             lat: row.xfer1_board_lat,
-            lon: row.xfer1_board_lon
+            lon: row.xfer1_board_lon,
+            distance_meters: row.xfer1_walk_meters
           },
           alight_stop: {
             stop_id: row.dest_stop_id,
@@ -1439,12 +1478,47 @@ export async function planBestBusesToDestination(
             stop_name_he: row.dest_stop_name_he,
             stop_sequence: row.dest_stop_sequence,
             lat: row.dest_lat,
-            lon: row.dest_lon
+            lon: row.dest_lon,
+            distance_meters: 0
           },
           bus: leg2Bus.busInfo,
           stops_between: row.leg2_stops_between + row.leg3_stops_between,
           ride_duration_min: leg2RideMin + leg3RideMin,
           timeline_stops: leg2Timeline
+        },
+        third_leg: {
+          route: {
+            route_id: row.leg3_route_id,
+            short_name: row.leg3_route_short_name,
+            long_name: row.leg3_route_long_name ?? `Line ${row.leg3_route_short_name}`,
+            direction_id: leg3Dir,
+            direction_label: row.dest_stop_name,
+            available_directions: []
+          },
+          board_stop: {
+            stop_id: row.xfer2_board_stop_id,
+            stop_code: row.xfer2_board_stop_code ?? row.xfer2_board_stop_id,
+            stop_name: row.xfer2_board_stop_name ?? row.xfer2_board_stop_id,
+            stop_name_he: row.xfer2_board_stop_name_he ?? row.xfer2_board_stop_name ?? row.xfer2_board_stop_id,
+            stop_sequence: row.xfer2_board_stop_sequence ?? 1,
+            lat: row.xfer2_board_lat ?? row.dest_lat,
+            lon: row.xfer2_board_lon ?? row.dest_lon,
+            distance_meters: row.xfer2_walk_meters
+          },
+          alight_stop: {
+            stop_id: row.dest_stop_id,
+            stop_code: row.dest_stop_code,
+            stop_name: row.dest_stop_name,
+            stop_name_he: row.dest_stop_name_he,
+            stop_sequence: row.dest_stop_sequence,
+            lat: row.dest_lat,
+            lon: row.dest_lon,
+            distance_meters: 0
+          },
+          bus: leg3Bus.busInfo,
+          stops_between: row.leg3_stops_between,
+          ride_duration_min: leg3RideMin,
+          timeline_stops: leg3Timeline
         }
       });
     }

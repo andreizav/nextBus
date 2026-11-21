@@ -46,6 +46,8 @@ export interface TripLegBoardStop {
   stop_name_he: string;
   eta_minutes: number;
   scheduled_time: string;
+  lat?: number;
+  lon?: number;
 }
 
 export interface TripLegAlightStop {
@@ -54,6 +56,8 @@ export interface TripLegAlightStop {
   stop_name: string;
   stop_name_he: string;
   stops_count: number;
+  lat?: number;
+  lon?: number;
 }
 
 export interface TripLeg {
@@ -66,6 +70,7 @@ export interface TripLeg {
   transfer_wait_min?: number;
   transfer_walk_meters?: number;
   ride_duration_min: number;
+  timeline_stops?: StopTimelineItem[];
 }
 
 export interface TripOption {
@@ -231,6 +236,7 @@ export interface RecommendedBusOption {
   timeline_window?: TimelineWindow;
   transfer_info?: TransferConnectionInfo;
   second_leg?: TransferLegDetail;
+  third_leg?: TransferLegDetail;
 }
 
 export interface ReturningRouteSuggestion {

@@ -165,30 +165,60 @@ import type {
         </div>
       </div>
 
-      <!-- 5. Compact Transfer / Destination Strip -->
+      <!-- 5. Step-by-Step Transfer & Itinerary Card -->
       @if (activeTripOption(); as trip) {
         @if (trip.transfers_count > 0 || state().destination) {
           <div class="nb-map-trip-strip">
             <div class="nb-map-trip-row">
               <span class="nb-map-dest-label">🏁 {{ state().destination?.place_name }}</span>
-              <span class="nb-map-dest-eta">{{ trip.estimated_arrival_time }}</span>
+              <span class="nb-map-dest-eta">
+                {{ trip.estimated_arrival_time }}
+                @if (trip.total_duration_min) {
+                  • {{ trip.total_duration_min }} {{ labels().minShort }}
+                }
+              </span>
             </div>
 
             @if (trip.transfers_count > 0) {
               <ol class="nb-map-xfer-list">
-                @for (leg of trip.legs; track leg.route_id + '-' + $index) {
-                  <li class="nb-map-xfer-item" [class.is-xfer]="leg.leg_type === 'TRANSFER'">
-                    <span class="nb-map-xfer-badge">
-                      {{ leg.leg_type === 'TRANSFER' ? '🔄' : '🚌' }} {{ leg.line_number }}
-                    </span>
-                    <span class="nb-map-xfer-desc">
-                      {{ cleanStopName(lang() === 'he' ? leg.board_stop.stop_name_he : leg.board_stop.stop_name) }}
-                      ➔
-                      {{ cleanStopName(lang() === 'he' ? leg.alight_stop.stop_name_he : leg.alight_stop.stop_name) }}
-                      @if (leg.leg_type === 'TRANSFER' && leg.transfer_wait_min !== undefined) {
-                        ({{ labels().waitWord }} {{ leg.transfer_wait_min }} {{ labels().minShort }})
-                      }
-                    </span>
+                @for (leg of trip.legs; track leg.route_id + '-' + $index; let legIdx = $index) {
+                  <li class="nb-map-xfer-card" [class.is-xfer]="leg.leg_type === 'TRANSFER'">
+                    <div class="nb-map-xfer-header">
+                      <span class="nb-map-xfer-step">{{ legIdx + 1 }}</span>
+                      <span class="nb-map-xfer-badge">
+                        {{ leg.leg_type === 'TRANSFER' ? '🔄' : '🚌' }} {{ leg.line_number }}
+                      </span>
+                      <span class="nb-map-xfer-time">
+                        {{ leg.ride_duration_min }} {{ labels().minShort }}
+                        @if (leg.alight_stop.stops_count) {
+                          ({{ leg.alight_stop.stops_count }} {{ labels().stopsCountWord }})
+                        }
+                      </span>
+                    </div>
+
+                    <div class="nb-map-xfer-route-flow">
+                      <div class="nb-flow-stop is-board" dir="auto">
+                        <span class="nb-flow-marker">📍</span>
+                        <span class="nb-flow-label">{{ labels().boardWord }}:</span>
+                        <strong class="nb-flow-name">{{ cleanStopName(lang() === 'he' ? leg.board_stop.stop_name_he : leg.board_stop.stop_name) }}</strong>
+                      </div>
+                      <div class="nb-flow-stop is-alight" dir="auto">
+                        <span class="nb-flow-marker">⬇️</span>
+                        <span class="nb-flow-label">{{ labels().alightWord }}:</span>
+                        <strong class="nb-flow-name">{{ cleanStopName(lang() === 'he' ? leg.alight_stop.stop_name_he : leg.alight_stop.stop_name) }}</strong>
+                      </div>
+                    </div>
+
+                    @if (leg.leg_type === 'TRANSFER' && (leg.transfer_wait_min !== undefined || leg.transfer_walk_meters !== undefined)) {
+                      <div class="nb-map-xfer-wait-bar" dir="auto">
+                        @if (leg.transfer_wait_min !== undefined) {
+                          <span>⏳ {{ labels().waitWord }} ~{{ leg.transfer_wait_min }} {{ labels().minShort }}</span>
+                        }
+                        @if (leg.transfer_walk_meters !== undefined && leg.transfer_walk_meters > 0) {
+                          <span>• 🚶 {{ leg.transfer_walk_meters }} m</span>
+                        }
+                      </div>
+                    }
                   </li>
                 }
               </ol>
@@ -786,35 +816,108 @@ import type {
         display: grid;
         grid-template-columns: minmax(0, 1fr);
         min-inline-size: 0;
-        gap: 0.32rem;
-      }
-
-      .nb-map-xfer-item {
-        display: flex;
-        align-items: baseline;
         gap: 0.45rem;
-        min-inline-size: 0;
-        font-size: 0.75rem;
-        color: #cbd5e1;
       }
 
-      .nb-map-xfer-desc {
+      .nb-map-xfer-card {
+        background: rgba(30, 41, 59, 0.4);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 0.65rem;
+        padding: 0.42rem 0.55rem;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 0.35rem;
         min-inline-size: 0;
-        overflow-wrap: anywhere;
+      }
+
+      .nb-map-xfer-card.is-xfer {
+        border-color: rgba(245, 158, 11, 0.25);
+      }
+
+      .nb-map-xfer-header {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        min-inline-size: 0;
+      }
+
+      .nb-map-xfer-step {
+        background: #334155;
+        color: #f8fafc;
+        border-radius: 50%;
+        width: 1.25rem;
+        height: 1.25rem;
+        font-size: 0.68rem;
+        font-weight: 700;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
       }
 
       .nb-map-xfer-badge {
-        background: rgba(59, 130, 246, 0.18);
+        background: rgba(59, 130, 246, 0.2);
         color: #93c5fd;
-        border-radius: 0.4rem;
+        border-radius: 0.38rem;
         padding: 0.08rem 0.4rem;
+        font-size: 0.78rem;
         font-weight: 700;
         flex-shrink: 0;
       }
 
-      .nb-map-xfer-item.is-xfer .nb-map-xfer-badge {
+      .nb-map-xfer-card.is-xfer .nb-map-xfer-badge {
         background: rgba(245, 158, 11, 0.2);
         color: #fcd34d;
+      }
+
+      .nb-map-xfer-time {
+        font-size: 0.72rem;
+        color: #94a3b8;
+        font-weight: 500;
+        margin-inline-start: auto;
+      }
+
+      .nb-map-xfer-route-flow {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 0.2rem;
+        font-size: 0.74rem;
+        color: #cbd5e1;
+      }
+
+      .nb-flow-stop {
+        display: flex;
+        align-items: baseline;
+        gap: 0.32rem;
+        min-inline-size: 0;
+        overflow-wrap: anywhere;
+      }
+
+      .nb-flow-marker {
+        font-size: 0.8rem;
+        flex-shrink: 0;
+      }
+
+      .nb-flow-label {
+        font-size: 0.68rem;
+        color: #94a3b8;
+        flex-shrink: 0;
+      }
+
+      .nb-flow-name {
+        color: #f1f5f9;
+        font-weight: 600;
+      }
+
+      .nb-map-xfer-wait-bar {
+        font-size: 0.7rem;
+        color: #fbbf24;
+        background: rgba(245, 158, 11, 0.1);
+        border-radius: 0.35rem;
+        padding: 0.15rem 0.4rem;
+        display: flex;
+        gap: 0.35rem;
+        align-items: center;
       }
 
       .nb-map-intercity-msg {
@@ -1097,7 +1200,10 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
           scheduledEta: 'לפי לו״ז',
           secShort: 'ש׳',
           fromWord: 'מוצא',
-          toWord: 'יעד'
+          toWord: 'יעד',
+          boardWord: 'עליה',
+          alightWord: 'ירידה',
+          stopsCountWord: 'תחנות'
         };
       case 'ar':
         return {
@@ -1118,7 +1224,10 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
           scheduledEta: 'حسب الجدول',
           secShort: 'ث',
           fromWord: 'من',
-          toWord: 'إلى'
+          toWord: 'إلى',
+          boardWord: 'صعود',
+          alightWord: 'نزول',
+          stopsCountWord: 'محطات'
         };
       case 'uk':
         return {
@@ -1139,7 +1248,10 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
           scheduledEta: 'За розкладом',
           secShort: 'с',
           fromWord: 'Звідки',
-          toWord: 'Куди'
+          toWord: 'Куди',
+          boardWord: 'Посадка',
+          alightWord: 'Висадка',
+          stopsCountWord: 'зуп.'
         };
       case 'en':
         return {
@@ -1160,7 +1272,10 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
           scheduledEta: 'Scheduled',
           secShort: 's',
           fromWord: 'From',
-          toWord: 'To'
+          toWord: 'To',
+          boardWord: 'Board',
+          alightWord: 'Alight',
+          stopsCountWord: 'stops'
         };
       default:
         return {
@@ -1181,7 +1296,10 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
           scheduledEta: 'По расписанию',
           secShort: 'с',
           fromWord: 'Откуда',
-          toWord: 'Куда'
+          toWord: 'Куда',
+          boardWord: 'Посадка',
+          alightWord: 'Высадка',
+          stopsCountWord: 'ост.'
         };
     }
   });
@@ -1272,104 +1390,244 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
     const boundsPoints: L.LatLngExpression[] = [];
     const activeOpt =
       data.recommended_options?.[optionIdx] ?? data.recommended_options?.[0] ?? null;
+    const tripOpt =
+      data.trip_options?.[optionIdx] ?? data.trip_options?.[0] ?? null;
 
-    // 1. Primary Leg Polyline (#3087f6 electric blue) & stop dots
-    const activeTimeline = activeOpt?.timeline_stops ?? data.timeline_stops;
-    const originStopSeq = activeOpt?.origin_stop.stop_sequence ?? data.user_stop.stop_sequence;
-    const destStopSeq = activeOpt?.is_transfer
-      ? activeOpt.transfer_info?.alight_stop.stop_sequence
-      : activeOpt?.dest_stop.stop_sequence;
+    if (tripOpt && tripOpt.legs && tripOpt.legs.length > 0) {
+      // Full multi-leg render (Direct, 1-transfer, 2-transfer, etc.)
+      const legColors = ['#2563eb', '#f59e0b', '#10b981', '#8b5cf6'];
+      const stopFillColors = ['#bfdbfe', '#fde68a', '#a7f3d0', '#ddd6fe'];
 
-    if (activeTimeline.length > 0) {
-      const polyCoords: L.LatLngExpression[] = activeTimeline.map((s) => [s.lat, s.lon]);
-      L.polyline(polyCoords, { color: '#3087f6', weight: 4.5, opacity: 0.92 }).addTo(
-        this.markersLayer
-      );
+      tripOpt.legs.forEach((leg, legIdx) => {
+        const legColor = legColors[legIdx % legColors.length];
+        const stopFill = stopFillColors[legIdx % stopFillColors.length];
+        const dashArray = legIdx === 1 ? '8, 6' : legIdx >= 2 ? '6, 6' : undefined;
 
-      for (const stop of activeTimeline) {
-        const isOrigin = stop.stop_sequence === originStopSeq;
-        const isEnd = destStopSeq !== undefined && stop.stop_sequence === destStopSeq;
-        L.circleMarker([stop.lat, stop.lon], {
-          radius: isOrigin || isEnd ? 8 : 4.5,
-          color: isOrigin ? '#3087f6' : '#181e24',
-          weight: isOrigin ? 3 : 2,
-          fillColor: isEnd
-            ? activeOpt?.is_transfer
-              ? '#f59e0b'
-              : '#ef4444'
-            : isOrigin
-              ? '#ffffff'
-              : '#cbd5e1',
-          fillOpacity: 1
-        })
-          .bindPopup(
-            `<strong>${lang === 'he' ? stop.stop_name_he : stop.stop_name}</strong><br/>Line ${activeOpt?.route.short_name ?? data.route.short_name} • #${stop.stop_code}`
-          )
-          .addTo(this.markersLayer);
-      }
-    }
+        // Polyline from timeline_stops if available
+        if (leg.timeline_stops && leg.timeline_stops.length > 0) {
+          const legCoords: L.LatLngExpression[] = leg.timeline_stops.map((s) => [s.lat, s.lon]);
+          L.polyline(legCoords, {
+            color: legColor,
+            weight: 5,
+            opacity: 0.92,
+            dashArray
+          }).addTo(this.markersLayer!);
 
-    // 1b. Transfer Leg 2 dashed amber polyline + walking connector + transfer hub pin
-    if (activeOpt?.is_transfer && activeOpt.transfer_info && activeOpt.second_leg) {
-      const xfer = activeOpt.transfer_info;
-      const leg2Stops = activeOpt.second_leg.timeline_stops;
-      if (leg2Stops.length > 0) {
-        const leg2Coords: L.LatLngExpression[] = leg2Stops.map((s) => [s.lat, s.lon]);
-        L.polyline(leg2Coords, {
-          color: '#f59e0b',
-          weight: 4.5,
-          opacity: 0.9,
-          dashArray: '8, 6'
-        }).addTo(this.markersLayer);
+          for (const s of leg.timeline_stops) {
+            boundsPoints.push([s.lat, s.lon]);
+            const isBoard = s.stop_id === leg.board_stop.stop_id || s.stop_code === leg.board_stop.stop_code;
+            const isAlight = s.stop_id === leg.alight_stop.stop_id || s.stop_code === leg.alight_stop.stop_code;
 
-        for (const stop of leg2Stops) {
-          const isFinalDest = stop.stop_sequence === activeOpt.dest_stop.stop_sequence;
+            L.circleMarker([s.lat, s.lon], {
+              radius: isBoard || isAlight ? 7 : 4,
+              color: '#0f172a',
+              weight: 2,
+              fillColor: isBoard
+                ? '#ffffff'
+                : isAlight
+                  ? (legIdx === tripOpt.legs.length - 1 ? '#ef4444' : legColor)
+                  : stopFill,
+              fillOpacity: 1
+            })
+              .bindPopup(
+                `<strong>${lang === 'he' ? s.stop_name_he : s.stop_name}</strong><br/>${lang === 'he' ? 'קו' : lang === 'en' ? 'Line' : 'Линия'} ${leg.line_number} • #${s.stop_code}`
+              )
+              .addTo(this.markersLayer!);
+          }
+        } else if (leg.board_stop.lat && leg.board_stop.lon && leg.alight_stop.lat && leg.alight_stop.lon) {
+          const legCoords: L.LatLngExpression[] = [
+            [leg.board_stop.lat, leg.board_stop.lon],
+            [leg.alight_stop.lat, leg.alight_stop.lon]
+          ];
+          L.polyline(legCoords, {
+            color: legColor,
+            weight: 5,
+            opacity: 0.9,
+            dashArray
+          }).addTo(this.markersLayer!);
+          boundsPoints.push([leg.board_stop.lat, leg.board_stop.lon]);
+          boundsPoints.push([leg.alight_stop.lat, leg.alight_stop.lon]);
+        }
+
+        // Leg 0: Initial Boarding Pin
+        if (legIdx === 0 && leg.board_stop.lat && leg.board_stop.lon) {
+          boundsPoints.push([leg.board_stop.lat, leg.board_stop.lon]);
+          const boardIcon = L.divIcon({
+            className: '',
+            html: '<div class="nb-pin-emoji nb-pin-user">📍</div>',
+            iconSize: [32, 32],
+            iconAnchor: [16, 16]
+          });
+          L.marker([leg.board_stop.lat, leg.board_stop.lon], { icon: boardIcon })
+            .bindPopup(
+              `<strong>📍 ${lang === 'he' ? 'עליה לקו' : lang === 'en' ? 'Board Line' : 'Посадка на Линию'} ${leg.line_number}</strong><br/>${lang === 'he' ? leg.board_stop.stop_name_he : leg.board_stop.stop_name} (#${leg.board_stop.stop_code})`
+            )
+            .addTo(this.markersLayer!);
+        }
+
+        // Transfer connections (between legIdx - 1 and legIdx)
+        if (legIdx > 0) {
+          const prevLeg = tripOpt.legs[legIdx - 1];
+          const xferFromLat = prevLeg.alight_stop.lat;
+          const xferFromLon = prevLeg.alight_stop.lon;
+          const xferToLat = leg.board_stop.lat;
+          const xferToLon = leg.board_stop.lon;
+
+          if (
+            xferFromLat &&
+            xferFromLon &&
+            xferToLat &&
+            xferToLon &&
+            (xferFromLat !== xferToLat || xferFromLon !== xferToLon)
+          ) {
+            L.polyline(
+              [
+                [xferFromLat, xferFromLon],
+                [xferToLat, xferToLon]
+              ],
+              { color: '#cbd5e1', weight: 3, dashArray: '3, 5' }
+            ).addTo(this.markersLayer!);
+          }
+
+          const hubLat = xferToLat ?? xferFromLat;
+          const hubLon = xferToLon ?? xferFromLon;
+          if (hubLat && hubLon) {
+            boundsPoints.push([hubLat, hubLon]);
+            const xferIcon = L.divIcon({
+              className: '',
+              html: '<div class="nb-pin-emoji nb-pin-xfer">🔄</div>',
+              iconSize: [32, 32],
+              iconAnchor: [16, 16]
+            });
+            const waitText = leg.transfer_wait_min
+              ? `~${leg.transfer_wait_min} ${lang === 'he' ? 'דק׳' : lang === 'en' ? 'min' : 'мин'}`
+              : '';
+            const walkText = leg.transfer_walk_meters ? `🚶 ${leg.transfer_walk_meters}m` : '';
+            L.marker([hubLat, hubLon], { icon: xferIcon })
+              .bindPopup(
+                `<strong>🔄 ${lang === 'he' ? 'מעבר לקו' : lang === 'en' ? 'Transfer to Line' : 'Пересадка на Линию'} ${leg.line_number}</strong><br/>${lang === 'he' ? leg.board_stop.stop_name_he : leg.board_stop.stop_name} (#${leg.board_stop.stop_code})<br/>${waitText} ${walkText}`
+              )
+              .addTo(this.markersLayer!);
+          }
+        }
+
+        // Final Destination Alighting Pin
+        if (legIdx === tripOpt.legs.length - 1 && leg.alight_stop.lat && leg.alight_stop.lon) {
+          boundsPoints.push([leg.alight_stop.lat, leg.alight_stop.lon]);
+          const alightIcon = L.divIcon({
+            className: '',
+            html: '<div class="nb-pin-emoji nb-pin-dest">🏁</div>',
+            iconSize: [32, 32],
+            iconAnchor: [16, 16]
+          });
+          L.marker([leg.alight_stop.lat, leg.alight_stop.lon], { icon: alightIcon })
+            .bindPopup(
+              `<strong>🏁 ${lang === 'he' ? 'ירידה סופית מקו' : lang === 'en' ? 'Final Alight from Line' : 'Высадка из Линии'} ${leg.line_number}</strong><br/>${lang === 'he' ? leg.alight_stop.stop_name_he : leg.alight_stop.stop_name} (#${leg.alight_stop.stop_code})`
+            )
+            .addTo(this.markersLayer!);
+        }
+      });
+    } else {
+      // 1. Primary Leg Polyline (#3087f6 electric blue) & stop dots fallback
+      const activeTimeline = activeOpt?.timeline_stops ?? data.timeline_stops;
+      const originStopSeq = activeOpt?.origin_stop.stop_sequence ?? data.user_stop.stop_sequence;
+      const destStopSeq = activeOpt?.is_transfer
+        ? activeOpt.transfer_info?.alight_stop.stop_sequence
+        : activeOpt?.dest_stop.stop_sequence;
+
+      if (activeTimeline.length > 0) {
+        const polyCoords: L.LatLngExpression[] = activeTimeline.map((s) => [s.lat, s.lon]);
+        L.polyline(polyCoords, { color: '#3087f6', weight: 4.5, opacity: 0.92 }).addTo(
+          this.markersLayer
+        );
+
+        for (const stop of activeTimeline) {
+          boundsPoints.push([stop.lat, stop.lon]);
+          const isOrigin = stop.stop_sequence === originStopSeq;
+          const isEnd = destStopSeq !== undefined && stop.stop_sequence === destStopSeq;
           L.circleMarker([stop.lat, stop.lon], {
-            radius: isFinalDest ? 8 : 4.5,
-            color: '#181e24',
-            weight: 2,
-            fillColor: isFinalDest ? '#ef4444' : '#fde68a',
+            radius: isOrigin || isEnd ? 8 : 4.5,
+            color: isOrigin ? '#3087f6' : '#181e24',
+            weight: isOrigin ? 3 : 2,
+            fillColor: isEnd
+              ? activeOpt?.is_transfer
+                ? '#f59e0b'
+                : '#ef4444'
+              : isOrigin
+                ? '#ffffff'
+                : '#cbd5e1',
             fillOpacity: 1
           })
             .bindPopup(
-              `<strong>${lang === 'he' ? stop.stop_name_he : stop.stop_name}</strong><br/>Line ${activeOpt.second_leg.route.short_name} • #${stop.stop_code}`
+              `<strong>${lang === 'he' ? stop.stop_name_he : stop.stop_name}</strong><br/>Line ${activeOpt?.route.short_name ?? data.route.short_name} • #${stop.stop_code}`
             )
             .addTo(this.markersLayer);
         }
       }
 
-      if (
-        xfer.alight_stop.lat !== xfer.board_stop.lat ||
-        xfer.alight_stop.lon !== xfer.board_stop.lon
-      ) {
-        L.polyline(
-          [
-            [xfer.alight_stop.lat, xfer.alight_stop.lon],
-            [xfer.board_stop.lat, xfer.board_stop.lon]
-          ],
-          { color: '#fde68a', weight: 3, dashArray: '3, 5' }
-        ).addTo(this.markersLayer);
-      }
+      // 1b. Transfer Leg 2 dashed amber polyline + walking connector + transfer hub pin
+      if (activeOpt?.is_transfer && activeOpt.transfer_info && activeOpt.second_leg) {
+        const xfer = activeOpt.transfer_info;
+        const leg2Stops = activeOpt.second_leg.timeline_stops;
+        if (leg2Stops.length > 0) {
+          const leg2Coords: L.LatLngExpression[] = leg2Stops.map((s) => [s.lat, s.lon]);
+          L.polyline(leg2Coords, {
+            color: '#f59e0b',
+            weight: 4.5,
+            opacity: 0.9,
+            dashArray: '8, 6'
+          }).addTo(this.markersLayer);
 
-      const hubPos: L.LatLngExpression = [xfer.alight_stop.lat, xfer.alight_stop.lon];
-      boundsPoints.push(hubPos);
-      const hubIcon = L.divIcon({
-        className: '',
-        html: '<div class="nb-pin-emoji nb-pin-xfer">🔄</div>',
-        iconSize: [30, 30],
-        iconAnchor: [15, 15]
-      });
-      const transferPopup =
-        lang === 'he'
-          ? xfer.instruction_he
-          : lang === 'en'
-            ? xfer.instruction_en
-            : xfer.instruction_ru;
-      L.marker(hubPos, { icon: hubIcon })
-        .bindPopup(
-          `<strong>🔄 ${lang === 'he' ? xfer.alight_stop.stop_name_he : xfer.alight_stop.stop_name}</strong> (#${xfer.alight_stop.stop_code})<br/>${transferPopup}`
-        )
-        .addTo(this.markersLayer);
+          for (const stop of leg2Stops) {
+            boundsPoints.push([stop.lat, stop.lon]);
+            const isFinalDest = stop.stop_sequence === activeOpt.dest_stop.stop_sequence;
+            L.circleMarker([stop.lat, stop.lon], {
+              radius: isFinalDest ? 8 : 4.5,
+              color: '#181e24',
+              weight: 2,
+              fillColor: isFinalDest ? '#ef4444' : '#fde68a',
+              fillOpacity: 1
+            })
+              .bindPopup(
+                `<strong>${lang === 'he' ? stop.stop_name_he : stop.stop_name}</strong><br/>Line ${activeOpt.second_leg.route.short_name} • #${stop.stop_code}`
+              )
+              .addTo(this.markersLayer);
+          }
+        }
+
+        if (
+          xfer.alight_stop.lat !== xfer.board_stop.lat ||
+          xfer.alight_stop.lon !== xfer.board_stop.lon
+        ) {
+          L.polyline(
+            [
+              [xfer.alight_stop.lat, xfer.alight_stop.lon],
+              [xfer.board_stop.lat, xfer.board_stop.lon]
+            ],
+            { color: '#fde68a', weight: 3, dashArray: '3, 5' }
+          ).addTo(this.markersLayer);
+        }
+
+        const hubPos: L.LatLngExpression = [xfer.alight_stop.lat, xfer.alight_stop.lon];
+        boundsPoints.push(hubPos);
+        const hubIcon = L.divIcon({
+          className: '',
+          html: '<div class="nb-pin-emoji nb-pin-xfer">🔄</div>',
+          iconSize: [30, 30],
+          iconAnchor: [15, 15]
+        });
+        const transferPopup =
+          lang === 'he'
+            ? xfer.instruction_he
+            : lang === 'en'
+              ? xfer.instruction_en
+              : xfer.instruction_ru;
+        L.marker(hubPos, { icon: hubIcon })
+          .bindPopup(
+            `<strong>🔄 ${lang === 'he' ? xfer.alight_stop.stop_name_he : xfer.alight_stop.stop_name}</strong> (#${xfer.alight_stop.stop_code})<br/>${transferPopup}`
+          )
+          .addTo(this.markersLayer);
+      }
     }
 
     // 2. User GPS Marker (Signature Blue Pin)
@@ -1439,6 +1697,19 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
           popupHtml:
             `<strong>2nd Bus ${activeOpt.second_leg.route.short_name}</strong><br/>` +
             `Board at ${activeOpt.transfer_info?.next_bus_board_time ?? ''}`
+        });
+      }
+      if (activeOpt.third_leg) {
+        busEntries.push({
+          key: `leg3:${activeOpt.third_leg.route.route_id}:${activeOpt.third_leg.route.direction_id}`,
+          lat: activeOpt.third_leg.bus.lat,
+          lon: activeOpt.third_leg.bus.lon,
+          shortName: `${activeOpt.third_leg.route.short_name} (3)`,
+          color: '#10b981',
+          isPrimary: false,
+          popupHtml:
+            `<strong>3rd Bus ${activeOpt.third_leg.route.short_name}</strong><br/>` +
+            `Board Line ${activeOpt.third_leg.route.short_name}`
         });
       }
     } else if (data.nearest_bus) {
