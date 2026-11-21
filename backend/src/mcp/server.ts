@@ -5,6 +5,10 @@ import { z } from 'zod';
 import { getLiveBusStatus } from '../services/bus-status.service.js';
 import { dispatchSearchIntent } from '../services/intent-router.service.js';
 import { planBestBusesToDestination } from '../services/trip-planner.service.js';
+import {
+  getReturningRoutesForLocation,
+  recordSearchResultForUser
+} from '../services/user-context.service.js';
 
 const getLiveBusStatusInputSchema = {
   line_number: z.string().min(1).describe('Public transit bus line number, e.g. "49"'),
@@ -14,6 +18,12 @@ const getLiveBusStatusInputSchema = {
       lon: z.number().min(-180).max(180).describe('User longitude in WGS84')
     })
     .describe('Current user GPS coordinates'),
+  user_id: z
+    .string()
+    .trim()
+    .max(128)
+    .optional()
+    .describe('Optional user identifier to personalize returning route suggestions near location'),
   destination_hint: z
     .string()
     .optional()
@@ -38,7 +48,13 @@ const findBestBusesInputSchema = {
       lon: z.number().min(-180).max(180).describe('Destination longitude resolved by LLM'),
       label: z.string().min(1).describe('Human-readable destination name, e.g. "Поликлиника на Хорев, Хайфа"')
     })
-    .describe('Destination coordinates and label resolved by Gemini / Google Search')
+    .describe('Destination coordinates and label resolved by Gemini / Google Search'),
+  user_id: z
+    .string()
+    .trim()
+    .max(128)
+    .optional()
+    .describe('Optional user identifier to save and prioritize returning routes near location')
 };
 
 export function createNextBusMcpServer(): McpServer {
@@ -59,8 +75,8 @@ export function createNextBusMcpServer(): McpServer {
         destructiveHint: false
       }
     },
-    async ({ line_number, user_location, destination_hint, include_nearby_places }) => {
-      const result = destination_hint
+    async ({ line_number, user_location, user_id, destination_hint, include_nearby_places }) => {
+      const baseResult = destination_hint
         ? {
             ...(await getLiveBusStatus({
               lineNumber: line_number,
@@ -79,6 +95,22 @@ export function createNextBusMcpServer(): McpServer {
             includeNearbyPlaces: include_nearby_places ?? false,
             allowColdBootstrap: true
           });
+
+      let result = baseResult;
+      if (user_id) {
+        const returningRoutes = await getReturningRoutesForLocation(
+          user_id,
+          user_location.lat,
+          user_location.lon,
+          250
+        ).catch(() => []);
+        await recordSearchResultForUser(user_id, user_location, baseResult).catch(() => undefined);
+        result = {
+          ...baseResult,
+          user_id,
+          ...(returningRoutes.length > 0 ? { returning_routes: returningRoutes } : {})
+        };
+      }
 
       return {
         content: [
@@ -104,8 +136,8 @@ export function createNextBusMcpServer(): McpServer {
         destructiveHint: false
       }
     },
-    async ({ user_location, destination_location }) => {
-      const result = await planBestBusesToDestination({
+    async ({ user_location, destination_location, user_id }) => {
+      const baseResult = await planBestBusesToDestination({
         userLocation: { lat: user_location.lat, lon: user_location.lon },
         destination: {
           lat: destination_location.lat,
@@ -117,6 +149,22 @@ export function createNextBusMcpServer(): McpServer {
         entryContext: 'mcp',
         allowColdBootstrap: true
       });
+
+      let result = baseResult;
+      if (user_id) {
+        const returningRoutes = await getReturningRoutesForLocation(
+          user_id,
+          user_location.lat,
+          user_location.lon,
+          250
+        ).catch(() => []);
+        await recordSearchResultForUser(user_id, user_location, baseResult).catch(() => undefined);
+        result = {
+          ...baseResult,
+          user_id,
+          ...(returningRoutes.length > 0 ? { returning_routes: returningRoutes } : {})
+        };
+      }
 
       return {
         content: [

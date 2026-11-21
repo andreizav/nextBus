@@ -278,11 +278,57 @@ export interface RecommendedBusOption {
   second_leg?: TransferLegDetail;
 }
 
+export interface ReturningRouteSuggestion {
+  id?: string;
+  user_id: string;
+  origin_lat: number;
+  origin_lon: number;
+  origin_stop_id?: string | null;
+  origin_stop_name?: string | null;
+  dest_label?: string | null;
+  dest_lat?: number | null;
+  dest_lon?: number | null;
+  route_id?: string | null;
+  line_number?: string | null;
+  direction_id?: 0 | 1 | null;
+  use_count: number;
+  last_used_at: string;
+  distance_meters: number;
+  eta_minutes?: number;
+}
+
+export interface LocalLineSuggestion {
+  route_id: string;
+  line_number: string;
+  route_long_name: string;
+  direction_id: 0 | 1;
+  nearest_stop_id: string;
+  nearest_stop_code: string;
+  nearest_stop_name: string;
+  nearest_stop_name_he: string;
+  nearest_stop_sequence: number;
+  stop_lat: number;
+  stop_lon: number;
+  distance_meters: number;
+  destination_name: string;
+  destination_he: string;
+  eta_minutes: number;
+}
+
+export interface LocalSuggestionsResponse {
+  user_location: { lat: number; lon: number };
+  returning_routes: ReturningRouteSuggestion[];
+  local_lines: LocalLineSuggestion[];
+}
+
 export interface LiveBusStatusResponse {
+  user_id?: string;
   entry_context?: EntryContext;
   intent_type?: IntentType;
   candidates?: LineCandidate[];
   trip_options?: TripOption[];
+  returning_routes?: ReturningRouteSuggestion[];
+  local_suggestions?: LocalLineSuggestion[];
   render_mode: RenderMode;
   updated_at: string;
   cache_hit: boolean;

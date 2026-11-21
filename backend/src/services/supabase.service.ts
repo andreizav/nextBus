@@ -49,6 +49,55 @@ export interface NearbyLineRpcRow {
   distance_meters: number;
 }
 
+export interface NearbyLineTerminusRow {
+  route_id: string;
+  line_number: string;
+  route_long_name: string;
+  direction_id: 0 | 1;
+  nearest_stop_id: string;
+  nearest_stop_code: string;
+  nearest_stop_name: string;
+  nearest_stop_name_he: string;
+  nearest_stop_sequence: number;
+  stop_lat: number;
+  stop_lon: number;
+  distance_meters: number;
+  destination_name: string;
+  destination_he: string;
+}
+
+export interface UserRouteHistoryRow {
+  id?: string;
+  user_id: string;
+  origin_lat: number;
+  origin_lon: number;
+  origin_stop_id?: string | null;
+  origin_stop_name?: string | null;
+  dest_label?: string | null;
+  dest_lat?: number | null;
+  dest_lon?: number | null;
+  route_id?: string | null;
+  line_number?: string | null;
+  direction_id?: 0 | 1 | null;
+  use_count: number;
+  last_used_at: string;
+  distance_meters: number;
+}
+
+export interface UpsertUserHistoryInput {
+  userId: string;
+  originLat: number;
+  originLon: number;
+  originStopId?: string | null;
+  originStopName?: string | null;
+  destLabel?: string | null;
+  destLat?: number | null;
+  destLon?: number | null;
+  routeId?: string | null;
+  lineNumber?: string | null;
+  directionId?: 0 | 1 | null;
+}
+
 export interface TwoTransferTripMatch {
   transfers_count: 1 | 2;
   leg1_route_id: string;
@@ -946,6 +995,337 @@ class SupabaseService {
       dest_lon: m.dest_lon,
       leg3_stops_between: 0
     }));
+  }
+
+  private mapNearbyTerminusRow(row: Record<string, unknown>): NearbyLineTerminusRow {
+    return {
+      route_id: String(row.route_id),
+      line_number: String(row.line_number ?? row.route_short_name ?? ''),
+      route_long_name: String(row.route_long_name ?? ''),
+      direction_id: Number(row.direction_id) === 1 ? 1 : 0,
+      nearest_stop_id: String(row.nearest_stop_id),
+      nearest_stop_code: String(row.nearest_stop_code ?? row.nearest_stop_id),
+      nearest_stop_name: String(row.nearest_stop_name),
+      nearest_stop_name_he: String(row.nearest_stop_name_he ?? row.nearest_stop_name),
+      nearest_stop_sequence: Number(row.nearest_stop_sequence ?? 1),
+      stop_lat: Number(row.stop_lat),
+      stop_lon: Number(row.stop_lon),
+      distance_meters: Math.round(Number(row.distance_meters ?? 0)),
+      destination_name: String(row.destination_name ?? row.destination_he ?? row.route_long_name ?? ''),
+      destination_he: String(row.destination_he ?? row.destination_name ?? row.route_long_name ?? '')
+    };
+  }
+
+  async getNearbyLinesAndTermini(
+    userLat: number,
+    userLon: number,
+    radiusMeters = 500,
+    maxLines = 8
+  ): Promise<NearbyLineTerminusRow[]> {
+    this.ensureInit();
+    const radiiToTry = Array.from(new Set([radiusMeters, Math.max(900, radiusMeters), 1600]));
+
+    for (const radius of radiiToTry) {
+      if (this.client) {
+        try {
+          const { data, error } = await this.client.rpc('get_nearby_lines_and_termini', {
+            user_lat: userLat,
+            user_lon: userLon,
+            radius_meters: radius,
+            max_lines: maxLines
+          });
+          if (!error && Array.isArray(data) && data.length > 0) {
+            return data.map((row) => this.mapNearbyTerminusRow(row as Record<string, unknown>));
+          }
+        } catch (err) {
+          console.warn('[Supabase] get_nearby_lines_and_termini RPC fallback:', (err as Error).message);
+        }
+      }
+
+      if (this.pgPool) {
+        try {
+          const res = await this.pgPool.query(
+            `SELECT * FROM get_nearby_lines_and_termini($1, $2, $3, $4)`,
+            [userLat, userLon, radius, maxLines]
+          );
+          if (res.rows.length > 0) {
+            return res.rows.map((row) => this.mapNearbyTerminusRow(row as Record<string, unknown>));
+          }
+        } catch (err) {
+          console.warn('[PostgreSQL] get_nearby_lines_and_termini error:', (err as Error).message);
+        }
+      }
+    }
+
+    // PostgREST table scan fallback when get_nearby_lines_and_termini RPC is not yet installed on remote Supabase
+    if (this.client) {
+      try {
+        const { data: routesData } = await this.client
+          .from('routes')
+          .select('route_id, route_short_name, route_long_name')
+          .limit(30);
+
+        const matches: NearbyLineTerminusRow[] = [];
+        for (const r of routesData ?? []) {
+          for (const dir of [0, 1] as const) {
+            const stops = await this.getDirectionStopCoords(String(r.route_id), dir);
+            if (stops.length < 2) continue;
+            const terminal = stops[stops.length - 1];
+            let bestStop: RouteStopCoord | null = null;
+            let minDist = Infinity;
+
+            for (const s of stops.slice(0, -1)) {
+              const d = haversineDistanceMeters(userLat, userLon, s.lat, s.lon);
+              if (d < minDist) {
+                minDist = d;
+                bestStop = s;
+              }
+            }
+
+            if (bestStop && minDist <= 1600) {
+              matches.push({
+                route_id: String(r.route_id),
+                line_number: String(r.route_short_name),
+                route_long_name: String(r.route_long_name ?? ''),
+                direction_id: dir,
+                nearest_stop_id: bestStop.stop_id,
+                nearest_stop_code: bestStop.stop_code,
+                nearest_stop_name: bestStop.stop_name,
+                nearest_stop_name_he: bestStop.stop_name_he,
+                nearest_stop_sequence: bestStop.stop_sequence,
+                stop_lat: bestStop.lat,
+                stop_lon: bestStop.lon,
+                distance_meters: Math.round(minDist),
+                destination_name: terminal.stop_name,
+                destination_he: terminal.stop_name_he
+              });
+            }
+          }
+        }
+
+        if (matches.length > 0) {
+          return matches
+            .sort((a, b) => a.distance_meters - b.distance_meters || a.line_number.localeCompare(b.line_number))
+            .slice(0, maxLines);
+        }
+      } catch (err) {
+        console.warn('[Supabase] getNearbyLinesAndTermini table fallback error:', (err as Error).message);
+      }
+    }
+
+    return [];
+  }
+
+  async upsertUserRouteHistoryRow(input: UpsertUserHistoryInput): Promise<void> {
+    this.ensureInit();
+
+    if (this.pgPool) {
+      try {
+        const existing = await this.pgPool.query<{ id: string }>(
+          `SELECT id FROM user_route_history
+           WHERE user_id = $1
+             AND ST_DWithin(origin_location, ST_SetSRID(ST_MakePoint($3, $2), 4326)::geography, 250)
+             AND (
+               ($4::TEXT IS NOT NULL AND LOWER(COALESCE(dest_label, '')) = LOWER($4))
+               OR ($4::TEXT IS NULL AND route_id = $5 AND COALESCE(direction_id, -1) = COALESCE($6, -1))
+             )
+           ORDER BY last_used_at DESC
+           LIMIT 1`,
+          [
+            input.userId,
+            input.originLat,
+            input.originLon,
+            input.destLabel ?? null,
+            input.routeId ?? null,
+            input.directionId ?? null
+          ]
+        );
+
+        if (existing.rows[0]) {
+          await this.pgPool.query(
+            `UPDATE user_route_history
+             SET use_count = use_count + 1,
+                 last_used_at = NOW(),
+                 origin_lat = $2,
+                 origin_lon = $3,
+                 origin_location = ST_SetSRID(ST_MakePoint($3, $2), 4326)::geography,
+                 origin_stop_id = COALESCE($4, origin_stop_id),
+                 origin_stop_name = COALESCE($5, origin_stop_name),
+                 route_id = COALESCE($6, route_id),
+                 line_number = COALESCE($7, line_number),
+                 direction_id = COALESCE($8, direction_id)
+             WHERE id = $1`,
+            [
+              existing.rows[0].id,
+              input.originLat,
+              input.originLon,
+              input.originStopId ?? null,
+              input.originStopName ?? null,
+              input.routeId ?? null,
+              input.lineNumber ?? null,
+              input.directionId ?? null
+            ]
+          );
+        } else {
+          await this.pgPool.query(
+            `INSERT INTO user_route_history (
+               user_id, origin_lat, origin_lon, origin_location,
+               origin_stop_id, origin_stop_name, dest_label, dest_lat, dest_lon,
+               route_id, line_number, direction_id, use_count, last_used_at
+             ) VALUES (
+               $1, $2, $3, ST_SetSRID(ST_MakePoint($3, $2), 4326)::geography,
+               $4, $5, $6, $7, $8,
+               $9, $10, $11, 1, NOW()
+             )`,
+            [
+              input.userId,
+              input.originLat,
+              input.originLon,
+              input.originStopId ?? null,
+              input.originStopName ?? null,
+              input.destLabel ?? null,
+              input.destLat ?? null,
+              input.destLon ?? null,
+              input.routeId ?? null,
+              input.lineNumber ?? null,
+              input.directionId ?? null
+            ]
+          );
+        }
+      } catch (err) {
+        console.warn('[PostgreSQL] upsertUserRouteHistoryRow warning:', (err as Error).message);
+      }
+    }
+
+    if (this.client) {
+      try {
+        const { data: existingRows, error } = await this.client
+          .from('user_route_history')
+          .select('id, origin_lat, origin_lon, dest_label, route_id, direction_id, use_count')
+          .eq('user_id', input.userId)
+          .limit(30);
+
+        if (!error && Array.isArray(existingRows)) {
+          const matched = existingRows.find((r) => {
+            const dist = haversineDistanceMeters(
+              input.originLat,
+              input.originLon,
+              Number(r.origin_lat),
+              Number(r.origin_lon)
+            );
+            if (dist > 250) return false;
+            if (input.destLabel) {
+              return String(r.dest_label ?? '').toLowerCase() === input.destLabel.toLowerCase();
+            }
+            return (
+              String(r.route_id ?? '') === String(input.routeId ?? '') &&
+              Number(r.direction_id ?? -1) === Number(input.directionId ?? -1)
+            );
+          });
+
+          if (matched) {
+            await this.client
+              .from('user_route_history')
+              .update({
+                use_count: Number(matched.use_count ?? 1) + 1,
+                last_used_at: new Date().toISOString(),
+                origin_stop_id: input.originStopId ?? null,
+                origin_stop_name: input.originStopName ?? null,
+                route_id: input.routeId ?? null,
+                line_number: input.lineNumber ?? null,
+                direction_id: input.directionId ?? null
+              })
+              .eq('id', matched.id);
+          } else {
+            await this.client.from('user_route_history').insert({
+              user_id: input.userId,
+              origin_lat: input.originLat,
+              origin_lon: input.originLon,
+              origin_location: `POINT(${input.originLon} ${input.originLat})`,
+              origin_stop_id: input.originStopId ?? null,
+              origin_stop_name: input.originStopName ?? null,
+              dest_label: input.destLabel ?? null,
+              dest_lat: input.destLat ?? null,
+              dest_lon: input.destLon ?? null,
+              route_id: input.routeId ?? null,
+              line_number: input.lineNumber ?? null,
+              direction_id: input.directionId ?? null,
+              use_count: 1,
+              last_used_at: new Date().toISOString()
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('[Supabase] upsertUserRouteHistoryRow warning:', (err as Error).message);
+      }
+    }
+  }
+
+  private mapUserHistoryRow(r: Record<string, unknown>): UserRouteHistoryRow {
+    return {
+      id: r.id !== undefined ? String(r.id) : undefined,
+      user_id: String(r.user_id),
+      origin_lat: Number(r.origin_lat),
+      origin_lon: Number(r.origin_lon),
+      origin_stop_id: r.origin_stop_id ? String(r.origin_stop_id) : null,
+      origin_stop_name: r.origin_stop_name ? String(r.origin_stop_name) : null,
+      dest_label: r.dest_label ? String(r.dest_label) : null,
+      dest_lat: r.dest_lat !== null && r.dest_lat !== undefined ? Number(r.dest_lat) : null,
+      dest_lon: r.dest_lon !== null && r.dest_lon !== undefined ? Number(r.dest_lon) : null,
+      route_id: r.route_id ? String(r.route_id) : null,
+      line_number: r.line_number ? String(r.line_number) : null,
+      direction_id:
+        r.direction_id !== null && r.direction_id !== undefined
+          ? (Number(r.direction_id) === 1 ? 1 : 0)
+          : null,
+      use_count: Number(r.use_count ?? 1),
+      last_used_at: String(r.last_used_at ?? new Date().toISOString()),
+      distance_meters: Math.round(Number(r.distance_meters ?? 0))
+    };
+  }
+
+  async findUserRouteHistoryNearLocation(
+    userId: string,
+    lat: number,
+    lon: number,
+    radiusMeters = 250,
+    limit = 6
+  ): Promise<UserRouteHistoryRow[]> {
+    this.ensureInit();
+    if (!userId.trim()) return [];
+
+    if (this.client) {
+      try {
+        const { data, error } = await this.client.rpc('find_user_route_history_near_location', {
+          p_user_id: userId,
+          p_lat: lat,
+          p_lon: lon,
+          p_radius_meters: radiusMeters,
+          p_limit: limit
+        });
+        if (!error && Array.isArray(data) && data.length > 0) {
+          return data.map((r) => this.mapUserHistoryRow(r as Record<string, unknown>));
+        }
+      } catch {
+        // Fallback below
+      }
+    }
+
+    if (this.pgPool) {
+      try {
+        const res = await this.pgPool.query(
+          `SELECT * FROM find_user_route_history_near_location($1, $2, $3, $4, $5)`,
+          [userId, lat, lon, radiusMeters, limit]
+        );
+        if (res.rows.length > 0) {
+          return res.rows.map((r) => this.mapUserHistoryRow(r as Record<string, unknown>));
+        }
+      } catch {
+        // Fallback cleanly to Redis history mirror in user-context service
+      }
+    }
+
+    return [];
   }
 }
 

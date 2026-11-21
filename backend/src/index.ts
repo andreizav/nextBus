@@ -12,6 +12,11 @@ import { redisService } from './services/redis.service.js';
 import { generateStaticStreetMapSvg } from './services/static-map.service.js';
 import { supabaseService } from './services/supabase.service.js';
 import { planBestBusesToDestination } from './services/trip-planner.service.js';
+import {
+  getLocalStopSuggestions,
+  getReturningRoutesForLocation,
+  recordSearchResultForUser
+} from './services/user-context.service.js';
 import type { EntryContext } from './types/bus.types.js';
 import { pollingWorker } from './workers/polling.worker.js';
 
@@ -72,6 +77,7 @@ const searchRoutesBodySchema = z.object({
     lat: z.number().min(-90).max(90),
     lon: z.number().min(-180).max(180)
   }),
+  user_id: z.string().trim().max(128).optional(),
   route_id: z.string().trim().optional(),
   direction_id: z.union([z.literal(0), z.literal(1)]).optional(),
   include_nearby_places: z.boolean().optional()
@@ -86,7 +92,7 @@ app.post('/api/search-routes', async (req: Request, res: Response) => {
       return;
     }
 
-    const { query, user_location, route_id, direction_id, include_nearby_places } = parsed.data;
+    const { query, user_location, user_id, route_id, direction_id, include_nearby_places } = parsed.data;
     const result = await dispatchSearchIntent({
       query,
       userLocation: user_location,
@@ -97,10 +103,48 @@ app.post('/api/search-routes', async (req: Request, res: Response) => {
       allowColdBootstrap: true
     });
 
-    res.json(result);
+    if (user_id) {
+      await recordSearchResultForUser(user_id, user_location, result).catch(() => undefined);
+    }
+
+    res.json({
+      ...result,
+      ...(user_id ? { user_id } : {})
+    });
   } catch (error) {
     console.error('[REST] /api/search-routes error:', error);
     res.status(500).json({ error: 'Failed to search A-to-B routes' });
+  }
+});
+
+// 4.1 Returning user routes (~250m) and PostGIS nearby stop lines/termini
+app.get('/api/local-suggestions', async (req: Request, res: Response) => {
+  try {
+    const lat = Number(req.query.lat ?? 32.7895);
+    const lon = Number(req.query.lon ?? 34.9640);
+    if (Number.isNaN(lat) || Number.isNaN(lon)) {
+      res.status(400).json({ error: 'Invalid lat or lon query parameter' });
+      return;
+    }
+
+    const userId = req.query.user_id ? String(req.query.user_id).trim() : '';
+    const radiusRaw = Number(req.query.radius ?? 500);
+    const radiusMeters =
+      !Number.isNaN(radiusRaw) && radiusRaw > 0 ? Math.min(2000, radiusRaw) : 500;
+
+    const [returningRoutes, localLines] = await Promise.all([
+      userId ? getReturningRoutesForLocation(userId, lat, lon, 250) : Promise.resolve([]),
+      getLocalStopSuggestions(lat, lon, radiusMeters, 8)
+    ]);
+
+    res.json({
+      user_location: { lat, lon },
+      returning_routes: returningRoutes,
+      local_lines: localLines
+    });
+  } catch (error) {
+    console.error('[REST] /api/local-suggestions error:', error);
+    res.status(500).json({ error: 'Failed to load local stop suggestions' });
   }
 });
 
@@ -117,6 +161,7 @@ app.get('/api/live-status', async (req: Request, res: Response) => {
 
     const entryContext: EntryContext =
       req.query.entry_context === 'mcp' ? 'mcp' : 'standalone';
+    const userId = req.query.user_id ? String(req.query.user_id).trim() : undefined;
 
     const destLatRaw = req.query.dest_lat;
     const destLonRaw = req.query.dest_lon;
@@ -153,7 +198,14 @@ app.get('/api/live-status', async (req: Request, res: Response) => {
         void pollingWorker.runCycle();
       }
 
-      res.json(tripStatus);
+      if (userId && allowColdBootstrap) {
+        await recordSearchResultForUser(userId, { lat, lon }, tripStatus).catch(() => undefined);
+      }
+
+      res.json({
+        ...tripStatus,
+        ...(userId ? { user_id: userId } : {})
+      });
       return;
     }
 
@@ -180,7 +232,15 @@ app.get('/api/live-status', async (req: Request, res: Response) => {
       void pollingWorker.runCycle();
     }
 
-    res.json({ ...status, entry_context: entryContext });
+    if (userId && allowColdBootstrap) {
+      await recordSearchResultForUser(userId, { lat, lon }, status).catch(() => undefined);
+    }
+
+    res.json({
+      ...status,
+      entry_context: entryContext,
+      ...(userId ? { user_id: userId } : {})
+    });
   } catch (error) {
     console.error('[REST] /api/live-status error:', error);
     res.status(500).json({ error: 'Failed to retrieve live bus status' });
