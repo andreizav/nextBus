@@ -500,10 +500,13 @@ class SupabaseService {
   ): Promise<DirectRouteMatch[]> {
     this.ensureInit();
 
-    const radiiToTry = [radiusMeters, Math.max(1100, radiusMeters)];
+    const radiiToTry = Array.from(new Set([radiusMeters, Math.max(1100, radiusMeters)]));
+    const collected = new Map<string, DirectRouteMatch>();
     let dbSucceeded = false;
 
     for (const radius of radiiToTry) {
+      let batch: DirectRouteMatch[] = [];
+
       if (this.client) {
         try {
           const { data, error } = await this.client.rpc('find_direct_routes_between_points', {
@@ -515,29 +518,40 @@ class SupabaseService {
           });
           if (!error && Array.isArray(data)) {
             dbSucceeded = true;
-            if (data.length > 0) {
-              return data.map((row) => this.mapDirectRouteRow(row as Record<string, unknown>));
-            }
+            batch = data.map((row) => this.mapDirectRouteRow(row as Record<string, unknown>));
           }
         } catch (err) {
           console.warn('[Supabase] find_direct_routes RPC fallback:', (err as Error).message);
         }
       }
 
-      if (this.pgPool) {
+      if (batch.length === 0 && this.pgPool) {
         try {
           const res = await this.pgPool.query(
             `SELECT * FROM find_direct_routes_between_points($1, $2, $3, $4, $5)`,
             [originLat, originLon, destLat, destLon, radius]
           );
           dbSucceeded = true;
-          if (res.rows.length > 0) {
-            return res.rows.map((row) => this.mapDirectRouteRow(row as Record<string, unknown>));
-          }
+          batch = res.rows.map((row) => this.mapDirectRouteRow(row as Record<string, unknown>));
         } catch (err) {
           console.warn('[PostgreSQL] find_direct_routes query error:', (err as Error).message);
         }
       }
+
+      for (const item of batch) {
+        const key = `${item.route_id}:${item.direction_id}`;
+        if (!collected.has(key)) {
+          collected.set(key, item);
+        }
+      }
+
+      if (collected.size >= 3) {
+        break;
+      }
+    }
+
+    if (collected.size > 0) {
+      return Array.from(collected.values());
     }
 
     // If database queried cleanly and found 0 direct routes, do not fabricate direct matches;
@@ -603,9 +617,13 @@ class SupabaseService {
   ): Promise<TransferRouteMatch[]> {
     this.ensureInit();
 
-    const radiiToTry = [radiusMeters, Math.max(1100, radiusMeters)];
+    const radiiToTry = Array.from(new Set([radiusMeters, Math.max(1100, radiusMeters)]));
+    const collected = new Map<string, TransferRouteMatch>();
+    const distinctLeg1Routes = new Set<string>();
 
     for (const radius of radiiToTry) {
+      let batch: TransferRouteMatch[] = [];
+
       if (this.client) {
         try {
           const { data, error } = await this.client.rpc('find_transfer_routes_between_points', {
@@ -617,29 +635,41 @@ class SupabaseService {
             transfer_walk_meters: transferWalkMeters
           });
           if (!error && Array.isArray(data) && data.length > 0) {
-            return data.map((row) => this.mapTransferRouteRow(row as Record<string, unknown>));
+            batch = data.map((row) => this.mapTransferRouteRow(row as Record<string, unknown>));
           }
         } catch (err) {
           console.warn('[Supabase] find_transfer_routes RPC fallback:', (err as Error).message);
         }
       }
 
-      if (this.pgPool) {
+      if (batch.length === 0 && this.pgPool) {
         try {
           const res = await this.pgPool.query(
             `SELECT * FROM find_transfer_routes_between_points($1, $2, $3, $4, $5, $6)`,
             [originLat, originLon, destLat, destLon, radius, transferWalkMeters]
           );
           if (res.rows.length > 0) {
-            return res.rows.map((row) => this.mapTransferRouteRow(row as Record<string, unknown>));
+            batch = res.rows.map((row) => this.mapTransferRouteRow(row as Record<string, unknown>));
           }
         } catch (err) {
           console.warn('[PostgreSQL] find_transfer_routes query error:', (err as Error).message);
         }
       }
+
+      for (const item of batch) {
+        const key = `${item.leg1_route_id}:${item.leg1_direction_id}:${item.leg2_route_id}:${item.leg2_direction_id}`;
+        if (!collected.has(key)) {
+          collected.set(key, item);
+          distinctLeg1Routes.add(item.leg1_route_id);
+        }
+      }
+
+      if (distinctLeg1Routes.size >= 3) {
+        break;
+      }
     }
 
-    return [];
+    return Array.from(collected.values());
   }
 
   private mapNearbyLineRow(row: Record<string, unknown>): NearbyLineRpcRow {
@@ -807,9 +837,13 @@ class SupabaseService {
     maxTransfers = 2
   ): Promise<TwoTransferTripMatch[]> {
     this.ensureInit();
-    const radiiToTry = [radiusMeters, Math.max(1100, radiusMeters)];
+    const radiiToTry = Array.from(new Set([radiusMeters, Math.max(1100, radiusMeters)]));
+    const collected = new Map<string, TwoTransferTripMatch>();
+    const distinctLeg1Routes = new Set<string>();
 
     for (const radius of radiiToTry) {
+      let batch: TwoTransferTripMatch[] = [];
+
       if (this.client) {
         try {
           const { data, error } = await this.client.rpc('find_transfer_trips', {
@@ -821,26 +855,42 @@ class SupabaseService {
             max_transfers: maxTransfers
           });
           if (!error && Array.isArray(data) && data.length > 0) {
-            return data as TwoTransferTripMatch[];
+            batch = data as TwoTransferTripMatch[];
           }
         } catch (err) {
           console.warn('[Supabase] find_transfer_trips RPC fallback:', (err as Error).message);
         }
       }
 
-      if (this.pgPool) {
+      if (batch.length === 0 && this.pgPool) {
         try {
           const res = await this.pgPool.query(
             `SELECT * FROM find_transfer_trips($1, $2, $3, $4, $5, $6)`,
             [originLat, originLon, destLat, destLon, radius, maxTransfers]
           );
           if (res.rows.length > 0) {
-            return res.rows as TwoTransferTripMatch[];
+            batch = res.rows as TwoTransferTripMatch[];
           }
         } catch (err) {
           console.warn('[PostgreSQL] find_transfer_trips error:', (err as Error).message);
         }
       }
+
+      for (const item of batch) {
+        const key = `${item.leg1_route_id}:${item.leg1_direction_id}:${item.leg2_route_id}:${item.leg2_direction_id}:${item.leg3_route_id ?? ''}`;
+        if (!collected.has(key)) {
+          collected.set(key, item);
+          distinctLeg1Routes.add(item.leg1_route_id);
+        }
+      }
+
+      if (distinctLeg1Routes.size >= 3) {
+        break;
+      }
+    }
+
+    if (collected.size > 0) {
+      return Array.from(collected.values());
     }
 
     // Compatibility fallback to findTransferRoutesBetweenPoints

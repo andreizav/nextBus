@@ -11,6 +11,7 @@ import {
 import type {
   LineCandidate,
   LiveBusStatusResponse,
+  RecommendedBusOption,
   StopTimelineItem,
   TripOption,
   WidgetLang
@@ -47,50 +48,58 @@ import type {
         </div>
       </header>
 
-      <!-- 2. Line Disambiguation Chips (only if multiple nearby lines/directions match) -->
-      @if (state().candidates; as candidates) {
-        @if (candidates.length > 1) {
-          <div class="context-pills" role="region" aria-label="Choose matching line or direction">
-            @for (cand of candidates; track cand.route_id + '-' + cand.direction_id) {
-              <button
-                type="button"
-                class="pill-chip"
-                [class.is-active]="
-                  cand.route_id === state().route.route_id &&
-                  cand.direction_id === state().route.direction_id
-                "
-                (click)="selectCandidate.emit(cand)"
-              >
-                <span>{{ cand.line_number }}</span>
-                <span class="chip-arrow">→</span>
-                <span class="chip-dest">{{ cand.destination_he }}</span>
-              </button>
-            }
+      <!-- 2. Direction Switch Bar (when searching by bus line number) -->
+      @if (!state().destination && activeRoute().available_directions.length > 1) {
+        <div class="direction-bar">
+          <div class="dir-info">
+            <span class="dir-arrow" aria-hidden="true">→</span>
+            <span class="dir-label" dir="auto">{{ activeDirectionLabel() }}</span>
           </div>
-        }
+          <button
+            type="button"
+            class="direction-switch-btn"
+            (click)="onSwitchDirection()"
+            [title]="labels().switchDir"
+            [attr.aria-label]="labels().switchDir"
+          >
+            <span aria-hidden="true">⇄</span>
+            <span>{{ labels().switchDir }}</span>
+          </button>
+        </div>
       }
 
-      <!-- 3. Concise Direction / Trip Plan Selector & Multi-Leg Transfers -->
-      @if (tripOptions().length > 0) {
-        @if (tripOptions().length > 1) {
-          <div class="context-pills" role="tablist">
-            @for (opt of tripOptions(); track opt.rank; let idx = $index) {
-              <button
-                type="button"
-                role="tab"
-                class="pill-chip"
-                [class.is-active]="selectedTripIndex() === idx"
-                (click)="selectedTripIndex.set(idx)"
-              >
-                <span>#{{ opt.rank }} • {{ opt.total_duration_min }} {{ labels().minShort }}</span>
-                @if (opt.transfers_count > 0) {
-                  <span>🔄{{ opt.transfers_count }}</span>
+      <!-- 3. Multi-Stop Trip Variant Switcher (Option 1 / 2 / 3 with boarding stop & walk distance) -->
+      @if (state().destination && recommendedOptions().length > 1) {
+        <div class="variant-switcher" role="tablist" [attr.aria-label]="labels().variantsAria">
+          @for (opt of recommendedOptions(); track opt.route.route_id + '-' + opt.origin_stop.stop_id + '-' + $index; let idx = $index) {
+            <button
+              type="button"
+              role="tab"
+              class="variant-tab"
+              [class.is-active]="clampedOptionIndex() === idx"
+              [attr.aria-selected]="clampedOptionIndex() === idx"
+              (click)="selectOptionIndex.emit(idx)"
+            >
+              <div class="var-top">
+                <span class="var-rank">{{ labels().optionWord }} {{ opt.rank }}</span>
+                <span class="var-route">🚌 {{ formatOptionRoute(opt) }}</span>
+                <span class="var-time">{{ opt.total_arrival_min }} {{ labels().minShort }}</span>
+              </div>
+              <div class="var-bottom" dir="auto">
+                <span class="var-stop">
+                  📍 {{ cleanStopName(lang() === 'he' ? opt.origin_stop.stop_name_he : opt.origin_stop.stop_name) }}
+                </span>
+                @if (opt.origin_stop.distance_meters !== undefined) {
+                  <span class="var-walk">• 🚶 {{ opt.origin_stop.distance_meters }} m</span>
                 }
-              </button>
-            }
-          </div>
-        }
+              </div>
+            </button>
+          }
+        </div>
+      }
 
+      <!-- 3b. Concise Destination & Multi-Leg Transfer Strip -->
+      @if (tripOptions().length > 0) {
         @if (activeTripOption(); as trip) {
           @if (trip.transfers_count > 0 || state().destination) {
             <div class="trip-summary-strip">
@@ -141,17 +150,6 @@ import type {
             <span class="near-you-label">{{ labels().nearYou }}</span>
             @if (activeUserStop().distance_meters !== undefined) {
               <span class="near-dist">{{ activeUserStop().distance_meters }} m</span>
-            }
-            @if (!state().destination && state().route.available_directions.length > 1) {
-              <button
-                type="button"
-                class="dir-mini-btn"
-                (click)="onSwitchDirection()"
-                [title]="labels().switchDir"
-                [attr.aria-label]="labels().switchDir"
-              >
-                ⇄
-              </button>
             }
           </div>
         </div>
@@ -268,41 +266,153 @@ import type {
         font-weight: 400;
       }
 
-      /* 2. Context Disambiguation & Option Pills */
-      .context-pills {
+      /* 2. Minimalist Direction Switch Bar */
+      .direction-bar {
         display: flex;
-        flex-wrap: wrap;
-        justify-content: center;
-        gap: 0.38rem;
-      }
-
-      .pill-chip {
-        display: inline-flex;
         align-items: center;
-        gap: 0.3rem;
-        background: rgba(255, 255, 255, 0.06);
+        justify-content: space-between;
+        gap: 0.6rem;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.09);
+        border-radius: 0.9rem;
+        padding: 0.45rem 0.65rem;
+      }
+
+      .dir-info {
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+        min-inline-size: 0;
+        flex: 1 1 auto;
+      }
+
+      .dir-arrow {
+        color: #60a5fa;
+        font-weight: 700;
+        flex-shrink: 0;
+      }
+
+      .dir-label {
+        font-size: 0.78rem;
         color: #cbd5e1;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 999px;
-        padding: 0.3rem 0.65rem;
-        font-size: 0.74rem;
-        font-weight: 600;
-        cursor: pointer;
-        max-inline-size: 100%;
-        transition: all 0.15s ease;
-      }
-
-      .pill-chip.is-active {
-        background: rgba(59, 130, 246, 0.22);
-        border-color: #3b82f6;
-        color: #ffffff;
-      }
-
-      .chip-dest {
+        font-weight: 500;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
-        max-inline-size: 150px;
+      }
+
+      .direction-switch-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.32rem;
+        flex-shrink: 0;
+        background: rgba(48, 135, 246, 0.16);
+        color: #93c5fd;
+        border: 1px solid rgba(59, 130, 246, 0.45);
+        border-radius: 999px;
+        padding: 0.32rem 0.7rem;
+        font-size: 0.75rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.15s ease;
+      }
+
+      .direction-switch-btn:hover {
+        background: #3087f6;
+        border-color: #3087f6;
+        color: #ffffff;
+      }
+
+      /* 3. Multi-Stop Trip Variant Switcher (Option 1 / 2 / 3) */
+      .variant-switcher {
+        display: grid;
+        gap: 0.4rem;
+      }
+
+      .variant-tab {
+        display: grid;
+        gap: 0.22rem;
+        inline-size: 100%;
+        text-align: start;
+        background: rgba(255, 255, 255, 0.045);
+        border: 1px solid rgba(255, 255, 255, 0.09);
+        border-radius: 0.85rem;
+        padding: 0.48rem 0.72rem;
+        color: #cbd5e1;
+        cursor: pointer;
+        transition: all 0.15s ease;
+      }
+
+      .variant-tab:hover {
+        border-color: rgba(59, 130, 246, 0.55);
+        background: rgba(48, 135, 246, 0.1);
+      }
+
+      .variant-tab.is-active {
+        background: rgba(48, 135, 246, 0.2);
+        border-color: #3087f6;
+        color: #ffffff;
+        box-shadow: 0 0 0 1px rgba(48, 135, 246, 0.25);
+      }
+
+      .var-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
+        font-size: 0.78rem;
+        font-weight: 700;
+      }
+
+      .var-rank {
+        color: #93c5fd;
+      }
+
+      .variant-tab.is-active .var-rank {
+        color: #ffffff;
+      }
+
+      .var-route {
+        background: rgba(255, 255, 255, 0.08);
+        padding: 0.08rem 0.45rem;
+        border-radius: 999px;
+        font-size: 0.73rem;
+      }
+
+      .variant-tab.is-active .var-route {
+        background: #3087f6;
+        color: #ffffff;
+      }
+
+      .var-time {
+        color: #7dd3fc;
+        font-weight: 700;
+        margin-inline-start: auto;
+      }
+
+      .var-bottom {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.3rem;
+        font-size: 0.72rem;
+        color: #9aa6b4;
+      }
+
+      .variant-tab.is-active .var-bottom {
+        color: #dbeafe;
+      }
+
+      .var-stop {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        max-inline-size: 240px;
+      }
+
+      .var-walk {
+        color: #93c5fd;
+        flex-shrink: 0;
       }
 
       /* 3. Compact Transfer / Destination Strip */
@@ -547,41 +657,65 @@ import type {
 export class LiteTimelineViewComponent {
   readonly state = input.required<LiveBusStatusResponse>();
   readonly lang = input<WidgetLang>('ru');
+  readonly selectedOptionIndex = input<number>(0);
+  readonly selectOptionIndex = output<number>();
   readonly switchDirection = output<0 | 1>();
   readonly selectCandidate = output<LineCandidate>();
   readonly openMap = output<void>();
 
   readonly showAllStops = signal<boolean>(false);
-  readonly selectedTripIndex = signal<number>(0);
 
   constructor() {
     effect(() => {
       void this.state().route.route_id;
       void this.state().destination?.place_name;
       this.showAllStops.set(false);
-      this.selectedTripIndex.set(0);
     });
   }
 
   readonly tripOptions = computed<TripOption[]>(() => this.state().trip_options ?? []);
+  readonly recommendedOptions = computed<RecommendedBusOption[]>(
+    () => this.state().recommended_options ?? []
+  );
+
+  readonly clampedOptionIndex = computed(() => {
+    const len = Math.max(this.recommendedOptions().length, this.tripOptions().length);
+    if (len === 0) return 0;
+    return Math.min(Math.max(0, this.selectedOptionIndex()), len - 1);
+  });
 
   readonly activeTripOption = computed<TripOption | null>(() => {
     const opts = this.tripOptions();
     if (opts.length === 0) return null;
-    const idx = Math.min(this.selectedTripIndex(), opts.length - 1);
-    return opts[idx] ?? opts[0];
+    return opts[this.clampedOptionIndex()] ?? opts[0];
   });
 
   readonly activeRecOption = computed(() => {
-    const opts = this.state().recommended_options ?? [];
+    const opts = this.recommendedOptions();
     if (opts.length === 0) return null;
-    const idx = Math.min(this.selectedTripIndex(), opts.length - 1);
-    return opts[idx] ?? opts[0];
+    return opts[this.clampedOptionIndex()] ?? opts[0];
   });
 
   readonly activeRoute = computed(() => this.activeRecOption()?.route ?? this.state().route);
   readonly activeUserStop = computed(() => this.activeRecOption()?.origin_stop ?? this.state().user_stop);
   readonly activeBus = computed(() => this.activeRecOption()?.bus ?? this.state().nearest_bus);
+
+  readonly activeDirectionLabel = computed(() => {
+    const route = this.activeRoute();
+    const dir = route.available_directions.find((d) => d.direction_id === route.direction_id);
+    const raw =
+      this.lang() === 'he'
+        ? dir?.label_he ?? dir?.label ?? route.direction_label
+        : dir?.label ?? route.direction_label;
+    return raw.replace(/\s*->\s*/g, ' → ');
+  });
+
+  formatOptionRoute(opt: RecommendedBusOption): string {
+    if (opt.is_transfer && opt.second_leg) {
+      return `${opt.route.short_name}→${opt.second_leg.route.short_name}`;
+    }
+    return opt.route.short_name;
+  }
 
   readonly heroRouteDisplay = computed(() => {
     const base = this.activeRoute().short_name || '—';
@@ -684,6 +818,8 @@ export class LiteTimelineViewComponent {
           arrivalCountdown: 'זמן הגעה',
           nearYou: 'קרוב אליך',
           switchDir: 'החלף כיוון',
+          optionWord: 'אפשרות',
+          variantsAria: 'בחר אפשרות נסיעה',
           minShort: 'דק׳',
           waitWord: 'המתנה',
           moreStops: 'כל התחנות',
@@ -696,6 +832,8 @@ export class LiteTimelineViewComponent {
           arrivalCountdown: 'до прибытия',
           nearYou: 'Рядом с вами',
           switchDir: 'Сменить направление',
+          optionWord: 'Вариант',
+          variantsAria: 'Выбор варианта маршрута',
           minShort: 'мин',
           waitWord: 'ожид.',
           moreStops: 'Все остановки',
@@ -708,6 +846,8 @@ export class LiteTimelineViewComponent {
           arrivalCountdown: 'arrival countdown',
           nearYou: 'Near You',
           switchDir: 'Switch direction',
+          optionWord: 'Option',
+          variantsAria: 'Select trip option',
           minShort: 'min',
           waitWord: 'wait',
           moreStops: 'All stops',

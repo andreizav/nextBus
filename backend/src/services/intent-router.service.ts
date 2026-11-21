@@ -203,7 +203,14 @@ export async function dispatchSearchIntent(
       })
     );
 
-    const topCandidate = candidates[0];
+    const topCandidate =
+      candidates.find(
+        (c) =>
+          c.line_number.toLowerCase() === classified.lineNumber.toLowerCase() &&
+          (params.directionId === undefined || c.direction_id === params.directionId)
+      ) ??
+      candidates.find((c) => c.line_number.toLowerCase() === classified.lineNumber.toLowerCase()) ??
+      candidates[0];
     const primaryStatus = await getLiveBusStatus({
       lineNumber: topCandidate?.line_number ?? classified.lineNumber,
       userLat: params.userLocation.lat,

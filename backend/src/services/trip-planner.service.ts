@@ -489,6 +489,24 @@ function buildBusInfoForStop(
   };
 }
 
+function findClosestValidOriginStop(
+  allStops: RouteStopCoord[],
+  userLat: number,
+  userLon: number,
+  maxStopSequence: number,
+  maxRadiusMeters = 1150
+): (RouteStopCoord & { distance_meters: number }) | null {
+  let best: (RouteStopCoord & { distance_meters: number }) | null = null;
+  for (const stop of allStops) {
+    if (stop.stop_sequence >= maxStopSequence) continue;
+    const distance = haversineDistanceMeters(userLat, userLon, stop.lat, stop.lon);
+    if (distance <= maxRadiusMeters && (!best || distance < best.distance_meters)) {
+      best = { ...stop, distance_meters: Math.round(distance) };
+    }
+  }
+  return best;
+}
+
 async function buildLegTimelineSlice(
   routeId: string,
   directionId: 0 | 1,
@@ -650,27 +668,42 @@ export async function planBestBusesToDestination(
 
   for (const match of directMatches) {
     const allStops = await supabaseService.getDirectionStopCoords(match.route_id, match.direction_id);
+    const closestOrigin = findClosestValidOriginStop(
+      allStops,
+      userLocation.lat,
+      userLocation.lon,
+      match.dest_stop_sequence
+    );
+    const originStopId = closestOrigin?.stop_id ?? match.origin_stop_id;
+    const originStopCode = closestOrigin?.stop_code ?? match.origin_stop_code;
+    const originStopName = closestOrigin?.stop_name ?? match.origin_stop_name;
+    const originStopNameHe = closestOrigin?.stop_name_he ?? match.origin_stop_name_he;
+    const originSeq = closestOrigin?.stop_sequence ?? match.origin_stop_sequence;
+    const originLat = closestOrigin?.lat ?? match.origin_lat;
+    const originLon = closestOrigin?.lon ?? match.origin_lon;
+    const stopsBetween = Math.max(1, match.dest_stop_sequence - originSeq);
+
     const cached = stateCacheMap.get(`${match.route_id}:${match.direction_id}`) ?? null;
     const { busInfo, etaMinutes } = buildBusInfoForStop(
       allStops,
       cached,
-      match.origin_stop_sequence,
-      match.origin_lat,
-      match.origin_lon,
+      originSeq,
+      originLat,
+      originLon,
       match.route_short_name,
       match.direction_id
     );
 
     const originDistMeters = Math.round(
-      haversineDistanceMeters(userLocation.lat, userLocation.lon, match.origin_lat, match.origin_lon)
+      haversineDistanceMeters(userLocation.lat, userLocation.lon, originLat, originLon)
     );
     const walkToOriginMin = originDistMeters > 200 ? Math.round(originDistMeters / 75) : 0;
-    const distM = haversineDistanceMeters(match.origin_lat, match.origin_lon, match.dest_lat, match.dest_lon);
-    const metrics = calculateTripMetrics(Math.max(etaMinutes, walkToOriginMin), match.stops_between, now, distM);
+    const distM = haversineDistanceMeters(originLat, originLon, match.dest_lat, match.dest_lon);
+    const metrics = calculateTripMetrics(Math.max(etaMinutes, walkToOriginMin), stopsBetween, now, distM);
     const timelineStops = await buildLegTimelineSlice(
       match.route_id,
       match.direction_id,
-      match.origin_stop_sequence,
+      originSeq,
       match.dest_stop_sequence,
       busInfo.current_stop_sequence
     );
@@ -683,23 +716,23 @@ export async function planBestBusesToDestination(
         short_name: match.route_short_name,
         long_name: match.route_long_name,
         direction_id: match.direction_id,
-        direction_label: `${match.origin_stop_name} -> ${match.dest_stop_name}`,
+        direction_label: `${originStopName} -> ${match.dest_stop_name}`,
         available_directions: [
           {
             direction_id: match.direction_id,
-            label: `${match.origin_stop_name} -> ${match.dest_stop_name}`,
-            label_he: `${match.origin_stop_name_he} -> ${match.dest_stop_name_he}`
+            label: `${originStopName} -> ${match.dest_stop_name}`,
+            label_he: `${originStopNameHe} -> ${match.dest_stop_name_he}`
           }
         ]
       },
       origin_stop: {
-        stop_id: match.origin_stop_id,
-        stop_code: match.origin_stop_code,
-        stop_name: match.origin_stop_name,
-        stop_name_he: match.origin_stop_name_he,
-        stop_sequence: match.origin_stop_sequence,
-        lat: match.origin_lat,
-        lon: match.origin_lon,
+        stop_id: originStopId,
+        stop_code: originStopCode,
+        stop_name: originStopName,
+        stop_name_he: originStopNameHe,
+        stop_sequence: originSeq,
+        lat: originLat,
+        lon: originLon,
         distance_meters: originDistMeters
       },
       dest_stop: {
@@ -713,7 +746,7 @@ export async function planBestBusesToDestination(
       },
       bus: busInfo,
       eta_to_boarding_min: etaMinutes,
-      stops_between: match.stops_between,
+      stops_between: stopsBetween,
       ride_duration_min: metrics.ride_duration_min,
       total_arrival_min: metrics.total_arrival_min,
       estimated_arrival_time: metrics.estimated_arrival_time,
@@ -721,12 +754,41 @@ export async function planBestBusesToDestination(
     });
   }
 
+  // Order transfer matches to prioritize distinct leg1_route_id corridors first
+  const seenLeg1Routes = new Set<string>();
+  const primaryTransferMatches: TransferRouteMatch[] = [];
+  const secondaryTransferMatches: TransferRouteMatch[] = [];
+  for (const m of transferMatches) {
+    if (!seenLeg1Routes.has(m.leg1_route_id)) {
+      seenLeg1Routes.add(m.leg1_route_id);
+      primaryTransferMatches.push(m);
+    } else {
+      secondaryTransferMatches.push(m);
+    }
+  }
+  const orderedTransferMatches = [...primaryTransferMatches, ...secondaryTransferMatches].slice(0, 8);
+
   const transferCandidates: RecommendedBusOption[] = [];
-  for (const match of transferMatches.slice(0, 6)) {
+  for (const match of orderedTransferMatches) {
     const [leg1AllStops, leg2AllStops] = await Promise.all([
       supabaseService.getDirectionStopCoords(match.leg1_route_id, match.leg1_direction_id),
       supabaseService.getDirectionStopCoords(match.leg2_route_id, match.leg2_direction_id)
     ]);
+
+    const closestOrigin = findClosestValidOriginStop(
+      leg1AllStops,
+      userLocation.lat,
+      userLocation.lon,
+      match.xfer_alight_stop_sequence
+    );
+    const originStopId = closestOrigin?.stop_id ?? match.origin_stop_id;
+    const originStopCode = closestOrigin?.stop_code ?? match.origin_stop_code;
+    const originStopName = closestOrigin?.stop_name ?? match.origin_stop_name;
+    const originStopNameHe = closestOrigin?.stop_name_he ?? match.origin_stop_name_he;
+    const originSeq = closestOrigin?.stop_sequence ?? match.origin_stop_sequence;
+    const originLat = closestOrigin?.lat ?? match.origin_lat;
+    const originLon = closestOrigin?.lon ?? match.origin_lon;
+    const leg1StopsBetween = Math.max(1, match.xfer_alight_stop_sequence - originSeq);
 
     const cachedLeg1 = stateCacheMap.get(`${match.leg1_route_id}:${match.leg1_direction_id}`) ?? null;
     const cachedLeg2 = stateCacheMap.get(`${match.leg2_route_id}:${match.leg2_direction_id}`) ?? null;
@@ -734,9 +796,9 @@ export async function planBestBusesToDestination(
     const leg1Bus = buildBusInfoForStop(
       leg1AllStops,
       cachedLeg1,
-      match.origin_stop_sequence,
-      match.origin_lat,
-      match.origin_lon,
+      originSeq,
+      originLat,
+      originLon,
       match.leg1_route_short_name,
       match.leg1_direction_id
     );
@@ -751,12 +813,17 @@ export async function planBestBusesToDestination(
       match.leg2_direction_id
     );
 
-    const leg1DistM = haversineDistanceMeters(match.origin_lat, match.origin_lon, match.xfer_alight_lat, match.xfer_alight_lon);
+    const originDistMeters = Math.round(
+      haversineDistanceMeters(userLocation.lat, userLocation.lon, originLat, originLon)
+    );
+    const walkToOriginMin = originDistMeters > 200 ? Math.round(originDistMeters / 75) : 0;
+
+    const leg1DistM = haversineDistanceMeters(originLat, originLon, match.xfer_alight_lat, match.xfer_alight_lon);
     const leg2DistM = haversineDistanceMeters(match.xfer_board_lat, match.xfer_board_lon, match.dest_lat, match.dest_lon);
 
     const metrics = calculateTransferTripMetrics({
-      etaToBoardingMin: leg1Bus.etaMinutes,
-      leg1Stops: match.leg1_stops_between,
+      etaToBoardingMin: Math.max(leg1Bus.etaMinutes, walkToOriginMin),
+      leg1Stops: leg1StopsBetween,
       transferWalkMeters: match.transfer_walk_meters_actual,
       leg2BusEtaMin: leg2Bus.etaMinutes,
       leg2Stops: match.leg2_stops_between,
@@ -769,7 +836,7 @@ export async function planBestBusesToDestination(
       buildLegTimelineSlice(
         match.leg1_route_id,
         match.leg1_direction_id,
-        match.origin_stop_sequence,
+        originSeq,
         match.xfer_alight_stop_sequence,
         leg1Bus.busInfo.current_stop_sequence
       ),
@@ -781,10 +848,6 @@ export async function planBestBusesToDestination(
         leg2Bus.busInfo.current_stop_sequence
       )
     ]);
-
-    const originDistMeters = Math.round(
-      haversineDistanceMeters(userLocation.lat, userLocation.lon, match.origin_lat, match.origin_lon)
-    );
 
     const alightStop: UserStopInfo = {
       stop_id: match.xfer_alight_stop_id,
@@ -827,17 +890,17 @@ export async function planBestBusesToDestination(
         short_name: match.leg1_route_short_name,
         long_name: match.leg1_route_long_name,
         direction_id: match.leg1_direction_id,
-        direction_label: `${match.origin_stop_name} -> ${match.xfer_alight_stop_name}`,
+        direction_label: `${originStopName} -> ${match.xfer_alight_stop_name}`,
         available_directions: []
       },
       origin_stop: {
-        stop_id: match.origin_stop_id,
-        stop_code: match.origin_stop_code,
-        stop_name: match.origin_stop_name,
-        stop_name_he: match.origin_stop_name_he,
-        stop_sequence: match.origin_stop_sequence,
-        lat: match.origin_lat,
-        lon: match.origin_lon,
+        stop_id: originStopId,
+        stop_code: originStopCode,
+        stop_name: originStopName,
+        stop_name_he: originStopNameHe,
+        stop_sequence: originSeq,
+        lat: originLat,
+        lon: originLon,
         distance_meters: originDistMeters
       },
       dest_stop: {
@@ -851,7 +914,7 @@ export async function planBestBusesToDestination(
       },
       bus: leg1Bus.busInfo,
       eta_to_boarding_min: leg1Bus.etaMinutes,
-      stops_between: match.leg1_stops_between + match.leg2_stops_between,
+      stops_between: leg1StopsBetween + match.leg2_stops_between,
       ride_duration_min: metrics.leg1_ride_min + metrics.leg2_ride_min,
       total_arrival_min: metrics.total_arrival_min,
       estimated_arrival_time: metrics.estimated_arrival_time,
@@ -1152,7 +1215,44 @@ export async function planBestBusesToDestination(
       (!t.second_leg || !directRouteIds.has(t.second_leg.route.route_id))
   );
 
-  let selectedOptions = selectTop3MixedOptions(directCandidates, nonRedundantTransfers, 3);
+  const sortedNonRedundant = [...nonRedundantTransfers].sort(
+    (a, b) => a.total_arrival_min - b.total_arrival_min
+  );
+  const uniquePairTransfers: RecommendedBusOption[] = [];
+  const seenRoutePairs = new Set<string>();
+  for (const t of sortedNonRedundant) {
+    const pairKey = `${t.route.route_id}:${t.second_leg?.route.route_id ?? ''}`;
+    if (!seenRoutePairs.has(pairKey)) {
+      seenRoutePairs.add(pairKey);
+      uniquePairTransfers.push(t);
+    }
+  }
+
+  const distinctStopRouteTransfers: RecommendedBusOption[] = [];
+  const secondaryTransfers: RecommendedBusOption[] = [];
+  const seenStopRoutes = new Set<string>();
+  for (const t of uniquePairTransfers) {
+    const key = `${t.origin_stop.stop_id}:${t.route.route_id}`;
+    if (!seenStopRoutes.has(key)) {
+      seenStopRoutes.add(key);
+      distinctStopRouteTransfers.push(t);
+    } else {
+      secondaryTransfers.push(t);
+    }
+  }
+
+  const transferPool =
+    directCandidates.length + distinctStopRouteTransfers.length >= 3
+      ? distinctStopRouteTransfers
+      : [
+          ...distinctStopRouteTransfers,
+          ...secondaryTransfers.slice(
+            0,
+            Math.max(0, 3 - directCandidates.length - distinctStopRouteTransfers.length)
+          )
+        ];
+
+  let selectedOptions = selectTop3MixedOptions(directCandidates, transferPool, 3);
   const best = selectedOptions[0] ?? selectBestSingleOption(directCandidates, transferCandidates);
 
   const distToDestKm = Math.round(

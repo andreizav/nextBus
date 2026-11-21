@@ -163,6 +163,7 @@ app.get('/api/live-status', async (req: Request, res: Response) => {
     const preferredDirection: 0 | 1 | undefined =
       dirQuery === '0' ? 0 : dirQuery === '1' ? 1 : undefined;
     const includeNearbyPlaces = req.query.include_nearby_places === 'true';
+    const allowColdBootstrap = req.query.bootstrap === 'true';
 
     const status = await getLiveBusStatus({
       lineNumber,
@@ -170,7 +171,7 @@ app.get('/api/live-status', async (req: Request, res: Response) => {
       userLon: lon,
       preferredDirection,
       includeNearbyPlaces,
-      allowColdBootstrap: false,
+      allowColdBootstrap,
       routeId
     });
 

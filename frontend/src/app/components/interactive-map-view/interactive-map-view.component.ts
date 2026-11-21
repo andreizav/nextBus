@@ -16,6 +16,7 @@ import * as L from 'leaflet';
 import type {
   LiveBusStatusResponse,
   RecommendedBusOption,
+  TripOption,
   WidgetLang
 } from '../../models/bus.models';
 
@@ -28,330 +29,172 @@ import type {
   styleUrls: ['../../../../node_modules/leaflet/dist/leaflet.css'],
   template: `
     <section
-      class="interactive-card nb-card"
+      class="nb-map-card"
       [attr.dir]="lang() === 'he' ? 'rtl' : 'ltr'"
-      aria-label="Interactive transit map, fastest A-to-B route, and nearby cafes"
+      aria-label="Minimalist live map and route variants"
     >
-      <header class="interactive-header">
-        <div class="interactive-route">
-          <div
-            class="route-badge-sm"
-            [class.is-transfer]="bestOption()?.is_transfer"
-            aria-label="Fastest route number"
-          >
-            @if (bestOption()?.is_transfer && bestOption()?.second_leg; as sec) {
-              <span>{{ activeDisplayRoute().short_name }}→{{ sec.route.short_name }}</span>
-            } @else {
-              <span>{{ activeDisplayRoute().short_name }}</span>
-            }
+      <!-- 1. Hero Metrics Row (matching Lite View) -->
+      <header class="nb-map-hero">
+        <div class="nb-map-metric-col">
+          <div class="nb-map-metric-main" [class.is-compact]="heroRouteDisplay().length > 4">
+            {{ heroRouteDisplay() }}
           </div>
-          <div class="route-info">
-            <span class="interactive-pill">
-              <span aria-hidden="true">🗺️</span>
-              {{ labels().badge }}
-              @if (state().destination; as dest) {
-                <span class="dest-tag">→ {{ dest.place_name }}</span>
-              }
-            </span>
-            <h2 class="interactive-title">
-              @if (state().destination; as dest) {
-                {{ labels().tripTo }} {{ dest.place_name }}
-              } @else {
-                {{ labels().routeLabel }} {{ activeDisplayRoute().short_name }} —
-                {{
-                  lang() === 'he'
-                    ? activeOriginStop().stop_name_he
-                    : activeOriginStop().stop_name
-                }}
-              }
-            </h2>
-            @if (activeBus()?.current_stop_name) {
-              <p class="bus-current-sub">
-                <span aria-hidden="true">🚌</span>
-                {{ labels().busNowAt }}:
-                {{
-                  lang() === 'he'
-                    ? activeBus()?.current_stop_name_he
-                    : activeBus()?.current_stop_name
-                }}
-              </p>
-            }
-          </div>
+          <div class="nb-map-metric-caption">{{ labels().busRoute }}</div>
         </div>
 
-        <div class="header-right">
-          <div class="eta-box-interactive" role="status" aria-live="polite">
-            <span class="eta-val">{{ etaText() }}</span>
-            <span class="eta-sub">{{ stopsAwayText() }}</span>
-          </div>
-
-          <div class="zoom-controls">
-            <button
-              type="button"
-              class="ctrl-btn nb-btn"
-              (click)="recenterMap()"
-              [title]="labels().recenter"
-            >
-              🎯
-            </button>
-            @if (!bestOption()) {
-              <button
-                type="button"
-                class="ctrl-btn nb-btn"
-                (click)="switchDirection.emit(state().route.direction_id === 0 ? 1 : 0)"
-                title="Switch direction"
-              >
-                ⇄
-              </button>
+        <div class="nb-map-metric-col" role="status" aria-live="polite">
+          <div class="nb-map-metric-main">
+            <span>{{ etaDigits() }}</span>
+            @if (etaUnit()) {
+              <span class="nb-map-metric-unit">{{ etaUnit() }}</span>
             }
           </div>
+          <div class="nb-map-metric-caption">{{ labels().arrivalCountdown }}</div>
         </div>
       </header>
 
-      <div class="map-viewport">
-        <div #mapContainer class="leaflet-host" aria-label="OpenStreetMap interactive map"></div>
-        <div class="map-hud">
-          <span>
-            <strong>{{ labels().nearestStop }}:</strong>
-            {{
-              lang() === 'he'
-                ? activeOriginStop().stop_name_he
-                : activeOriginStop().stop_name
-            }}
-            (#{{ activeOriginStop().stop_code }})
-          </span>
-          <span>{{ etaText() }} • {{ stopsAwayText() }}</span>
-        </div>
-      </div>
-
-      @if (bestOption(); as best) {
-        <div class="best-route-section" role="region" aria-label="Fastest route itinerary">
-          <div class="top3-header">
-            <h3 class="offers-title">
-              <span aria-hidden="true">⚡</span>
-              {{ labels().fastestTitle }}
-            </h3>
-            @if (state().destination; as dest) {
-              <span class="dest-addr">{{ dest.formatted_address }}</span>
-            }
+      <!-- 2. Direction Switch Bar (when searching by bus line number) -->
+      @if (!state().destination && activeDisplayRoute().available_directions.length > 1) {
+        <div class="nb-map-dir-bar">
+          <div class="nb-map-dir-info">
+            <span class="nb-map-dir-arrow" aria-hidden="true">→</span>
+            <span class="nb-map-dir-label" dir="auto">{{ activeDirectionLabel() }}</span>
           </div>
-
-          <div class="single-best-card">
-            <div class="top3-card-head">
-              <span
-                class="line-pill"
-                [style.background]="best.is_transfer ? '#f59e0b' : '#10b981'"
-              >
-                @if (best.is_transfer && best.second_leg) {
-                  🚌 {{ best.route.short_name }} ➔ 🚌 {{ best.second_leg.route.short_name }}
-                } @else {
-                  {{ lang() === 'he' ? 'קו ' + best.route.short_name : labels().lineWord + ' ' + best.route.short_name }}
-                }
-              </span>
-              <div class="head-badges">
-                @if (best.is_transfer) {
-                  <span class="transfer-badge">⇄ {{ labels().transferBadge }}</span>
-                }
-                <span class="fastest-badge">{{ labels().fastest }}</span>
-              </div>
-            </div>
-
-            <div class="top3-boarding">
-              @if (best.is_transfer && best.transfer_info && best.second_leg) {
-                <span>
-                  {{ labels().firstBus }} <strong>№{{ best.route.short_name }}</strong>
-                  ({{ lang() === 'he' ? best.origin_stop.stop_name_he : best.origin_stop.stop_name }}, #{{ best.origin_stop.stop_code }}) —
-                  <strong>{{ best.eta_to_boarding_min }} {{ labels().min }}</strong>
-                </span>
-                <div class="transfer-summary">
-                  🔄 {{ labels().exitAt }} <strong>{{ best.transfer_info.arrive_at_hub_time }}</strong>
-                  {{ labels().atStop }} «{{ lang() === 'he' ? best.transfer_info.alight_stop.stop_name_he : best.transfer_info.alight_stop.stop_name }}»
-                  (#{{ best.transfer_info.alight_stop.stop_code }})
-                  → {{ labels().boardNewBus }} <strong>🚌 №{{ best.second_leg.route.short_name }}</strong> {{ labels().boardAt }} <strong>{{ best.transfer_info.next_bus_board_time }}</strong>
-                </div>
-              } @else {
-                {{ labels().arrivesIn }}
-                <strong>{{ best.eta_to_boarding_min }} {{ labels().min }}</strong>
-                ({{ lang() === 'he' ? best.origin_stop.stop_name_he : best.origin_stop.stop_name }}, #{{ best.origin_stop.stop_code }})
-              }
-            </div>
-
-            <div class="top3-total">
-              <span>{{ labels().arriveAt }} <strong>{{ best.estimated_arrival_time }}</strong></span>
-              <span class="total-mins">({{ labels().total }} {{ best.total_arrival_min }} {{ labels().min }})</span>
-            </div>
-          </div>
-
-          <div class="selected-timeline-box">
-            @if (best.is_transfer && best.transfer_info && best.second_leg) {
-              <div class="transfer-itinerary">
-                <div class="itinerary-step">
-                  <div class="timeline-head">
-                    <strong>
-                      🚌 1. {{ labels().routeWord }} {{ best.route.short_name }}:
-                      {{ lang() === 'he' ? best.origin_stop.stop_name_he : best.origin_stop.stop_name }}
-                      →
-                      {{ lang() === 'he' ? best.transfer_info.alight_stop.stop_name_he : best.transfer_info.alight_stop.stop_name }}
-                    </strong>
-                    <span>{{ labels().arrivesIn }} {{ best.eta_to_boarding_min }} {{ labels().min }}</span>
-                  </div>
-                  <ul class="mini-stop-list">
-                    @for (stop of best.timeline_stops; track stop.stop_id + '-' + stop.stop_sequence) {
-                      <li
-                        class="mini-stop"
-                        [class.is-bus]="stop.stop_sequence === best.bus.current_stop_sequence"
-                        [class.is-origin]="stop.stop_sequence === best.origin_stop.stop_sequence"
-                        [class.is-xfer]="stop.stop_sequence === best.transfer_info.alight_stop.stop_sequence"
-                      >
-                        <span class="mini-dot">
-                          @if (stop.stop_sequence === best.bus.current_stop_sequence) {
-                            🚌
-                          } @else if (stop.stop_sequence === best.origin_stop.stop_sequence) {
-                            📍
-                          } @else if (stop.stop_sequence === best.transfer_info.alight_stop.stop_sequence) {
-                            🔄
-                          } @else {
-                            •
-                          }
-                        </span>
-                        <span class="mini-name">
-                          {{ lang() === 'he' ? stop.stop_name_he : stop.stop_name }}
-                        </span>
-                        <span class="mini-bus-tag">№{{ best.route.short_name }}</span>
-                        <span class="mini-code">#{{ stop.stop_code }}</span>
-                      </li>
-                    }
-                  </ul>
-                </div>
-
-                <div class="transfer-hub-banner" role="note" aria-label="Transfer instructions">
-                  <div class="hub-title">
-                    <span>🔄 {{ labels().transferHereTitle }}</span>
-                    <span class="hub-meta">
-                      @if (best.transfer_info.walk_meters > 0) {
-                        🚶 {{ best.transfer_info.walk_meters }} m •
-                      }
-                      ⏱️ {{ labels().waitWord }} {{ best.transfer_info.wait_minutes }} {{ labels().min }}
-                    </span>
-                  </div>
-                  <p class="hub-instruction">{{ transferInstruction(best.transfer_info) }}</p>
-                </div>
-
-                <div class="itinerary-step">
-                  <div class="timeline-head">
-                    <strong>
-                      🚌 2. {{ labels().routeWord }} {{ best.second_leg.route.short_name }} ({{ best.transfer_info.next_bus_board_time }}):
-                      {{ lang() === 'he' ? best.second_leg.board_stop.stop_name_he : best.second_leg.board_stop.stop_name }}
-                      →
-                      {{ lang() === 'he' ? best.dest_stop.stop_name_he : best.dest_stop.stop_name }}
-                    </strong>
-                    <span>{{ best.second_leg.stops_between }} {{ labels().stopsWord }} • ~{{ best.second_leg.ride_duration_min }} {{ labels().min }} • 🏁 {{ best.estimated_arrival_time }}</span>
-                  </div>
-                  <ul class="mini-stop-list">
-                    @for (stop of best.second_leg.timeline_stops; track 'leg2-' + stop.stop_id + '-' + stop.stop_sequence) {
-                      <li
-                        class="mini-stop"
-                        [class.is-bus]="stop.stop_sequence === best.second_leg.bus.current_stop_sequence"
-                        [class.is-xfer]="stop.stop_sequence === best.second_leg.board_stop.stop_sequence"
-                        [class.is-dest]="stop.stop_sequence === best.dest_stop.stop_sequence"
-                      >
-                        <span class="mini-dot">
-                          @if (stop.stop_sequence === best.second_leg.bus.current_stop_sequence) {
-                            🚌
-                          } @else if (stop.stop_sequence === best.second_leg.board_stop.stop_sequence) {
-                            🔄
-                          } @else if (stop.stop_sequence === best.dest_stop.stop_sequence) {
-                            🏁
-                          } @else {
-                            •
-                          }
-                        </span>
-                        <span class="mini-name">
-                          {{ lang() === 'he' ? stop.stop_name_he : stop.stop_name }}
-                        </span>
-                        <span class="mini-bus-tag is-leg2">№{{ best.second_leg.route.short_name }}</span>
-                        <span class="mini-code">#{{ stop.stop_code }}</span>
-                      </li>
-                    }
-                  </ul>
-                </div>
-              </div>
-            } @else {
-              <div class="timeline-head">
-                <strong>
-                  {{ labels().routeWord }} {{ best.route.short_name }}:
-                  {{ lang() === 'he' ? best.origin_stop.stop_name_he : best.origin_stop.stop_name }}
-                  →
-                  {{ lang() === 'he' ? best.dest_stop.stop_name_he : best.dest_stop.stop_name }}
-                </strong>
-                <span>{{ best.stops_between }} {{ labels().stopsWord }} • ~{{ best.ride_duration_min }} {{ labels().min }}</span>
-              </div>
-              <ul class="mini-stop-list">
-                @for (stop of best.timeline_stops; track stop.stop_id + '-' + stop.stop_sequence) {
-                  <li
-                    class="mini-stop"
-                    [class.is-bus]="stop.stop_sequence === best.bus.current_stop_sequence"
-                    [class.is-origin]="stop.stop_sequence === best.origin_stop.stop_sequence"
-                    [class.is-dest]="stop.stop_sequence === best.dest_stop.stop_sequence"
-                  >
-                    <span class="mini-dot">
-                      @if (stop.stop_sequence === best.bus.current_stop_sequence) {
-                        🚌
-                      } @else if (stop.stop_sequence === best.origin_stop.stop_sequence) {
-                        📍
-                      } @else if (stop.stop_sequence === best.dest_stop.stop_sequence) {
-                        🏁
-                      } @else {
-                        •
-                      }
-                    </span>
-                    <span class="mini-name">
-                      {{ lang() === 'he' ? stop.stop_name_he : stop.stop_name }}
-                    </span>
-                    <span class="mini-bus-tag">№{{ best.route.short_name }}</span>
-                    <span class="mini-code">#{{ stop.stop_code }}</span>
-                  </li>
-                }
-              </ul>
-            }
-          </div>
-        </div>
-      } @else if (state().destination; as dest) {
-        <div class="intercity-notice-section" role="region" aria-label="Intercity transit note">
-          <div class="top3-header">
-            <h3 class="offers-title">
-              <span aria-hidden="true">🚆</span>
-              {{ labels().intercityTitle }}
-            </h3>
-            <span class="dest-addr">{{ dest.formatted_address }}</span>
-          </div>
-          <div class="single-best-card">
-            <p class="intercity-advice-text">{{ labels().intercityAdvice }}</p>
-          </div>
+          <button
+            type="button"
+            class="nb-map-dir-btn"
+            (click)="onSwitchDirection()"
+            [title]="labels().switchDir"
+            [attr.aria-label]="labels().switchDir"
+          >
+            <span aria-hidden="true">⇄</span>
+            <span>{{ labels().switchDir }}</span>
+          </button>
         </div>
       }
 
+      <!-- 3. Multi-Stop Trip Variant Switcher (Option 1 / 2 / 3 with stop & walking distance) -->
+      @if (state().destination && recommendedOptions().length > 1) {
+        <div class="nb-map-variants" role="tablist" [attr.aria-label]="labels().variantsAria">
+          @for (opt of recommendedOptions(); track opt.route.route_id + '-' + opt.origin_stop.stop_id + '-' + $index; let idx = $index) {
+            <button
+              type="button"
+              role="tab"
+              class="nb-map-var-tab"
+              [class.is-active]="clampedOptionIndex() === idx"
+              [attr.aria-selected]="clampedOptionIndex() === idx"
+              (click)="selectOptionIndex.emit(idx)"
+            >
+              <div class="nb-map-var-top">
+                <span class="nb-map-var-rank">{{ labels().optionWord }} {{ opt.rank }}</span>
+                <span class="nb-map-var-route">🚌 {{ formatOptionRoute(opt) }}</span>
+                <span class="nb-map-var-time">{{ opt.total_arrival_min }} {{ labels().minShort }}</span>
+              </div>
+              <div class="nb-map-var-bottom" dir="auto">
+                <span class="nb-map-var-stop">
+                  📍 {{ cleanStopName(lang() === 'he' ? opt.origin_stop.stop_name_he : opt.origin_stop.stop_name) }}
+                </span>
+                @if (opt.origin_stop.distance_meters !== undefined) {
+                  <span class="nb-map-var-walk">• 🚶 {{ opt.origin_stop.distance_meters }} m</span>
+                }
+              </div>
+            </button>
+          }
+        </div>
+      }
+
+      <!-- 4. Minimalist Dark-Slate Map Viewport -->
+      <div class="nb-map-viewport">
+        <div #mapContainer class="nb-leaflet-host" aria-label="OpenStreetMap interactive map"></div>
+
+        <button
+          type="button"
+          class="nb-map-recenter-fab"
+          (click)="recenterMap()"
+          [title]="labels().recenter"
+          [attr.aria-label]="labels().recenter"
+        >
+          🎯
+        </button>
+
+        <div class="nb-map-hud">
+          <span class="nb-hud-stop" dir="auto">
+            <span class="nb-hud-pin" aria-hidden="true">📍</span>
+            <strong>
+              {{
+                cleanStopName(
+                  lang() === 'he' ? activeOriginStop().stop_name_he : activeOriginStop().stop_name
+                )
+              }}
+            </strong>
+            @if (activeOriginStop().distance_meters !== undefined) {
+              <span class="nb-hud-muted">• 🚶 {{ activeOriginStop().distance_meters }} m</span>
+            }
+          </span>
+          <span class="nb-hud-away">{{ stopsAwayText() }}</span>
+        </div>
+      </div>
+
+      <!-- 5. Compact Transfer / Destination Strip -->
+      @if (activeTripOption(); as trip) {
+        @if (trip.transfers_count > 0 || state().destination) {
+          <div class="nb-map-trip-strip">
+            <div class="nb-map-trip-row">
+              <span class="nb-map-dest-label">🏁 {{ state().destination?.place_name }}</span>
+              <span class="nb-map-dest-eta">{{ trip.estimated_arrival_time }}</span>
+            </div>
+
+            @if (trip.transfers_count > 0) {
+              <ol class="nb-map-xfer-list">
+                @for (leg of trip.legs; track leg.route_id + '-' + $index) {
+                  <li class="nb-map-xfer-item" [class.is-xfer]="leg.leg_type === 'TRANSFER'">
+                    <span class="nb-map-xfer-badge">
+                      {{ leg.leg_type === 'TRANSFER' ? '🔄' : '🚌' }} {{ leg.line_number }}
+                    </span>
+                    <span class="nb-map-xfer-desc">
+                      {{ cleanStopName(lang() === 'he' ? leg.board_stop.stop_name_he : leg.board_stop.stop_name) }}
+                      ➔
+                      {{ cleanStopName(lang() === 'he' ? leg.alight_stop.stop_name_he : leg.alight_stop.stop_name) }}
+                      @if (leg.leg_type === 'TRANSFER' && leg.transfer_wait_min !== undefined) {
+                        ({{ labels().waitWord }} {{ leg.transfer_wait_min }} {{ labels().minShort }})
+                      }
+                    </span>
+                  </li>
+                }
+              </ol>
+            }
+          </div>
+        }
+      } @else if (state().destination && !activeOption()) {
+        <div class="nb-map-trip-strip">
+          <div class="nb-map-trip-row">
+            <span class="nb-map-dest-label">🚆 {{ state().destination?.place_name }}</span>
+          </div>
+          <p class="nb-map-intercity-msg">{{ labels().intercityAdvice }}</p>
+        </div>
+      }
+
+      <!-- 6. Cafes Nearby (populated by backend only if waiting > 10 minutes) -->
       @if (state().nearby_offers.length > 0) {
-        <div class="offers-section">
-          <h3 class="offers-title">
-            <span aria-hidden="true">☕</span>
-            {{ labels().offersTitle }} ({{ state().nearby_offers.length }})
-          </h3>
-          <div class="offers-grid">
+        <div class="nb-map-offers">
+          <div class="nb-map-offers-head">
+            <span>☕ {{ labels().offersTitle }} ({{ state().nearby_offers.length }})</span>
+          </div>
+          <div class="nb-map-offers-grid">
             @for (offer of state().nearby_offers; track offer.id) {
-              <article class="offer-card nb-offer-card">
-                <div class="offer-top">
-                  <strong class="offer-name">
+              <article class="nb-map-offer-card">
+                <div class="nb-map-offer-top">
+                  <strong class="nb-map-offer-name">
                     {{ lang() === 'he' ? offer.name_he : offer.name }}
                   </strong>
-                  <span class="offer-dist">
-                    {{ offer.walk_minutes }} {{ labels().min }} • {{ offer.distance_meters }} m
+                  <span class="nb-map-offer-dist">
+                    {{ offer.walk_minutes }} {{ labels().minShort }} • {{ offer.distance_meters }} m
                   </span>
                 </div>
-                <p class="offer-promo">{{ offer.promo }}</p>
+                <p class="nb-map-offer-promo">{{ offer.promo }}</p>
                 @if (offer.maps_url) {
                   <a
-                    class="offer-link"
+                    class="nb-map-offer-link"
                     [href]="offer.maps_url"
                     target="_blank"
                     rel="noopener noreferrer"
@@ -368,146 +211,243 @@ import type {
   `,
   styles: [
     `
-      .interactive-card {
-        color-scheme: only dark;
-        background: #0b1220;
-        color: #f8fafc;
-        accent-color: #34d399;
-        border: 1px solid #2b3c5d;
-        border-radius: 1rem;
-        padding-block: 1.15rem;
-        padding-inline: 1.15rem;
+      .nb-map-card {
         display: grid;
         gap: 0.95rem;
         inline-size: 100%;
         min-inline-size: 0;
+        color: #f8fafc;
       }
 
-      .interactive-header {
-        display: flex;
-        flex-wrap: wrap;
-        justify-content: space-between;
-        align-items: center;
-        gap: 0.75rem;
-      }
-
-      .interactive-route {
-        display: flex;
-        align-items: center;
-        gap: 0.75rem;
-        min-inline-size: 0;
-        flex: 1 1 260px;
-      }
-
-      .route-badge-sm {
+      /* 1. Hero Metrics (identical proportions to Lite View) */
+      .nb-map-hero {
         display: grid;
-        place-items: center;
-        min-inline-size: 3rem;
-        padding-inline: 0.45rem;
-        block-size: 3rem;
-        flex-shrink: 0;
-        border-radius: 0.75rem;
-        background: #10b981;
-        color: #041322;
-        font-size: 1.25rem;
-        font-weight: 800;
+        grid-template-columns: 1fr 1fr;
+        align-items: end;
+        text-align: center;
+        gap: 0.5rem;
+        padding-block: 0.25rem 0.1rem;
       }
 
-      .route-badge-sm.is-transfer {
-        background: #f59e0b;
-        font-size: 1rem;
+      .nb-map-metric-col {
+        display: grid;
+        gap: 0.2rem;
+        justify-items: center;
       }
 
-      .route-info {
-        min-inline-size: 0;
+      .nb-map-metric-main {
+        color: #ffffff;
+        font-size: 3rem;
+        font-weight: 700;
+        line-height: 1;
+        letter-spacing: -0.03em;
+        white-space: nowrap;
       }
 
-      .interactive-pill {
-        display: inline-flex;
-        flex-wrap: wrap;
+      .nb-map-metric-main.is-compact {
+        font-size: 2rem;
+      }
+
+      .nb-map-metric-unit {
+        font-size: 1.3rem;
+        font-weight: 700;
+        margin-inline-start: 0.25rem;
+        letter-spacing: 0.02em;
+      }
+
+      .nb-map-metric-caption {
+        font-size: 0.84rem;
+        color: #8b96a5;
+        font-weight: 400;
+      }
+
+      /* 2. Direction Switch Bar */
+      .nb-map-dir-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.6rem;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.09);
+        border-radius: 0.9rem;
+        padding: 0.45rem 0.65rem;
+      }
+
+      .nb-map-dir-info {
+        display: flex;
         align-items: center;
         gap: 0.35rem;
-        font-size: 0.72rem;
+        min-inline-size: 0;
+        flex: 1 1 auto;
+      }
+
+      .nb-map-dir-arrow {
+        color: #60a5fa;
         font-weight: 700;
-        color: #34d399;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
+        flex-shrink: 0;
       }
 
-      .dest-tag {
-        color: #fbbf24;
-      }
-
-      .interactive-title {
-        margin: 0.15rem 0 0;
-        font-size: 1rem;
-        font-weight: 700;
-      }
-
-      .bus-current-sub {
-        margin: 0.15rem 0 0;
+      .nb-map-dir-label {
         font-size: 0.78rem;
         color: #cbd5e1;
+        font-weight: 500;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
-      .header-right {
-        display: flex;
+      .nb-map-dir-btn {
+        display: inline-flex;
         align-items: center;
-        gap: 0.65rem;
+        gap: 0.32rem;
+        flex-shrink: 0;
+        background: rgba(48, 135, 246, 0.16);
+        color: #93c5fd;
+        border: 1px solid rgba(59, 130, 246, 0.45);
+        border-radius: 999px;
+        padding: 0.32rem 0.7rem;
+        font-size: 0.75rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.15s ease;
       }
 
-      .eta-box-interactive {
-        background: #13223b;
-        border: 1.5px solid #38bdf8;
-        border-radius: 0.75rem;
-        padding-block: 0.45rem;
-        padding-inline: 0.85rem;
-        text-align: end;
+      .nb-map-dir-btn:hover {
+        background: #3087f6;
+        border-color: #3087f6;
+        color: #ffffff;
       }
 
-      .eta-val {
-        display: block;
-        font-size: 1.15rem;
-        font-weight: 800;
-        color: #38bdf8;
-      }
-
-      .eta-sub {
-        display: block;
-        font-size: 0.72rem;
-        color: #cbd5e1;
-      }
-
-      .zoom-controls {
-        display: flex;
-        align-items: center;
+      /* 3. Multi-Stop Trip Variants (Option 1 / 2 / 3) */
+      .nb-map-variants {
+        display: grid;
         gap: 0.4rem;
       }
 
-      .ctrl-btn {
-        background: #131e33;
-        color: #f8fafc;
-        border: 1px solid #38bdf8;
-        border-radius: 0.5rem;
-        min-inline-size: 2.2rem;
-        block-size: 2.2rem;
-        font-weight: 700;
+      .nb-map-var-tab {
+        display: grid;
+        gap: 0.22rem;
+        inline-size: 100%;
+        text-align: start;
+        background: rgba(255, 255, 255, 0.045);
+        border: 1px solid rgba(255, 255, 255, 0.09);
+        border-radius: 0.85rem;
+        padding: 0.48rem 0.72rem;
+        color: #cbd5e1;
         cursor: pointer;
+        transition: all 0.15s ease;
       }
 
-      .map-viewport {
+      .nb-map-var-tab:hover {
+        border-color: rgba(59, 130, 246, 0.55);
+        background: rgba(48, 135, 246, 0.1);
+      }
+
+      .nb-map-var-tab.is-active {
+        background: rgba(48, 135, 246, 0.2);
+        border-color: #3087f6;
+        color: #ffffff;
+        box-shadow: 0 0 0 1px rgba(48, 135, 246, 0.25);
+      }
+
+      .nb-map-var-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
+        font-size: 0.78rem;
+        font-weight: 700;
+      }
+
+      .nb-map-var-rank {
+        color: #93c5fd;
+      }
+
+      .nb-map-var-tab.is-active .nb-map-var-rank {
+        color: #ffffff;
+      }
+
+      .nb-map-var-route {
+        background: rgba(255, 255, 255, 0.08);
+        padding: 0.08rem 0.45rem;
+        border-radius: 999px;
+        font-size: 0.73rem;
+      }
+
+      .nb-map-var-tab.is-active .nb-map-var-route {
+        background: #3087f6;
+        color: #ffffff;
+      }
+
+      .nb-map-var-time {
+        color: #7dd3fc;
+        font-weight: 700;
+        margin-inline-start: auto;
+      }
+
+      .nb-map-var-bottom {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.3rem;
+        font-size: 0.72rem;
+        color: #9aa6b4;
+      }
+
+      .nb-map-var-tab.is-active .nb-map-var-bottom {
+        color: #dbeafe;
+      }
+
+      .nb-map-var-stop {
         overflow: hidden;
-        border-radius: 0.875rem;
-        border: 1px solid #2b3c5d;
-        background: #071524;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        max-inline-size: 260px;
+      }
+
+      .nb-map-var-walk {
+        color: #93c5fd;
+        flex-shrink: 0;
+      }
+
+      /* 4. Map Viewport */
+      .nb-map-viewport {
+        position: relative;
+        overflow: hidden;
+        border-radius: 1.15rem;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: #171d24;
         inline-size: 100%;
         min-inline-size: 0;
       }
 
-      .leaflet-host {
+      .nb-leaflet-host {
         inline-size: 100%;
-        block-size: 320px;
+        block-size: 295px;
         z-index: 1;
+      }
+
+      .nb-map-recenter-fab {
+        position: absolute;
+        inset-block-start: 0.65rem;
+        inset-inline-end: 0.65rem;
+        z-index: 450;
+        display: grid;
+        place-items: center;
+        inline-size: 2.15rem;
+        block-size: 2.15rem;
+        border-radius: 999px;
+        background: rgba(29, 35, 43, 0.9);
+        color: #f8fafc;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+        cursor: pointer;
+        transition: all 0.15s ease;
+      }
+
+      .nb-map-recenter-fab:hover {
+        background: #3087f6;
+        border-color: #3087f6;
       }
 
       .leaflet-marker-icon.nb-smooth-marker {
@@ -526,8 +466,9 @@ import type {
       }
 
       .nb-pin-user {
-        background: #fbbf24;
-        color: #0b1220;
+        background: #3087f6;
+        color: #ffffff;
+        box-shadow: 0 0 0 5px rgba(59, 130, 246, 0.28), 0 3px 10px rgba(0, 0, 0, 0.5);
       }
 
       .nb-pin-dest {
@@ -547,7 +488,7 @@ import type {
         padding-block: 3px;
         padding-inline: 8px;
         border-radius: 999px;
-        color: #041322;
+        color: #ffffff;
         font-weight: 800;
         font-size: 12px;
         border: 2px solid #ffffff;
@@ -556,336 +497,172 @@ import type {
       }
 
       .nb-pin-bus-pill.is-primary {
-        transform: scale(1.08);
-        box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.45), 0 4px 12px rgba(0, 0, 0, 0.6);
+        transform: scale(1.06);
+        box-shadow: 0 0 0 4px rgba(48, 135, 246, 0.35), 0 4px 12px rgba(0, 0, 0, 0.6);
       }
 
-      .nb-pin-cafe {
-        background: #34d399;
+      .nb-pin-bus-pill.is-secondary {
         color: #041322;
       }
 
-      .map-hud {
+      .nb-pin-cafe {
+        background: #1f262e;
+        color: #93c5fd;
+        border-color: #60a5fa;
+      }
+
+      .nb-map-hud {
         display: flex;
         flex-wrap: wrap;
         justify-content: space-between;
-        gap: 0.5rem;
-        padding-block: 0.55rem;
-        padding-inline: 0.85rem;
-        background: #101b2e;
-        border-block-start: 1px solid #24344f;
-        font-size: 0.8125rem;
+        align-items: center;
+        gap: 0.45rem;
+        padding-block: 0.52rem;
+        padding-inline: 0.78rem;
+        background: rgba(15, 23, 34, 0.78);
+        border-block-start: 1px solid rgba(255, 255, 255, 0.08);
+        font-size: 0.76rem;
         color: #e2e8f0;
       }
 
-      .best-route-section {
-        display: grid;
-        gap: 0.7rem;
+      .nb-hud-stop {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.28rem;
+        min-inline-size: 0;
       }
 
-      .top3-header {
-        display: flex;
-        flex-wrap: wrap;
-        justify-content: space-between;
-        align-items: baseline;
-        gap: 0.5rem;
+      .nb-hud-muted {
+        color: #93c5fd;
+        font-weight: 600;
       }
 
-      .dest-addr {
-        font-size: 0.76rem;
-        color: #94a3b8;
+      .nb-hud-away {
+        color: #9aa6b4;
+        font-weight: 500;
       }
 
-      .single-best-card {
-        background: #14223a;
-        color: #f8fafc;
-        border: 1.5px solid #34d399;
+      /* 5. Compact Transfer / Destination Strip */
+      .nb-map-trip-strip {
+        background: rgba(15, 23, 34, 0.45);
+        border: 1px solid rgba(255, 255, 255, 0.08);
         border-radius: 0.85rem;
-        padding-block: 0.8rem;
-        padding-inline: 0.9rem;
+        padding: 0.55rem 0.75rem;
+        display: grid;
+        gap: 0.4rem;
+      }
+
+      .nb-map-trip-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 0.5rem;
+        font-size: 0.8rem;
+        font-weight: 600;
+        color: #e2e8f0;
+      }
+
+      .nb-map-dest-eta {
+        color: #60a5fa;
+        font-weight: 700;
+      }
+
+      .nb-map-xfer-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 0.32rem;
+      }
+
+      .nb-map-xfer-item {
+        display: flex;
+        align-items: baseline;
+        gap: 0.45rem;
+        font-size: 0.75rem;
+        color: #cbd5e1;
+      }
+
+      .nb-map-xfer-badge {
+        background: rgba(59, 130, 246, 0.18);
+        color: #93c5fd;
+        border-radius: 0.4rem;
+        padding: 0.08rem 0.4rem;
+        font-weight: 700;
+        flex-shrink: 0;
+      }
+
+      .nb-map-xfer-item.is-xfer .nb-map-xfer-badge {
+        background: rgba(245, 158, 11, 0.2);
+        color: #fcd34d;
+      }
+
+      .nb-map-intercity-msg {
+        margin: 0;
+        font-size: 0.78rem;
+        line-height: 1.45;
+        color: #cbd5e1;
+      }
+
+      /* 6. Cafes Nearby */
+      .nb-map-offers {
+        display: grid;
+        gap: 0.48rem;
+      }
+
+      .nb-map-offers-head {
+        font-size: 0.8rem;
+        font-weight: 700;
+        color: #cbd5e1;
+      }
+
+      .nb-map-offers-grid {
         display: grid;
         gap: 0.45rem;
       }
 
-      .top3-card-head {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 0.5rem;
-      }
-
-      .line-pill {
-        color: #041322;
-        font-size: 0.88rem;
-        font-weight: 800;
-        border-radius: 0.45rem;
-        padding-block: 0.22rem;
-        padding-inline: 0.6rem;
-      }
-
-      .head-badges {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.35rem;
-      }
-
-      .transfer-badge {
-        font-size: 0.7rem;
-        font-weight: 700;
-        color: #fcd34d;
-        background: rgba(245, 158, 11, 0.16);
-        border: 1px solid #f59e0b;
-        border-radius: 999px;
-        padding-block: 0.1rem;
-        padding-inline: 0.48rem;
-      }
-
-      .fastest-badge {
-        font-size: 0.7rem;
-        font-weight: 700;
-        color: #34d399;
-        background: rgba(16, 185, 129, 0.15);
-        border: 1px solid #10b981;
-        border-radius: 999px;
-        padding-block: 0.12rem;
-        padding-inline: 0.5rem;
-      }
-
-      .top3-boarding {
-        font-size: 0.84rem;
-        color: #e2e8f0;
-      }
-
-      .transfer-summary {
-        margin-block-start: 0.35rem;
-        font-size: 0.78rem;
-        line-height: 1.4;
-        color: #fde68a;
-        background: rgba(245, 158, 11, 0.1);
-        border: 1px solid rgba(245, 158, 11, 0.38);
-        border-radius: 0.45rem;
-        padding-block: 0.35rem;
-        padding-inline: 0.55rem;
-      }
-
-      .top3-total {
-        display: flex;
-        justify-content: space-between;
-        align-items: baseline;
-        gap: 0.4rem;
-        font-size: 0.82rem;
-        color: #7dd3fc;
-        border-block-start: 1px solid #24344f;
-        padding-block-start: 0.4rem;
-      }
-
-      .total-mins {
-        color: #34d399;
-        font-weight: 700;
-      }
-
-      .intercity-notice-section {
-        display: grid;
-        gap: 0.65rem;
-      }
-
-      .intercity-advice-text {
-        font-size: 0.88rem;
-        line-height: 1.5;
-        color: #fde68a;
-        margin: 0;
-      }
-
-      .selected-timeline-box {
-        background: #0e182b;
-        border: 1px solid #24344f;
-        border-radius: 0.75rem;
-        padding-block: 0.7rem;
-        padding-inline: 0.85rem;
-        display: grid;
-        gap: 0.55rem;
-      }
-
-      .transfer-itinerary {
-        display: grid;
-        gap: 0.65rem;
-      }
-
-      .itinerary-step {
-        display: grid;
-        gap: 0.4rem;
-      }
-
-      .transfer-hub-banner {
-        background: #1d1a0d;
-        border: 1px solid #f59e0b;
-        border-radius: 0.65rem;
-        padding-block: 0.5rem;
-        padding-inline: 0.75rem;
+      .nb-map-offer-card {
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.09);
+        border-radius: 0.85rem;
+        padding: 0.55rem 0.72rem;
         display: grid;
         gap: 0.25rem;
       }
 
-      .hub-title {
-        display: flex;
-        flex-wrap: wrap;
-        justify-content: space-between;
-        align-items: center;
-        gap: 0.5rem;
-        font-size: 0.8rem;
-        font-weight: 800;
-        color: #fcd34d;
-      }
-
-      .hub-meta {
-        font-size: 0.74rem;
-        font-weight: 600;
-        color: #fde68a;
-      }
-
-      .hub-instruction {
-        margin: 0;
-        font-size: 0.8rem;
-        color: #f8fafc;
-      }
-
-      .timeline-head {
-        display: flex;
-        flex-wrap: wrap;
-        justify-content: space-between;
-        gap: 0.5rem;
-        font-size: 0.8rem;
-        color: #cbd5e1;
-      }
-
-      .mini-stop-list {
-        list-style: none;
-        margin: 0;
-        padding: 0;
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.4rem;
-      }
-
-      .mini-stop {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.3rem;
-        font-size: 0.74rem;
-        color: #cbd5e1;
-        background: #131e33;
-        border: 1px solid #24344f;
-        border-radius: 0.45rem;
-        padding-block: 0.22rem;
-        padding-inline: 0.48rem;
-      }
-
-      .mini-stop.is-bus {
-        border-color: #38bdf8;
-        color: #7dd3fc;
-      }
-
-      .mini-stop.is-origin {
-        border-color: #fbbf24;
-        color: #fde68a;
-      }
-
-      .mini-stop.is-xfer {
-        border-color: #f59e0b;
-        color: #fde68a;
-      }
-
-      .mini-stop.is-dest {
-        border-color: #ef4444;
-        color: #fca5a5;
-      }
-
-      .mini-bus-tag {
-        background: #1e3254;
-        color: #7dd3fc;
-        border-radius: 0.28rem;
-        padding-inline: 0.3rem;
-        font-size: 0.68rem;
-        font-weight: 700;
-      }
-
-      .mini-bus-tag.is-leg2 {
-        background: #33260f;
-        color: #fcd34d;
-      }
-
-      .mini-code {
-        color: #94a3b8;
-        font-size: 0.68rem;
-      }
-
-      .offers-section {
-        display: grid;
-        gap: 0.65rem;
-      }
-
-      .offers-title {
-        margin: 0;
-        font-size: 0.95rem;
-        font-weight: 700;
-        color: #f8fafc;
-      }
-
-      .offers-empty {
-        margin: 0;
-        font-size: 0.85rem;
-        color: #94a3b8;
-      }
-
-      .offers-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
-        gap: 0.75rem;
-      }
-
-      .offer-card {
-        background: #131e33;
-        border: 1px solid #2b3c5d;
-        border-radius: 0.75rem;
-        padding-block: 0.75rem;
-        padding-inline: 0.875rem;
-        display: grid;
-        gap: 0.35rem;
-      }
-
-      .offer-top {
+      .nb-map-offer-top {
         display: flex;
         justify-content: space-between;
         align-items: baseline;
         gap: 0.5rem;
       }
 
-      .offer-name {
-        font-size: 0.875rem;
+      .nb-map-offer-name {
+        font-size: 0.82rem;
         color: #f8fafc;
       }
 
-      .offer-dist {
-        font-size: 0.75rem;
-        color: #34d399;
+      .nb-map-offer-dist {
+        font-size: 0.73rem;
+        color: #93c5fd;
         font-weight: 600;
         flex-shrink: 0;
       }
 
-      .offer-promo {
+      .nb-map-offer-promo {
         margin: 0;
-        font-size: 0.8rem;
-        color: #cbd5e1;
+        font-size: 0.75rem;
+        color: #9aa6b4;
       }
 
-      .offer-link {
-        font-size: 0.78rem;
+      .nb-map-offer-link {
+        font-size: 0.74rem;
         font-weight: 600;
-        color: #7dd3fc;
+        color: #60a5fa;
         text-decoration: none;
       }
 
-      .offer-link:hover {
+      .nb-map-offer-link:hover {
         text-decoration: underline;
       }
     `
@@ -894,7 +671,9 @@ import type {
 export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
   readonly state = input.required<LiveBusStatusResponse>();
   readonly lang = input<WidgetLang>('ru');
+  readonly selectedOptionIndex = input<number>(0);
 
+  readonly selectOptionIndex = output<number>();
   readonly switchDirection = output<0 | 1>();
 
   private readonly mapEl = viewChild<ElementRef<HTMLDivElement>>('mapContainer');
@@ -905,131 +684,76 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
   private busMarkers = new Map<string, { marker: L.Marker; iconSig: string }>();
   private lastFitSignature = '';
 
-  readonly bestOption = computed<RecommendedBusOption | null>(
-    () => this.state().recommended_options?.[0] ?? null
+  readonly recommendedOptions = computed<RecommendedBusOption[]>(
+    () => this.state().recommended_options ?? []
   );
 
+  readonly tripOptions = computed<TripOption[]>(() => this.state().trip_options ?? []);
+
+  readonly clampedOptionIndex = computed(() => {
+    const len = Math.max(this.recommendedOptions().length, this.tripOptions().length);
+    if (len === 0) return 0;
+    return Math.min(Math.max(0, this.selectedOptionIndex()), len - 1);
+  });
+
+  readonly activeOption = computed<RecommendedBusOption | null>(() => {
+    const opts = this.recommendedOptions();
+    if (opts.length === 0) return null;
+    return opts[this.clampedOptionIndex()] ?? opts[0];
+  });
+
+  readonly activeTripOption = computed<TripOption | null>(() => {
+    const opts = this.tripOptions();
+    if (opts.length === 0) return null;
+    return opts[this.clampedOptionIndex()] ?? opts[0];
+  });
+
   readonly activeDisplayRoute = computed(
-    () => this.bestOption()?.route ?? this.state().route
+    () => this.activeOption()?.route ?? this.state().route
   );
 
   readonly activeOriginStop = computed(
-    () => this.bestOption()?.origin_stop ?? this.state().user_stop
+    () => this.activeOption()?.origin_stop ?? this.state().user_stop
   );
 
   readonly activeBus = computed(
-    () => this.bestOption()?.bus ?? this.state().nearest_bus
+    () => this.activeOption()?.bus ?? this.state().nearest_bus
   );
 
-  readonly labels = computed(() => {
-    switch (this.lang()) {
-      case 'he':
-        return {
-          badge: 'מפה והמסלול המהיר ביותר • @defer',
-          routeLabel: 'קו',
-          tripTo: 'מסלול ליעד:',
-          busNowAt: 'האוטובוס כעת',
-          nearestStop: 'תחנת עלייה',
-          recenter: 'מרכז מסלול',
-          fastestTitle: 'המסלול המהיר ביותר',
-          fastest: 'הכי מהיר',
-          transferBadge: 'החלפה',
-          firstBus: 'אוטובוס ראשון',
-          exitAt: 'לרדת ב-',
-          atStop: 'בתחנה',
-          boardNewBus: 'לאוטובוס החדש',
-          boardAt: 'ב-',
-          transferHereTitle: 'החלפת אוטובוס (איפה ומתי לרדת)',
-          waitWord: 'המתנה',
-          lineWord: 'קו',
-          routeWord: 'מסלול קו',
-          arrivesIn: 'מגיע אליך בעוד',
-          arriveAt: 'הגעה ביעד ב-',
-          total: 'סה"כ',
-          stopsWord: 'תחנות',
-          offersTitle: 'בתי קפה אמיתיים בסביבה',
-          noOffers: 'לא נמצאו בתי קפה בקרבת מקום.',
-          min: 'דק׳',
-          openMaps: 'פתח במפות',
-          intercityTitle: 'נסיעה בין-עירונית / אזור מרוחק',
-          intercityAdvice: 'היעד המבוקש נמצא מחוץ לאזור התחבורה העירונית המקומית. מומלץ לנסוע לקו אקספרס 910/900 או לרכבת ישראל מתחנת מרכזית חוף הכרמל (מת״מ).'
-        };
-      case 'en':
-        return {
-          badge: 'Map & Fastest Route • @defer',
-          routeLabel: 'Line',
-          tripTo: 'Fastest route to',
-          busNowAt: 'Bus now at',
-          nearestStop: 'Boarding stop',
-          recenter: 'Center route',
-          fastestTitle: 'Fastest Route',
-          fastest: 'Fastest',
-          transferBadge: 'Transfer',
-          firstBus: '1st Bus',
-          exitAt: 'Exit at',
-          atStop: 'at',
-          boardNewBus: 'new bus',
-          boardAt: 'at',
-          transferHereTitle: 'Transfer Point (Where & When to Change)',
-          waitWord: 'Wait',
-          lineWord: 'Line',
-          routeWord: 'Line',
-          arrivesIn: 'Arrives in',
-          arriveAt: 'Arrive at',
-          total: 'total',
-          stopsWord: 'stops',
-          offersTitle: 'Real Cafes Nearby (OpenStreetMap)',
-          noOffers: 'No nearby cafes found.',
-          min: 'min',
-          openMaps: 'Open in Maps',
-          intercityTitle: 'Intercity Trip / Destination Outside Area',
-          intercityAdvice: 'Destination is outside the local city transit network. We recommend taking Express Line 910/900 or Israel Railways from Hof HaCarmel Central Station.'
-        };
-      default:
-        return {
-          badge: 'Карта и самый быстрый маршрут • @defer',
-          routeLabel: 'Маршрут',
-          tripTo: 'Куда едем:',
-          busNowAt: 'Автобус сейчас',
-          nearestStop: 'Остановка посадки',
-          recenter: 'Центрировать маршрут',
-          fastestTitle: 'Самый быстрый маршрут',
-          fastest: 'Самый быстрый',
-          transferBadge: 'Пересадка',
-          firstBus: '1-й авт.',
-          exitAt: 'Выйти в',
-          atStop: 'на ост.',
-          boardNewBus: 'новый авт.',
-          boardAt: 'в',
-          transferHereTitle: 'Где и когда сделать пересадку',
-          waitWord: 'ожидание',
-          lineWord: 'Маршрут',
-          routeWord: 'Линия',
-          arrivesIn: 'Прибудет к вам через',
-          arriveAt: 'Будете на месте в',
-          total: 'всего',
-          stopsWord: 'ост.',
-          offersTitle: 'Настоящие кафе рядом (OpenStreetMap)',
-          noOffers: 'Кафе поблизости не найдены.',
-          min: 'мин',
-          openMaps: 'Открыть на карте',
-          intercityTitle: 'Междугородний маршрут / Другой регион',
-          intercityAdvice: 'Пункт назначения находится за пределами местной городской сети. Рекомендуем сесть на междугородний экспресс №910/900 или поезд со станции Хоф ха-Кармель (МАТАМ).'
-        };
-    }
+  readonly activeDirectionLabel = computed(() => {
+    const route = this.activeDisplayRoute();
+    const dir = route.available_directions.find((d) => d.direction_id === route.direction_id);
+    const raw =
+      this.lang() === 'he'
+        ? dir?.label_he ?? dir?.label ?? route.direction_label
+        : dir?.label ?? route.direction_label;
+    return raw.replace(/\s*->\s*/g, ' → ');
   });
 
-  readonly etaText = computed(() => {
+  readonly heroRouteDisplay = computed(() => {
+    const base = this.activeDisplayRoute().short_name || '—';
+    const trip = this.activeTripOption();
+    if (trip && trip.transfers_count > 0 && trip.legs.length > 1) {
+      return trip.legs.map((l) => l.line_number).join('→');
+    }
+    if (this.activeOption()?.is_transfer && this.activeOption()?.second_leg) {
+      return `${base}→${this.activeOption()!.second_leg!.route.short_name}`;
+    }
+    return base;
+  });
+
+  readonly etaDigits = computed(() => {
     const eta = this.activeBus()?.eta_minutes;
-    if (eta === undefined) {
-      return this.lang() === 'he' ? 'אין נתונים' : this.lang() === 'en' ? 'No ETA' : 'Нет данных';
-    }
-    if (eta === 0) {
-      return this.lang() === 'he' ? 'בתחנה' : this.lang() === 'en' ? 'Arriving' : 'Прибывает';
-    }
-    if (this.lang() === 'he') return `בעוד ${eta} דק׳`;
-    if (this.lang() === 'en') return `In ${eta} min`;
-    return `Через ${eta} мин`;
+    if (eta === undefined) return '—';
+    return String(eta);
+  });
+
+  readonly etaUnit = computed(() => {
+    const eta = this.activeBus()?.eta_minutes;
+    if (eta === undefined) return '';
+    if (this.lang() === 'he') return 'דק׳';
+    if (this.lang() === 'ru') return 'МИН';
+    return 'MIN';
   });
 
   readonly stopsAwayText = computed(() => {
@@ -1039,12 +763,63 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
     return `${stops} ост. до вас`;
   });
 
+  readonly labels = computed(() => {
+    switch (this.lang()) {
+      case 'he':
+        return {
+          busRoute: 'קו אוטובוס',
+          arrivalCountdown: 'זמן הגעה',
+          switchDir: 'החלף כיוון',
+          optionWord: 'אפשרות',
+          variantsAria: 'בחר אפשרות נסיעה',
+          minShort: 'דק׳',
+          waitWord: 'המתנה',
+          recenter: 'מרכז מסלול',
+          offersTitle: 'בתי קפה בקרבת מקום',
+          openMaps: 'פתח במפות',
+          intercityAdvice:
+            'היעד המבוקש נמצא מחוץ לרשת העירונית. מומלץ לקחת קו אקספרס 910/900 או רכבת ממרכזית חוף הכרמל.'
+        };
+      case 'en':
+        return {
+          busRoute: 'bus route',
+          arrivalCountdown: 'arrival countdown',
+          switchDir: 'Switch direction',
+          optionWord: 'Option',
+          variantsAria: 'Select trip option',
+          minShort: 'min',
+          waitWord: 'wait',
+          recenter: 'Center route',
+          offersTitle: 'Cafes nearby while you wait',
+          openMaps: 'Open in Maps',
+          intercityAdvice:
+            'Destination is outside the local urban corridor. Take Express 910/900 or rail from Hof HaCarmel Central.'
+        };
+      default:
+        return {
+          busRoute: 'маршрут',
+          arrivalCountdown: 'до прибытия',
+          switchDir: 'Сменить направление',
+          optionWord: 'Вариант',
+          variantsAria: 'Выбор варианта маршрута',
+          minShort: 'мин',
+          waitWord: 'ожид.',
+          recenter: 'Центрировать маршрут',
+          offersTitle: 'Кафе рядом на время ожидания',
+          openMaps: 'Открыть на карте',
+          intercityAdvice:
+            'Пункт назначения находится за пределами городской сети. Рекомендуем экспресс №910/900 или поезд от Хоф ха-Кармель.'
+        };
+    }
+  });
+
   constructor() {
     effect(() => {
       const currentState = this.state();
       const currentLang = this.lang();
+      const optionIdx = this.clampedOptionIndex();
       if (this.map && this.markersLayer) {
-        this.renderMapLayers(currentState, currentLang);
+        this.renderMapLayers(currentState, currentLang, optionIdx);
       }
     });
   }
@@ -1070,7 +845,8 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
 
     this.markersLayer = L.layerGroup().addTo(this.map);
     this.busLayer = L.layerGroup().addTo(this.map);
-    this.renderMapLayers(initial, this.lang());
+    this.renderMapLayers(initial, this.lang(), this.clampedOptionIndex());
+    setTimeout(() => this.map?.invalidateSize(), 60);
   }
 
   ngOnDestroy(): void {
@@ -1083,38 +859,50 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
     }
   }
 
-  transferInstruction(
-    info: NonNullable<RecommendedBusOption['transfer_info']>
-  ): string {
-    if (this.lang() === 'he') return info.instruction_he;
-    if (this.lang() === 'en') return info.instruction_en;
-    return info.instruction_ru;
+  onSwitchDirection(): void {
+    const nextDir: 0 | 1 = this.activeDisplayRoute().direction_id === 0 ? 1 : 0;
+    this.switchDirection.emit(nextDir);
+  }
+
+  formatOptionRoute(opt: RecommendedBusOption): string {
+    if (opt.is_transfer && opt.second_leg) {
+      return `${opt.route.short_name}→${opt.second_leg.route.short_name}`;
+    }
+    return opt.route.short_name;
+  }
+
+  cleanStopName(name: string): string {
+    return name.replace(/\s*\([^)]+\)\s*$/, '').trim() || name;
   }
 
   recenterMap(): void {
     if (!this.map) return;
     this.lastFitSignature = '';
-    this.renderMapLayers(this.state(), this.lang());
+    this.renderMapLayers(this.state(), this.lang(), this.clampedOptionIndex());
   }
 
-  private renderMapLayers(data: LiveBusStatusResponse, lang: WidgetLang): void {
+  private renderMapLayers(
+    data: LiveBusStatusResponse,
+    lang: WidgetLang,
+    optionIdx: number
+  ): void {
     if (!this.map || !this.markersLayer) return;
     this.markersLayer.clearLayers();
 
     const boundsPoints: L.LatLngExpression[] = [];
-    const activeOpt = data.recommended_options?.[0] ?? null;
+    const activeOpt =
+      data.recommended_options?.[optionIdx] ?? data.recommended_options?.[0] ?? null;
 
-    // 1. Draw polyline & stop markers for fastest trip (Leg 1 + Leg 2 if transfer)
+    // 1. Primary Leg Polyline (#3087f6 electric blue) & stop dots
     const activeTimeline = activeOpt?.timeline_stops ?? data.timeline_stops;
     const originStopSeq = activeOpt?.origin_stop.stop_sequence ?? data.user_stop.stop_sequence;
     const destStopSeq = activeOpt?.is_transfer
       ? activeOpt.transfer_info?.alight_stop.stop_sequence
       : activeOpt?.dest_stop.stop_sequence;
-    const activeColor = '#10b981';
 
     if (activeTimeline.length > 0) {
       const polyCoords: L.LatLngExpression[] = activeTimeline.map((s) => [s.lat, s.lon]);
-      L.polyline(polyCoords, { color: activeColor, weight: 4.5, opacity: 0.88 }).addTo(
+      L.polyline(polyCoords, { color: '#3087f6', weight: 4.5, opacity: 0.92 }).addTo(
         this.markersLayer
       );
 
@@ -1123,25 +911,25 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
         const isEnd = destStopSeq !== undefined && stop.stop_sequence === destStopSeq;
         L.circleMarker([stop.lat, stop.lon], {
           radius: isOrigin || isEnd ? 8 : 4.5,
-          color: '#041322',
-          weight: 2,
+          color: isOrigin ? '#3087f6' : '#181e24',
+          weight: isOrigin ? 3 : 2,
           fillColor: isEnd
             ? activeOpt?.is_transfer
               ? '#f59e0b'
               : '#ef4444'
             : isOrigin
-              ? '#fbbf24'
+              ? '#ffffff'
               : '#cbd5e1',
           fillOpacity: 1
         })
           .bindPopup(
-            `<strong>${lang === 'he' ? stop.stop_name_he : stop.stop_name}</strong><br/>Line ${activeOpt?.route.short_name ?? data.route.short_name} • Stop #${stop.stop_code}`
+            `<strong>${lang === 'he' ? stop.stop_name_he : stop.stop_name}</strong><br/>Line ${activeOpt?.route.short_name ?? data.route.short_name} • #${stop.stop_code}`
           )
           .addTo(this.markersLayer);
       }
     }
 
-    // 1b. If transfer route, draw Leg 2 dashed polyline, Transfer Hub marker (🔄), and walking connector
+    // 1b. Transfer Leg 2 dashed amber polyline + walking connector + transfer hub pin
     if (activeOpt?.is_transfer && activeOpt.transfer_info && activeOpt.second_leg) {
       const xfer = activeOpt.transfer_info;
       const leg2Stops = activeOpt.second_leg.timeline_stops;
@@ -1158,13 +946,13 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
           const isFinalDest = stop.stop_sequence === activeOpt.dest_stop.stop_sequence;
           L.circleMarker([stop.lat, stop.lon], {
             radius: isFinalDest ? 8 : 4.5,
-            color: '#041322',
+            color: '#181e24',
             weight: 2,
             fillColor: isFinalDest ? '#ef4444' : '#fde68a',
             fillOpacity: 1
           })
             .bindPopup(
-              `<strong>${lang === 'he' ? stop.stop_name_he : stop.stop_name}</strong><br/>Line ${activeOpt.second_leg.route.short_name} • Stop #${stop.stop_code}`
+              `<strong>${lang === 'he' ? stop.stop_name_he : stop.stop_name}</strong><br/>Line ${activeOpt.second_leg.route.short_name} • #${stop.stop_code}`
             )
             .addTo(this.markersLayer);
         }
@@ -1191,14 +979,20 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
         iconSize: [30, 30],
         iconAnchor: [15, 15]
       });
+      const transferPopup =
+        lang === 'he'
+          ? xfer.instruction_he
+          : lang === 'en'
+            ? xfer.instruction_en
+            : xfer.instruction_ru;
       L.marker(hubPos, { icon: hubIcon })
         .bindPopup(
-          `<strong>🔄 ${lang === 'he' ? xfer.alight_stop.stop_name_he : xfer.alight_stop.stop_name}</strong> (#${xfer.alight_stop.stop_code})<br/>${this.transferInstruction(xfer)}`
+          `<strong>🔄 ${lang === 'he' ? xfer.alight_stop.stop_name_he : xfer.alight_stop.stop_name}</strong> (#${xfer.alight_stop.stop_code})<br/>${transferPopup}`
         )
         .addTo(this.markersLayer);
     }
 
-    // 2. User Position (Point A)
+    // 2. User GPS Marker (Signature Blue Pin)
     if (data.user_location) {
       const userPos: L.LatLngExpression = [data.user_location.lat, data.user_location.lon];
       boundsPoints.push(userPos);
@@ -1210,7 +1004,7 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
       });
       L.marker(userPos, { icon: userIcon })
         .bindPopup(
-          `<strong>Point A (Your GPS)</strong><br/>${data.user_location.lat.toFixed(5)}, ${data.user_location.lon.toFixed(5)}`
+          `<strong>Near You</strong><br/>${data.user_location.lat.toFixed(5)}, ${data.user_location.lon.toFixed(5)}`
         )
         .addTo(this.markersLayer);
     }
@@ -1230,7 +1024,7 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
         .addTo(this.markersLayer);
     }
 
-    // 4. Live Bus Marker(s) for single fastest route (Leg 1 + Leg 2 if transfer)
+    // 4. Live Bus Pill Markers
     const activeBusKeys = new Set<string>();
     const busEntries: Array<{
       key: string;
@@ -1248,7 +1042,7 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
         lat: activeOpt.bus.lat,
         lon: activeOpt.bus.lon,
         shortName: activeOpt.route.short_name,
-        color: '#10b981',
+        color: '#3087f6',
         isPrimary: true,
         popupHtml:
           `<strong>Bus ${activeOpt.route.short_name}</strong><br/>` +
@@ -1261,7 +1055,7 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
           lon: activeOpt.second_leg.bus.lon,
           shortName: `${activeOpt.second_leg.route.short_name} (2)`,
           color: '#f59e0b',
-          isPrimary: true,
+          isPrimary: false,
           popupHtml:
             `<strong>2nd Bus ${activeOpt.second_leg.route.short_name}</strong><br/>` +
             `Board at ${activeOpt.transfer_info?.next_bus_board_time ?? ''}`
@@ -1273,9 +1067,9 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
         lat: data.nearest_bus.lat,
         lon: data.nearest_bus.lon,
         shortName: data.route.short_name,
-        color: '#38bdf8',
+        color: '#3087f6',
         isPrimary: true,
-        popupHtml: `<strong>Bus ${data.route.short_name}</strong> (${data.nearest_bus.vehicle_id})<br/>ETA: ${data.nearest_bus.eta_minutes} min`
+        popupHtml: `<strong>Bus ${data.route.short_name}</strong><br/>ETA: ${data.nearest_bus.eta_minutes} min`
       });
     }
 
@@ -1300,7 +1094,7 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
       }
     }
 
-    // 5. Real Cafes
+    // 5. Cafes Nearby
     for (const offer of data.nearby_offers) {
       const cafePos: L.LatLngExpression = [offer.lat, offer.lon];
       const cafeIcon = L.divIcon({
@@ -1317,7 +1111,7 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
     }
 
     const fitSignature = data.destination
-      ? `${data.destination.lat.toFixed(4)},${data.destination.lon.toFixed(4)}:${activeOpt?.route.route_id ?? ''}`
+      ? `${data.destination.lat.toFixed(4)},${data.destination.lon.toFixed(4)}:${optionIdx}:${activeOpt?.route.route_id ?? ''}:${activeOpt?.origin_stop.stop_id ?? ''}`
       : `${data.route.route_id}:${data.route.direction_id}`;
 
     if (this.lastFitSignature !== fitSignature && boundsPoints.length >= 2) {
@@ -1356,7 +1150,7 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
     const width = shortName.length > 4 ? 78 : 58;
     return L.divIcon({
       className: 'nb-smooth-marker',
-      html: `<div class="nb-pin-bus-pill ${isPrimary ? 'is-primary' : ''}" style="background:${color}">🚌 ${shortName}</div>`,
+      html: `<div class="nb-pin-bus-pill ${isPrimary ? 'is-primary' : 'is-secondary'}" style="background:${color}">🚌 ${shortName}</div>`,
       iconSize: [width, 26],
       iconAnchor: [Math.round(width / 2), 13]
     });

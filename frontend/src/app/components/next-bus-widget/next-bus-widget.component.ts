@@ -168,6 +168,8 @@ const EMPTY_INITIAL_STATE: LiveBusStatusResponse = {
           <nb-lite-timeline-view
             [state]="busState()"
             [lang]="lang()"
+            [selectedOptionIndex]="selectedOptionIndex()"
+            (selectOptionIndex)="selectedOptionIndex.set($event)"
             (switchDirection)="onDirectionSwitch($event)"
             (selectCandidate)="onSelectCandidate($event)"
             (openMap)="setViewMode('interactive')"
@@ -177,6 +179,8 @@ const EMPTY_INITIAL_STATE: LiveBusStatusResponse = {
             <nb-interactive-map-view
               [state]="busState()"
               [lang]="lang()"
+              [selectedOptionIndex]="selectedOptionIndex()"
+              (selectOptionIndex)="selectedOptionIndex.set($event)"
               (switchDirection)="onDirectionSwitch($event)"
             />
           } @loading (minimum 120ms) {
@@ -236,7 +240,7 @@ const EMPTY_INITIAL_STATE: LiveBusStatusResponse = {
       }
 
       .widget-shell.is-map-mode {
-        max-inline-size: 720px;
+        max-inline-size: 480px;
       }
 
       /* Subtle Micro Header */
@@ -419,6 +423,7 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
   readonly isSearching = signal<boolean>(false);
   readonly selectedDirection = signal<0 | 1>(0);
   readonly selectedRouteId = signal<string | null>(null);
+  readonly selectedOptionIndex = signal<number>(0);
   readonly hasExplicitDirection = signal(false);
   readonly lang = signal<WidgetLang>('ru');
   readonly userCoords = signal<{ lat: number; lon: number; accuracy?: number } | null>(null);
@@ -684,6 +689,7 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
     this.hasActiveSearch.set(false);
     this.activeSearchLabel.set('');
     this.selectedRouteId.set(null);
+    this.selectedOptionIndex.set(0);
     this.hasExplicitDirection.set(false);
     this.busState.set(EMPTY_INITIAL_STATE);
   }
@@ -726,7 +732,7 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
     this.hasExplicitDirection.set(true);
     this.selectedDirection.set(directionId);
     if (this.hasActiveSearch()) {
-      void this.fetchLatestStatus();
+      void this.fetchLatestStatus(true);
     }
   }
 
@@ -747,6 +753,7 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
     this.isSearching.set(true);
     this.selectedRouteId.set(candidate.route_id);
     this.selectedDirection.set(candidate.direction_id);
+    this.selectedOptionIndex.set(0);
     this.hasExplicitDirection.set(true);
     this.activeSearchLabel.set(candidate.line_number);
 
@@ -788,6 +795,7 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
     this.activeSearchLabel.set(cleaned);
     this.hasExplicitDirection.set(false);
     this.selectedRouteId.set(null);
+    this.selectedOptionIndex.set(0);
 
     try {
       let coords = this.userCoords();
@@ -836,7 +844,7 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
     }
   }
 
-  private async fetchLatestStatus(): Promise<void> {
+  private async fetchLatestStatus(bootstrapLine = false): Promise<void> {
     if (!this.hasActiveSearch()) return;
 
     try {
@@ -887,6 +895,7 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
         : '';
       const routeId = this.selectedRouteId() ?? current.route.route_id;
       const routeParam = routeId ? `&route_id=${encodeURIComponent(routeId)}` : '';
+      const bootstrapParam = bootstrapLine ? '&bootstrap=true' : '';
 
       const url = `/api/live-status?line_number=${encodeURIComponent(
         line
@@ -894,7 +903,7 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
         coords.lon
       )}${dirParam}${routeParam}&include_nearby_places=${includeNearby}&entry_context=${encodeURIComponent(
         this.entryContext()
-      )}`;
+      )}${bootstrapParam}`;
 
       const response = await fetch(url);
       if (!response.ok) return;
