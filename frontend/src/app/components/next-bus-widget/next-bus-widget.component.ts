@@ -75,37 +75,40 @@ const EMPTY_INITIAL_STATE: LiveBusStatusResponse = {
   template: `
     <main
       class="widget-shell nb-card"
+      [class.is-map-mode]="hasActiveSearch() && viewMode() === 'interactive'"
       [attr.dir]="lang() === 'he' ? 'rtl' : 'ltr'"
     >
-      <div class="widget-toolbar">
-        <div class="brand">
-          <span class="brand-dot" aria-hidden="true">●</span>
-          <strong>nextBus</strong>
-          <span class="poll-pill">
-            {{ isPollingPaused() ? labels().paused : labels().live }}
-          </span>
-        </div>
+      <!-- Subtle top micro utility strip (location + language + reset) -->
+      <div class="micro-top-bar">
+        <button
+          type="button"
+          class="micro-geo-btn"
+          [class.is-granted]="geoStatus() === 'granted'"
+          (click)="requestUserGeolocation()"
+          [disabled]="geoStatus() === 'locating'"
+          [title]="labels().locateMe"
+        >
+          <span aria-hidden="true">📍</span>
+          <span>{{ geoStatus() === 'locating' ? labels().locating : detectedCityName() }}</span>
+        </button>
 
-        <div class="toolbar-actions">
-          <button
-            type="button"
-            class="geo-btn nb-btn"
-            [class.is-granted]="geoStatus() === 'granted'"
-            (click)="requestUserGeolocation()"
-            [disabled]="geoStatus() === 'locating'"
-          >
-            <span aria-hidden="true">📍</span>
-            {{
-              geoStatus() === 'locating'
-                ? labels().locating
-                : labels().locateMe
-            }}
-          </button>
-
-          <div class="lang-group" role="group" aria-label="Language selection">
+        <div class="micro-right">
+          @if (hasActiveSearch()) {
             <button
               type="button"
-              class="pill-btn nb-btn"
+              class="micro-reset-btn"
+              (click)="resetSearch()"
+              [title]="welcomeLabels().resetTitle"
+              [attr.aria-label]="welcomeLabels().resetTitle"
+            >
+              ✕
+            </button>
+          }
+
+          <div class="micro-langs" role="group" aria-label="Language selection">
+            <button
+              type="button"
+              class="micro-lang-btn"
               [class.is-active]="lang() === 'ru'"
               (click)="lang.set('ru')"
             >
@@ -113,7 +116,7 @@ const EMPTY_INITIAL_STATE: LiveBusStatusResponse = {
             </button>
             <button
               type="button"
-              class="pill-btn nb-btn"
+              class="micro-lang-btn"
               [class.is-active]="lang() === 'en'"
               (click)="lang.set('en')"
             >
@@ -121,44 +124,17 @@ const EMPTY_INITIAL_STATE: LiveBusStatusResponse = {
             </button>
             <button
               type="button"
-              class="pill-btn nb-btn"
+              class="micro-lang-btn"
               [class.is-active]="lang() === 'he'"
               (click)="lang.set('he')"
             >
               HE
             </button>
           </div>
-
-          <button
-            type="button"
-            class="mode-btn nb-btn"
-            (click)="toggleInteractiveMode()"
-          >
-            {{ viewMode() === 'lite' ? labels().openInteractive : labels().backToLite }}
-          </button>
         </div>
       </div>
 
-      <div class="geo-status-strip">
-        <span class="geo-coords">
-          @if (userCoords(); as coords) {
-            <span aria-hidden="true">🛰️</span>
-            <strong>{{ detectedCityName() }}</strong>: {{ coords.lat.toFixed(4) }}, {{ coords.lon.toFixed(4) }}
-            @if (coords.accuracy) {
-              (±{{ coords.accuracy }}m)
-            }
-          } @else {
-            <span aria-hidden="true">🌐</span>
-            {{ labels().defaultArea }}
-          }
-        </span>
-        @if (busState().user_stop.distance_meters !== undefined && hasActiveSearch()) {
-          <span class="geo-dist">
-            {{ labels().toStop }}: {{ busState().user_stop.distance_meters }} m
-          </span>
-        }
-      </div>
-
+      <!-- Minimalist pill search bar (strictly hidden in MCP / Gemini embed mode) -->
       @if (entryContext() === 'standalone') {
         <nb-search-bar
           [lang]="lang()"
@@ -168,68 +144,33 @@ const EMPTY_INITIAL_STATE: LiveBusStatusResponse = {
       }
 
       @if (!hasActiveSearch()) {
-        <section class="welcome-ready-card" role="region" aria-label="Welcome and search suggestions">
-          <div class="welcome-hero">
-            <div class="welcome-icon">🚏</div>
-            <h2 class="welcome-title">{{ welcomeLabels().title }}</h2>
-            <p class="welcome-desc">{{ welcomeLabels().subtitle }}</p>
+        <section class="minimal-ready" role="region" aria-label="Quick route selection">
+          <div class="ready-head">
+            <h2 class="ready-title">{{ welcomeLabels().title }}</h2>
+            <p class="ready-sub">{{ welcomeLabels().tip }}</p>
           </div>
 
-          <div class="quick-chips-group">
-            <span class="chips-label">{{ welcomeLabels().popularLabel }}:</span>
-            <div class="chips-list">
-              @for (chip of quickChips(); track chip.query) {
-                <button
-                  type="button"
-                  class="quick-chip-btn nb-btn"
-                  (click)="onSearchDestination(chip.query)"
-                >
-                  <span class="chip-icon">{{ chip.icon }}</span>
-                  <span class="chip-text">{{ chip.label }}</span>
-                </button>
-              }
-            </div>
-          </div>
-
-          <div class="search-tips-box">
-            <p class="search-tip">
-              💡 {{ welcomeLabels().tip }}
-            </p>
+          <div class="ready-chips">
+            @for (chip of quickChips(); track chip.query) {
+              <button
+                type="button"
+                class="ready-chip-btn nb-btn"
+                (click)="onSearchDestination(chip.query)"
+              >
+                <span aria-hidden="true">{{ chip.icon }}</span>
+                <span>{{ chip.label }}</span>
+              </button>
+            }
           </div>
         </section>
       } @else {
-        <div class="active-trip-bar">
-          <div class="active-trip-info">
-            <span class="active-pulse">●</span>
-            <span class="active-trip-label">
-              @if (activeSearchLabel()) {
-                {{ activeSearchLabel() }}
-              } @else if (busState().destination; as dest) {
-                {{ dest.place_name }}
-              } @else if (busState().route.short_name) {
-                {{ labels().lineWord }} {{ busState().route.short_name }}
-              } @else {
-                nextBus
-              }
-            </span>
-          </div>
-          <button
-            type="button"
-            class="reset-btn nb-btn"
-            (click)="resetSearch()"
-            [title]="welcomeLabels().resetTitle"
-          >
-            ✕ {{ welcomeLabels().resetBtn }}
-          </button>
-        </div>
-
         @if (viewMode() === 'lite') {
           <nb-lite-timeline-view
             [state]="busState()"
             [lang]="lang()"
             (switchDirection)="onDirectionSwitch($event)"
             (selectCandidate)="onSelectCandidate($event)"
-            (openMap)="toggleInteractiveMode()"
+            (openMap)="setViewMode('interactive')"
           />
         } @else {
           @defer {
@@ -242,6 +183,35 @@ const EMPTY_INITIAL_STATE: LiveBusStatusResponse = {
             <div class="defer-status">{{ labels().loadingMap }}</div>
           }
         }
+
+        <!-- Bottom segmented pill bar matching reference UI -->
+        <div class="bottom-pill-bar" role="tablist" aria-label="View mode switch">
+          <button
+            type="button"
+            role="tab"
+            class="seg-btn"
+            [class.is-selected]="viewMode() === 'interactive'"
+            (click)="setViewMode('interactive')"
+          >
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"/>
+              <line x1="9" y1="3" x2="9" y2="18"/>
+              <line x1="15" y1="6" x2="15" y2="21"/>
+            </svg>
+            <span>{{ labels().viewMap }}</span>
+          </button>
+
+          <button
+            type="button"
+            role="tab"
+            class="seg-btn"
+            [class.is-selected]="viewMode() === 'lite'"
+            (click)="setViewMode('lite')"
+          >
+            <span>{{ labels().liveTrack }}</span>
+            <span class="live-dot" [class.is-paused]="isPollingPaused()" aria-hidden="true">●</span>
+          </button>
+        </div>
       }
     </main>
   `,
@@ -249,193 +219,129 @@ const EMPTY_INITIAL_STATE: LiveBusStatusResponse = {
     `
       .widget-shell {
         color-scheme: only dark;
-        background: #070d18;
+        background: linear-gradient(180deg, #222931 0%, #1d232b 100%);
         color: #f8fafc;
-        accent-color: #38bdf8;
         inline-size: 100%;
-        max-inline-size: 760px;
+        max-inline-size: 420px;
         margin-inline: auto;
         min-inline-size: 0;
-        border: 1px solid #2b3c5d;
-        border-radius: 1.25rem;
-        padding-block: 1rem;
-        padding-inline: 1rem;
+        border: 1px solid rgba(255, 255, 255, 0.11);
+        border-radius: 1.75rem;
+        padding-block: 1.15rem 1.2rem;
+        padding-inline: 1.15rem;
         display: grid;
-        gap: 0.75rem;
-        box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+        gap: 1rem;
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+        transition: max-inline-size 0.2s ease;
       }
 
-      .widget-toolbar {
+      .widget-shell.is-map-mode {
+        max-inline-size: 720px;
+      }
+
+      /* Subtle Micro Header */
+      .micro-top-bar {
         display: flex;
-        flex-wrap: wrap;
         justify-content: space-between;
         align-items: center;
-        gap: 0.65rem;
-      }
-
-      .brand {
-        display: flex;
-        align-items: center;
         gap: 0.5rem;
-        font-size: 0.95rem;
+        margin-block: -0.25rem -0.35rem;
       }
 
-      .brand-dot {
-        color: #34d399;
-        font-size: 0.75rem;
-      }
-
-      .poll-pill {
-        font-size: 0.75rem;
-        color: #cbd5e1;
-        background: #131e33;
-        border: 1px solid #2b3c5d;
+      .micro-geo-btn {
+        background: transparent;
+        border: none;
+        padding: 0.2rem 0.35rem;
         border-radius: 999px;
-        padding-block: 0.15rem;
-        padding-inline: 0.55rem;
-      }
-
-      .toolbar-actions {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        gap: 0.45rem;
-      }
-
-      .lang-group {
+        color: #8b96a5;
+        font-size: 0.72rem;
+        font-weight: 500;
         display: inline-flex;
+        align-items: center;
         gap: 0.25rem;
-      }
-
-      .pill-btn,
-      .mode-btn,
-      .geo-btn {
-        background: #131e33;
-        color: #e2e8f0;
-        border: 1px solid #2b3c5d;
-        border-radius: 0.5rem;
-        padding-block: 0.35rem;
-        padding-inline: 0.65rem;
-        font-size: 0.75rem;
-        font-weight: 700;
         cursor: pointer;
       }
 
-      .geo-btn.is-granted {
-        border-color: #fbbf24;
-        color: #fde68a;
-      }
-
-      .pill-btn.is-active {
-        background: #38bdf8;
-        color: #041322;
-        border-color: #38bdf8;
-      }
-
-      .mode-btn {
-        border-color: #34d399;
-        color: #6ee7b7;
-      }
-
-      .geo-status-strip {
-        display: flex;
-        flex-wrap: wrap;
-        justify-content: space-between;
-        align-items: center;
-        gap: 0.5rem;
-        font-size: 0.78rem;
+      .micro-geo-btn.is-granted,
+      .micro-geo-btn:hover {
         color: #cbd5e1;
-        background: #0d1627;
-        border: 1px solid #1e2d48;
-        border-radius: 0.625rem;
-        padding-block: 0.4rem;
-        padding-inline: 0.75rem;
       }
 
-      .geo-coords {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.35rem;
-      }
-
-      .geo-dist {
-        color: #38bdf8;
-        font-weight: 600;
-      }
-
-      .defer-status {
-        padding-block: 1.5rem;
-        text-align: center;
-        font-size: 0.875rem;
-        color: #cbd5e1;
-        background: #0b1220;
-        border-radius: 1rem;
-        border: 1px dashed #2b3c5d;
-      }
-
-      .welcome-ready-card {
-        background: #0f172a;
-        border: 1px solid #1e293b;
-        border-radius: 1rem;
-        padding: 1.25rem;
-        display: flex;
-        flex-direction: column;
-        gap: 1rem;
-        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
-      }
-
-      .welcome-hero {
-        text-align: center;
-        padding-block: 0.5rem;
-      }
-
-      .welcome-icon {
-        font-size: 2.25rem;
-        margin-block-end: 0.35rem;
-      }
-
-      .welcome-title {
-        font-size: 1.15rem;
-        font-weight: 700;
-        color: #f1f5f9;
-        margin: 0;
-      }
-
-      .welcome-desc {
-        font-size: 0.825rem;
-        color: #94a3b8;
-        margin: 0.25rem 0 0 0;
-      }
-
-      .quick-chips-group {
-        display: flex;
-        flex-direction: column;
-        gap: 0.5rem;
-      }
-
-      .chips-label {
-        font-size: 0.75rem;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-        color: #64748b;
-      }
-
-      .chips-list {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.5rem;
-      }
-
-      .quick-chip-btn {
+      .micro-right {
         display: inline-flex;
         align-items: center;
         gap: 0.4rem;
-        background: #1e293b;
-        border: 1px solid #334155;
-        border-radius: 9999px;
-        padding-block: 0.4rem;
-        padding-inline: 0.75rem;
+      }
+
+      .micro-langs {
+        display: inline-flex;
+        gap: 0.15rem;
+      }
+
+      .micro-lang-btn,
+      .micro-reset-btn {
+        background: transparent;
+        border: none;
+        color: #7c8796;
+        font-size: 0.68rem;
+        font-weight: 700;
+        padding: 0.18rem 0.35rem;
+        border-radius: 0.4rem;
+        cursor: pointer;
+      }
+
+      .micro-lang-btn.is-active {
+        color: #f8fafc;
+        background: rgba(255, 255, 255, 0.09);
+      }
+
+      .micro-reset-btn:hover {
+        color: #f87171;
+        background: rgba(239, 68, 68, 0.12);
+      }
+
+      /* Minimalist Empty Ready State */
+      .minimal-ready {
+        display: grid;
+        gap: 1rem;
+        padding-block: 0.75rem 0.35rem;
+      }
+
+      .ready-head {
+        text-align: center;
+        display: grid;
+        gap: 0.35rem;
+      }
+
+      .ready-title {
+        margin: 0;
+        font-size: 1.15rem;
+        font-weight: 700;
+        color: #f8fafc;
+      }
+
+      .ready-sub {
+        margin: 0;
+        font-size: 0.78rem;
+        color: #8b96a5;
+        line-height: 1.4;
+      }
+
+      .ready-chips {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 0.45rem;
+      }
+
+      .ready-chip-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 999px;
+        padding: 0.42rem 0.78rem;
         color: #e2e8f0;
         font-size: 0.78rem;
         font-weight: 500;
@@ -443,81 +349,60 @@ const EMPTY_INITIAL_STATE: LiveBusStatusResponse = {
         transition: all 0.15s ease;
       }
 
-      .quick-chip-btn:hover {
-        background: #334155;
-        border-color: #38bdf8;
-        color: #38bdf8;
-        transform: translateY(-1px);
+      .ready-chip-btn:hover {
+        background: rgba(59, 130, 246, 0.22);
+        border-color: #3b82f6;
+        color: #ffffff;
       }
 
-      .search-tips-box {
-        background: #020617;
-        border: 1px dashed #334155;
-        border-radius: 0.625rem;
-        padding: 0.65rem 0.85rem;
-      }
-
-      .search-tip {
-        margin: 0;
-        font-size: 0.76rem;
-        color: #94a3b8;
-        line-height: 1.4;
-      }
-
-      .active-trip-bar {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        background: #0f172a;
-        border: 1px solid #38bdf8;
-        border-radius: 0.75rem;
-        padding: 0.5rem 0.75rem;
-        gap: 0.5rem;
-      }
-
-      .active-trip-info {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        min-width: 0;
-      }
-
-      .active-pulse {
-        color: #10b981;
-        font-size: 0.75rem;
-        animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-      }
-
-      @keyframes pulse {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.4; }
-      }
-
-      .active-trip-label {
+      .defer-status {
+        padding-block: 2rem;
+        text-align: center;
         font-size: 0.85rem;
-        font-weight: 600;
-        color: #f8fafc;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
+        color: #9aa6b4;
       }
 
-      .reset-btn {
-        background: #1e293b;
-        color: #f87171;
-        border: 1px solid #ef4444;
-        border-radius: 0.5rem;
-        padding: 0.3rem 0.65rem;
-        font-size: 0.75rem;
+      /* Bottom Segmented Blue Pill Bar */
+      .bottom-pill-bar {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        background: #1a54a6;
+        border-radius: 999px;
+        padding: 0.22rem;
+        margin-block-start: 0.25rem;
+        box-shadow: 0 4px 16px rgba(15, 23, 42, 0.35);
+      }
+
+      .seg-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.45rem;
+        background: transparent;
+        border: none;
+        border-radius: 999px;
+        padding-block: 0.62rem;
+        padding-inline: 0.75rem;
+        color: rgba(255, 255, 255, 0.85);
+        font-size: 0.88rem;
         font-weight: 600;
         cursor: pointer;
-        flex-shrink: 0;
-        transition: background 0.15s ease;
+        transition: background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
       }
 
-      .reset-btn:hover {
-        background: #7f1d1d;
-        color: #fef2f2;
+      .seg-btn.is-selected {
+        background: #3087f6;
+        color: #ffffff;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.28);
+      }
+
+      .live-dot {
+        font-size: 0.62rem;
+        color: #7dd3fc;
+      }
+
+      .live-dot.is-paused {
+        color: #94a3b8;
       }
     `
   ]
@@ -560,8 +445,8 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
           locating: 'מאתר...',
           defaultArea: 'חיפה (ברירת מחדל)',
           toStop: 'מרחק לתחנה',
-          openInteractive: '🗺️ מפה',
-          backToLite: '⚡ כרטיס',
+          viewMap: 'צפה במפה',
+          liveTrack: 'מעקב חי',
           loadingMap: 'טוען מפה אינטראקטיבית...',
           lineWord: 'קו'
         };
@@ -573,8 +458,8 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
           locating: 'Locating...',
           defaultArea: 'Haifa (default coords)',
           toStop: 'To nearest stop',
-          openInteractive: '🗺️ Map',
-          backToLite: '⚡ Card',
+          viewMap: 'View Map',
+          liveTrack: 'Live Track',
           loadingMap: 'Loading interactive map module...',
           lineWord: 'Line'
         };
@@ -584,10 +469,10 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
           paused: 'Пауза (не видим)',
           locateMe: 'Моя геопозиция',
           locating: 'Поиск GPS...',
-          defaultArea: 'Хайфа (координаты по умолчанию)',
+          defaultArea: 'Хайфа (по умолчанию)',
           toStop: 'До остановки',
-          openInteractive: '🗺️ Карта',
-          backToLite: '⚡ Карточка',
+          viewMap: 'Карта',
+          liveTrack: 'Live Track',
           loadingMap: 'Загрузка интерактивной карты...',
           lineWord: 'Автобус'
         };
@@ -845,12 +730,17 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
     }
   }
 
-  toggleInteractiveMode(): void {
-    const nextMode: RenderMode = this.viewMode() === 'lite' ? 'interactive' : 'lite';
+  setViewMode(nextMode: RenderMode): void {
+    if (this.viewMode() === nextMode) return;
     this.modeOverride.set(nextMode);
     if (this.hasActiveSearch()) {
       void this.fetchLatestStatus();
     }
+  }
+
+  toggleInteractiveMode(): void {
+    const nextMode: RenderMode = this.viewMode() === 'lite' ? 'interactive' : 'lite';
+    this.setViewMode(nextMode);
   }
 
   async onSelectCandidate(candidate: LineCandidate): Promise<void> {

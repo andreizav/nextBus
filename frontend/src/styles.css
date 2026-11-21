@@ -1,15 +1,13 @@
 :root {
-  --nb-bg-page: #050911;
-  --nb-bg-surface: #0b1220;
-  --nb-bg-elevated: #131e33;
-  --nb-border-subtle: #2b3c5d;
+  --nb-bg-page: #181e24;
+  --nb-bg-surface: #1f262e;
+  --nb-bg-elevated: #262f38;
+  --nb-border-subtle: rgba(255, 255, 255, 0.1);
   --nb-text-primary: #f8fafc;
-  --nb-text-secondary: #cbd5e1;
-  --nb-accent-cyan: #38bdf8;
-  --nb-accent-cyan-ink: #041322;
-  --nb-accent-amber: #fbbf24;
-  --nb-accent-emerald: #34d399;
-  color-scheme: light dark;
+  --nb-text-secondary: #9aa6b4;
+  --nb-accent-blue: #3b82f6;
+  --nb-accent-sky: #2d7ff9;
+  color-scheme: dark;
 }
 
 *,
@@ -28,9 +26,10 @@ body {
   padding-block: 1.5rem;
   padding-inline: 1rem;
   min-block-size: 100dvh;
-  background-color: var(--nb-bg-page);
+  background: radial-gradient(circle at top center, #202830 0%, #161c22 70%);
   color: var(--nb-text-primary);
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
 
 nb-next-bus-widget,
@@ -43,7 +42,6 @@ nb-search-bar {
 }
 
 nb-next-bus-widget {
-  max-inline-size: 760px;
   margin-inline: auto;
 }
 

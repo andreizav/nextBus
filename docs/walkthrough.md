@@ -2,13 +2,13 @@
 
 ## 1. Обзор обновления
 
-### 1.1. Лёгкий мобильный UI-виджет («Правило 3 секунд»)
-Компонент [lite-timeline-view.component.ts](file:///Users/andrey/Development/projects/nextBus/frontend/src/app/components/lite-timeline-view/lite-timeline-view.component.ts) и оболочка [next-bus-widget.component.ts](file:///Users/andrey/Development/projects/nextBus/frontend/src/app/components/next-bus-widget/next-bus-widget.component.ts) переработаны под компактный экран смартфона и карточки AI-ассистентов:
-- **Крупный фокус сверху:** большой бейдж номера автобуса (например, `49` или `49א→28`), крупный таймер прибытия (`Через X мин` / `בעוד X דק׳`) и кнопка переключения на `@defer`-карту (`🗺️ На карте` / `🗺️ מפה`).
-- **Чёткий маркер локации пользователя:** выделенный баннер `📍 Вы здесь:` с названием ближайшей остановки, кодом и расстоянием в метрах.
-- **Компактное окно остановок (`timeline_window`):** по умолчанию отображается до 5–7 остановок вокруг текущей позиции автобуса и точки посадки пользователя (`buildTimelineWindow` в [eta.service.ts](file:///Users/andrey/Development/projects/nextBus/backend/src/services/eta.service.ts)), а не 30+ остановок. Добавлены счётчики (`↑ Пройдено ещё N ост.`, `↓ Ещё дальше M ост.`) и кнопка **«Все остановки (N)» / «Свернуть список»**.
-- **Выбор при неоднозначности линии (`LINE_DISAMBIGUATION`):** компактные кнопки в 1 тап (`№49 → חוף הכרמל`, `№49א → מרכז הכרמל`).
-- **Пошаговые пересадки (`TRIP_PLANNER`):** до 3 лучших вариантов поездки (`trip_options[]`), где каждый вариант разбит на последовательные шаги (`BOARD_AND_RIDE`, `TRANSFER`) с явным указанием номера автобуса, остановки посадки/высадки, времени ожидания и итогового времени прибытия.
+### 1.1. Лёгкий минималистичный мобильный UI-виджет («Правило 3 секунд»)
+Компоненты [search-bar.component.ts](file:///Users/andrey/Development/projects/nextBus/frontend/src/app/components/search-bar/search-bar.component.ts), [lite-timeline-view.component.ts](file:///Users/andrey/Development/projects/nextBus/frontend/src/app/components/lite-timeline-view/lite-timeline-view.component.ts) и оболочка [next-bus-widget.component.ts](file:///Users/andrey/Development/projects/nextBus/frontend/src/app/components/next-bus-widget/next-bus-widget.component.ts) оформлены в едином минималистичном стиле:
+- **Светлая поисковая капсула сверху:** лаконичная строка поиска (`#dfe5ec`) с иконкой лупы и микрофоном голосового ввода справа (`entryContext() === 'standalone'`, строго скрыта в режиме `mcp`).
+- **Две ключевые метрики в фокусе:** слева крупный номер маршрута (`49`, `49→17`) с подписью `маршрут` / `bus route`, справа крупный обратный отсчёт (`7 MIN` / `7 МИН`) с подписью `до прибытия` / `arrival countdown`.
+- **Пунктирная синяя шкала остановок с синим пином:** отметка `📍 Near You` / `Рядом с вами` вверху, компактное окно остановок (`timeline_window`) с тусклыми крайними точками, белыми соседними и **светящимся синим ореолом активной остановки**. При желании полный маршрут раскрывается одной ссылкой `Все остановки (N)`.
+- **Нижний синий переключатель-пилюля:** единая капсула **`View Map | Live Track ●`** внизу карточки для мгновенного переключения между компактной карточкой и лениво загружаемой картой (`@defer`).
+- **Умный выбор линии и пересадки:** компактные капсулы дезамбигуации (`LINE_DISAMBIGUATION`: `№49` vs `№49א`) и пошаговые шаги пересадок (`TRIP_PLANNER`: `BOARD_AND_RIDE`, `TRANSFER`) показываются только тогда, когда они действительно нужны.
 
 ### 1.2. Разделение режимов входа (`entry_context: "mcp" | "standalone"`)
 - **`mcp`** (вызов из Gemini / Google Search через `POST /mcp` или `?entry_context=mcp`): строка поиска и кнопка микрофона строго скрыты из DOM (`@if (entryContext() === 'standalone')`), виджет сразу показывает готовый ответ.
@@ -49,7 +49,7 @@ DATABASE_URL=postgresql://postgres:postgrespassword@localhost:5432/nextbus
    - `src/__tests__/trip-planner.service.test.ts` (12 тестов, включая `buildTripOptions` с пересадками): **PASS**
    - **Итого:** 3/3 файла, **31/31 тест пройден**, сборка `tsc` — без ошибок.
 2. **Сборка фронтенда (`npm --prefix frontend run build`)**:
-   - Успешная production-сборка Angular 20 (`main-J7V6KKOX.js`, 68.96 kB raw, ленивый чанк `interactive-map-view-component` вынесен через `@defer`).
+   - Успешная production-сборка Angular 20 (`main-OR6EZDFD.js`, 59.21 kB raw, ленивый чанк `interactive-map-view-component` вынесен через `@defer`).
 3. **Проверка локального HTTP/MCP API (`http://localhost:3000`)**:
    - `POST /api/search-routes` (`"Сорок девятый автобус"`, Тират-Кармель): вернул `entry_context: "standalone"`, `intent_type: "LINE_DISAMBIGUATION"`, 4 кандидата (`49`, `49א`), `timeline_window.compact_stops = 7` из `36` остановок.
    - `POST /api/search-routes` (`"Хочу поехать в больницу Рамбам"`, Тират-Кармель): вернул `intent_type: "TRIP_PLANNER"`, упорядоченные маршруты с пересадками (`Вариант 1: 49א -> 28`, `Вариант 2: 49 -> 17`).
