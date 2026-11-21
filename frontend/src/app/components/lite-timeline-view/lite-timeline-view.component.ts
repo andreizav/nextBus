@@ -25,7 +25,7 @@ import type {
   template: `
     <section
       class="minimal-card-body"
-      [attr.dir]="lang() === 'he' ? 'rtl' : 'ltr'"
+      [attr.dir]="lang() === 'he' || lang() === 'ar' ? 'rtl' : 'ltr'"
       aria-label="Minimalist live bus status and stop timeline"
     >
       <!-- 1. Hero Metrics Row (Route Number & Arrival Countdown) -->
@@ -658,7 +658,7 @@ import type {
 })
 export class LiteTimelineViewComponent {
   readonly state = input.required<LiveBusStatusResponse>();
-  readonly lang = input<WidgetLang>('ru');
+  readonly lang = input<WidgetLang>('he');
   readonly selectedOptionIndex = input<number>(0);
   readonly isTripReversed = input<boolean>(false);
   readonly originLabel = input<string>('');
@@ -753,6 +753,8 @@ export class LiteTimelineViewComponent {
     const eta = this.activeBus()?.eta_minutes;
     if (eta === undefined) return '';
     if (this.lang() === 'he') return 'דק׳';
+    if (this.lang() === 'ar') return 'د';
+    if (this.lang() === 'uk') return 'ХВ';
     if (this.lang() === 'ru') return 'МИН';
     return 'MIN';
   });
@@ -840,6 +842,36 @@ export class LiteTimelineViewComponent {
           moreStops: 'כל התחנות',
           collapse: 'צמצם',
           busHere: 'האוטובוס כאן'
+        };
+      case 'ar':
+        return {
+          busRoute: 'خط الحافلة',
+          arrivalCountdown: 'الوقت المتبقي',
+          nearYou: 'بالقرب منك',
+          switchDir: 'تبديل الاتجاه',
+          reverseRoute: 'المسار العكسي',
+          optionWord: 'خيار',
+          variantsAria: 'اختر خيار الرحلة',
+          minShort: 'د',
+          waitWord: 'انتظار',
+          moreStops: 'كل المحطات',
+          collapse: 'تصغير',
+          busHere: 'الحافلة هنا الآن'
+        };
+      case 'uk':
+        return {
+          busRoute: 'маршрут',
+          arrivalCountdown: 'до прибуття',
+          nearYou: 'Поруч із вами',
+          switchDir: 'Змінити напрямок',
+          reverseRoute: 'Зворотний маршрут',
+          optionWord: 'Варіант',
+          variantsAria: 'Вибір варіанта маршруту',
+          minShort: 'хв',
+          waitWord: 'очік.',
+          moreStops: 'Усі зупинки',
+          collapse: 'Згорнути',
+          busHere: 'Автобус зараз тут'
         };
       case 'ru':
         return {

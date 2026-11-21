@@ -66,6 +66,10 @@ export class VoiceRecognitionService {
         return 'he-IL';
       case 'en':
         return 'en-US';
+      case 'ar':
+        return 'ar-IL';
+      case 'uk':
+        return 'uk-UA';
       default:
         return 'ru-RU';
     }

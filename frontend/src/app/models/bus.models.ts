@@ -1,5 +1,5 @@
 export type RenderMode = 'lite' | 'interactive';
-export type WidgetLang = 'ru' | 'en' | 'he';
+export type WidgetLang = 'he' | 'en' | 'ar' | 'ru' | 'uk';
 export type EntryContext = 'mcp' | 'standalone';
 export type IntentType = 'LINE_LOOKUP' | 'LINE_DISAMBIGUATION' | 'TRIP_PLANNER';
 

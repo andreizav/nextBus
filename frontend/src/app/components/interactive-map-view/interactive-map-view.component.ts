@@ -30,7 +30,7 @@ import type {
   template: `
     <section
       class="nb-map-card"
-      [attr.dir]="lang() === 'he' ? 'rtl' : 'ltr'"
+      [attr.dir]="lang() === 'he' || lang() === 'ar' ? 'rtl' : 'ltr'"
       aria-label="Minimalist live map and route variants"
     >
       <!-- 1. Hero Metrics Row (matching Lite View) -->
@@ -672,7 +672,7 @@ import type {
 })
 export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
   readonly state = input.required<LiveBusStatusResponse>();
-  readonly lang = input<WidgetLang>('ru');
+  readonly lang = input<WidgetLang>('he');
   readonly selectedOptionIndex = input<number>(0);
   readonly isTripReversed = input<boolean>(false);
   readonly originLabel = input<string>('');
@@ -766,6 +766,8 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
     const eta = this.activeBus()?.eta_minutes;
     if (eta === undefined) return '';
     if (this.lang() === 'he') return 'דק׳';
+    if (this.lang() === 'ar') return 'د';
+    if (this.lang() === 'uk') return 'ХВ';
     if (this.lang() === 'ru') return 'МИН';
     return 'MIN';
   });
@@ -773,6 +775,8 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
   readonly stopsAwayText = computed(() => {
     const stops = this.activeBus()?.stops_away ?? 0;
     if (this.lang() === 'he') return `${stops} תחנות ממך`;
+    if (this.lang() === 'ar') return `يبعد ${stops} محطات`;
+    if (this.lang() === 'uk') return `${stops} зуп. до вас`;
     if (this.lang() === 'en') return `${stops} stops away`;
     return `${stops} ост. до вас`;
   });
@@ -794,6 +798,38 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
           openMaps: 'פתח במפות',
           intercityAdvice:
             'היעד המבוקש נמצא מחוץ לרשת העירונית. מומלץ לקחת קו אקספרס 910/900 או רכבת ממרכזית חוף הכרמל.'
+        };
+      case 'ar':
+        return {
+          busRoute: 'خط الحافلة',
+          arrivalCountdown: 'الوقت المتبقي',
+          switchDir: 'تبديل الاتجاه',
+          reverseRoute: 'المسار العكسي',
+          optionWord: 'خيار',
+          variantsAria: 'اختر خيار الرحلة',
+          minShort: 'د',
+          waitWord: 'انتظار',
+          recenter: 'توسيط المسار',
+          offersTitle: 'مقاهي قريبة أثناء الانتظار',
+          openMaps: 'فتح في الخرائط',
+          intercityAdvice:
+            'الوجهة خارج الشبكة الحضرية المحلية. يُنصح بأخذ خط إكسبرس 900/910 أو القطار من محطة حوف هكرمل.'
+        };
+      case 'uk':
+        return {
+          busRoute: 'маршрут',
+          arrivalCountdown: 'до прибуття',
+          switchDir: 'Змінити напрямок',
+          reverseRoute: 'Зворотний маршрут',
+          optionWord: 'Варіант',
+          variantsAria: 'Вибір варіанта маршруту',
+          minShort: 'хв',
+          waitWord: 'очік.',
+          recenter: 'Центрувати маршрут',
+          offersTitle: 'Кафе поруч на час очікування',
+          openMaps: 'Відкрити на карті',
+          intercityAdvice:
+            'Пункт призначення за межами міської мережі. Рекомендуємо експрес №900/910 або потяг від Хоф ха-Кармель.'
         };
       case 'en':
         return {

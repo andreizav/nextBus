@@ -77,7 +77,7 @@ const EMPTY_INITIAL_STATE: LiveBusStatusResponse = {
     <main
       class="widget-shell nb-card"
       [class.is-map-mode]="hasActiveSearch() && viewMode() === 'interactive'"
-      [attr.dir]="lang() === 'he' ? 'rtl' : 'ltr'"
+      [attr.dir]="lang() === 'he' || lang() === 'ar' ? 'rtl' : 'ltr'"
     >
       <!-- Subtle top micro utility strip (location + language + reset) -->
       <div class="micro-top-bar">
@@ -110,26 +110,47 @@ const EMPTY_INITIAL_STATE: LiveBusStatusResponse = {
             <button
               type="button"
               class="micro-lang-btn"
-              [class.is-active]="lang() === 'ru'"
-              (click)="lang.set('ru')"
+              [class.is-active]="lang() === 'he'"
+              (click)="selectLang('he')"
+              title="עברית"
             >
-              RU
+              HE
             </button>
             <button
               type="button"
               class="micro-lang-btn"
               [class.is-active]="lang() === 'en'"
-              (click)="lang.set('en')"
+              (click)="selectLang('en')"
+              title="English"
             >
               EN
             </button>
             <button
               type="button"
               class="micro-lang-btn"
-              [class.is-active]="lang() === 'he'"
-              (click)="lang.set('he')"
+              [class.is-active]="lang() === 'ar'"
+              (click)="selectLang('ar')"
+              title="العربية"
             >
-              HE
+              AR
+            </button>
+            <button
+              type="button"
+              class="micro-lang-btn"
+              [class.is-active]="lang() === 'ru'"
+              (click)="selectLang('ru')"
+              title="Русский"
+            >
+              RU
+            </button>
+            <button
+              type="button"
+              class="micro-lang-btn"
+              [class.is-active]="lang() === 'uk'"
+              (click)="selectLang('uk')"
+              title="Українська"
+            >
+              UK
             </button>
           </div>
         </div>
@@ -436,7 +457,8 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
   readonly isTripReversed = signal<boolean>(false);
   readonly originalDestination = signal<GeocodedDestination | null>(null);
   readonly hasExplicitDirection = signal(false);
-  readonly lang = signal<WidgetLang>('ru');
+  readonly lang = signal<WidgetLang>('he');
+  private hasManualLang = false;
   readonly userCoords = signal<{ lat: number; lon: number; accuracy?: number } | null>(null);
   readonly geoStatus = signal<'idle' | 'locating' | 'granted' | 'denied'>('idle');
   private readonly modeOverride = signal<RenderMode | null>(null);
@@ -465,6 +487,32 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
           liveTrack: 'מעקב חי',
           loadingMap: 'טוען מפה אינטראקטיבית...',
           lineWord: 'קו'
+        };
+      case 'ar':
+        return {
+          live: 'مباشر • 15ث',
+          paused: 'متوقف مؤقتاً',
+          locateMe: 'موقعي',
+          locating: 'جارٍ التحديد...',
+          defaultArea: 'حيفا (افتراضي)',
+          toStop: 'المسافة للمحطة',
+          viewMap: 'عرض الخريطة',
+          liveTrack: 'تتبع مباشر',
+          loadingMap: 'جارٍ تحميل الخريطة...',
+          lineWord: 'خط'
+        };
+      case 'uk':
+        return {
+          live: 'Онлайн • 15с',
+          paused: 'Пауза (фон)',
+          locateMe: 'Моя геопозиція',
+          locating: 'Пошук GPS...',
+          defaultArea: 'Хайфа (за замовч.)',
+          toStop: 'До зупинки',
+          viewMap: 'Карта',
+          liveTrack: 'Live Track',
+          loadingMap: 'Завантаження інтерактивної карти...',
+          lineWord: 'Автобус'
         };
       case 'en':
         return {
@@ -506,6 +554,24 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
           resetBtn: 'חיפוש חדש',
           resetTitle: 'איפוס וחזרה למסך הראשי'
         };
+      case 'ar':
+        return {
+          title: 'إلى أين تريد الذهاب اليوم؟',
+          subtitle: 'بحث ذكي للحافلات بالوقت الفعلي مع الخطوط المباشرة والتحويلات السريعة.',
+          popularLabel: 'الخطوط والوجهات الشائعة',
+          tip: 'أدخل رقم الحافلة (مثل 49 أو 900) أو المدينة/الوجهة. يمكنك استخدام الميكروفون للبحث الصوتي.',
+          resetBtn: 'بحث جديد',
+          resetTitle: 'إعادة تعيين والعودة للبداية'
+        };
+      case 'uk':
+        return {
+          title: 'Куди ви хочете поїхати?',
+          subtitle: 'Розумний пошук автобусів у реальному часі з прямими рейсами та швидкими пересадками.',
+          popularLabel: 'Популярні маршрути та напрямки',
+          tip: 'Введіть номер автобуса (наприклад, 49 або 900) чи адресу/місто призначення. Натисніть мікрофон для голосового пошуку.',
+          resetBtn: 'Новий пошук',
+          resetTitle: 'Скинути та повернутися на головний екран'
+        };
       case 'en':
         return {
           title: 'Where would you like to go?',
@@ -530,16 +596,29 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
   readonly detectedCityName = computed(() => {
     const c = this.userCoords();
     if (!c) return this.labels().defaultArea;
+    const l = this.lang();
     if (c.lat >= 32.74 && c.lat <= 32.785 && c.lon >= 34.95 && c.lon <= 34.995) {
-      return this.lang() === 'he' ? 'טירת כרמל' : this.lang() === 'en' ? 'Tirat Carmel' : 'Тират-Кармель';
+      if (l === 'he') return 'טירת כרמל';
+      if (l === 'ar') return 'طيرة الكرمل';
+      if (l === 'uk') return 'Тірат-Кармель';
+      return l === 'en' ? 'Tirat Carmel' : 'Тират-Кармель';
     }
     if (c.lat >= 32.0 && c.lat <= 32.15 && c.lon >= 34.74 && c.lon <= 34.85) {
-      return this.lang() === 'he' ? 'תל אביב' : this.lang() === 'en' ? 'Tel Aviv' : 'Тель-Авив';
+      if (l === 'he') return 'תל אביב';
+      if (l === 'ar') return 'تل أبيب';
+      if (l === 'uk') return 'Тель-Авів';
+      return l === 'en' ? 'Tel Aviv' : 'Тель-Авив';
     }
     if (c.lat >= 31.74 && c.lat <= 31.85 && c.lon >= 35.15 && c.lon <= 35.25) {
-      return this.lang() === 'he' ? 'ירושלים' : this.lang() === 'en' ? 'Jerusalem' : 'Иерусалим';
+      if (l === 'he') return 'ירושלים';
+      if (l === 'ar') return 'القدس';
+      if (l === 'uk') return 'Єрусалим';
+      return l === 'en' ? 'Jerusalem' : 'Иерусалим';
     }
-    return this.lang() === 'he' ? 'חיפה' : this.lang() === 'en' ? 'Haifa' : 'Хайфа';
+    if (l === 'he') return 'חיפה';
+    if (l === 'ar') return 'حيفا';
+    if (l === 'uk') return 'Хайфа';
+    return l === 'en' ? 'Haifa' : 'Хайфа';
   });
 
   readonly quickChips = computed(() => {
@@ -551,6 +630,22 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
           { icon: '📍', label: 'ירושלים (תחנה מרכזית)', query: 'ירושלים' },
           { icon: '📍', label: 'תל אביב (עזריאלי)', query: 'תל אביב עזריאלי' },
           { icon: '📍', label: 'מרכז חורב, חיפה', query: 'מרכז חורב חיפה' }
+        ];
+      case 'ar':
+        return [
+          { icon: '🚌', label: 'خط 49 (طيرة الكرمل)', query: '49' },
+          { icon: '🏥', label: 'مستشفى رمبام', query: 'בית חולים רמב"ם' },
+          { icon: '📍', label: 'القدس', query: 'ירושלים' },
+          { icon: '📍', label: 'تل أبيب (عزرائيلي)', query: 'תל אביב עזריאלי' },
+          { icon: '📍', label: 'مركز حوريف، حيفا', query: 'מרכז חורב חיפה' }
+        ];
+      case 'uk':
+        return [
+          { icon: '🚌', label: 'Автобус 49 (Тірат-Кармель)', query: '49' },
+          { icon: '🏥', label: 'Лікарня Рамбам', query: 'Rambam Hospital' },
+          { icon: '📍', label: 'Єрусалим', query: 'Иерусалим' },
+          { icon: '📍', label: 'Тель-Авів (Азріелі)', query: 'Тель-Авив Азриэли' },
+          { icon: '📍', label: 'Центр Хорев, Хайфа', query: 'Центр Хорев Хайфа' }
         ];
       case 'en':
         return [
@@ -624,16 +719,26 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
       this.modeOverride.set(modeParam);
     }
     const langParam = params.get('lang');
-    if (langParam === 'ru' || langParam === 'en' || langParam === 'he') {
+    if (
+      langParam === 'he' ||
+      langParam === 'en' ||
+      langParam === 'ar' ||
+      langParam === 'ru' ||
+      langParam === 'uk'
+    ) {
+      this.hasManualLang = true;
       this.lang.set(langParam);
     }
 
     const latParam = params.get('lat');
     const lonParam = params.get('lon');
     if (latParam && lonParam && !Number.isNaN(Number(latParam)) && !Number.isNaN(Number(lonParam))) {
-      this.userCoords.set({ lat: Number(latParam), lon: Number(lonParam) });
+      const parsedCoords = { lat: Number(latParam), lon: Number(lonParam) };
+      this.userCoords.set(parsedCoords);
       this.geoStatus.set('granted');
+      this.applyLocationDefaultLang(parsedCoords);
     } else {
+      this.applyLocationDefaultLang(null);
       this.requestUserGeolocation();
     }
 
@@ -713,6 +818,51 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
     this.busState.set(EMPTY_INITIAL_STATE);
   }
 
+  selectLang(nextLang: WidgetLang): void {
+    this.hasManualLang = true;
+    this.lang.set(nextLang);
+  }
+
+  private isLocationInIsrael(lat: number, lon: number): boolean {
+    return lat >= 29.45 && lat <= 33.4 && lon >= 34.2 && lon <= 35.95;
+  }
+
+  private detectDefaultLangByLocation(
+    coords: { lat: number; lon: number } | null
+  ): WidgetLang {
+    if (coords) {
+      if (this.isLocationInIsrael(coords.lat, coords.lon)) {
+        return 'he';
+      }
+      if (coords.lat >= 44.3 && coords.lat <= 52.4 && coords.lon >= 22.1 && coords.lon <= 40.3) {
+        return 'uk';
+      }
+      const navLang = (typeof navigator !== 'undefined' ? navigator.language : '').toLowerCase();
+      if (navLang.startsWith('he') || navLang.startsWith('iw')) return 'he';
+      if (navLang.startsWith('ar')) return 'ar';
+      if (navLang.startsWith('uk')) return 'uk';
+      if (navLang.startsWith('ru')) return 'ru';
+      return 'en';
+    }
+
+    try {
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      if (tz === 'Asia/Jerusalem' || tz === 'Asia/Tel_Aviv') {
+        return 'he';
+      }
+    } catch {
+      // Ignore timezone detection failure
+    }
+
+    // Default service area is Israel (DEFAULT_COORDS)
+    return 'he';
+  }
+
+  private applyLocationDefaultLang(coords: { lat: number; lon: number } | null): void {
+    if (this.hasManualLang) return;
+    this.lang.set(this.detectDefaultLangByLocation(coords));
+  }
+
   requestUserGeolocation(): void {
     if (typeof navigator === 'undefined' || !('geolocation' in navigator)) {
       this.geoStatus.set('denied');
@@ -722,12 +872,14 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
     this.geoStatus.set('locating');
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        this.userCoords.set({
+        const detected = {
           lat: position.coords.latitude,
           lon: position.coords.longitude,
           accuracy: Math.round(position.coords.accuracy)
-        });
+        };
+        this.userCoords.set(detected);
         this.geoStatus.set('granted');
+        this.applyLocationDefaultLang(detected);
         if (this.hasActiveSearch()) {
           if (this.activeSearchLabel()) {
             void this.onSearchDestination(this.activeSearchLabel());
@@ -848,6 +1000,7 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
                 };
                 this.userCoords.set(c);
                 this.geoStatus.set('granted');
+                this.applyLocationDefaultLang(c);
                 resolve(c);
               },
               () => resolve(null),

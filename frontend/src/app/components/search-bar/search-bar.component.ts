@@ -20,7 +20,7 @@ import { VoiceRecognitionService } from '../../services/voice-recognition.servic
   template: `
     <div
       class="search-shell"
-      [attr.dir]="lang() === 'he' ? 'rtl' : 'ltr'"
+      [attr.dir]="lang() === 'he' || lang() === 'ar' ? 'rtl' : 'ltr'"
       role="search"
       aria-label="Destination or bus line search"
     >
@@ -177,7 +177,7 @@ import { VoiceRecognitionService } from '../../services/voice-recognition.servic
 export class SearchBarComponent {
   readonly voice = inject(VoiceRecognitionService);
 
-  readonly lang = input<WidgetLang>('ru');
+  readonly lang = input<WidgetLang>('he');
   readonly isSearching = input<boolean>(false);
   readonly showQuickChips = input<boolean>(false);
   readonly searchSubmitted = output<string>();
@@ -193,6 +193,22 @@ export class SearchBarComponent {
           clear: 'נקה',
           startVoice: 'חיפוש קולי',
           stopVoice: 'עצור הקלטה'
+        };
+      case 'ar':
+        return {
+          placeholder: 'ابحث عن خط أو وجهة',
+          find: 'بحث',
+          clear: 'مسح',
+          startVoice: 'بحث صوتي',
+          stopVoice: 'إيقاف التسجيل'
+        };
+      case 'uk':
+        return {
+          placeholder: 'Пошук маршруту або місця',
+          find: 'Знайти',
+          clear: 'Очистити',
+          startVoice: 'Голосовий пошук',
+          stopVoice: 'Зупинити запис'
         };
       case 'en':
         return {
