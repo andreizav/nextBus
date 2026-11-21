@@ -3,6 +3,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 import { getLiveBusStatus } from '../services/bus-status.service.js';
+import { dispatchSearchIntent } from '../services/intent-router.service.js';
 import { planBestBusesToDestination } from '../services/trip-planner.service.js';
 
 const getLiveBusStatusInputSchema = {
@@ -59,15 +60,25 @@ export function createNextBusMcpServer(): McpServer {
       }
     },
     async ({ line_number, user_location, destination_hint, include_nearby_places }) => {
-      const rawResult = await getLiveBusStatus({
-        lineNumber: line_number,
-        userLat: user_location.lat,
-        userLon: user_location.lon,
-        destinationHint: destination_hint,
-        includeNearbyPlaces: include_nearby_places ?? false,
-        allowColdBootstrap: true
-      });
-      const result = { ...rawResult, entry_context: 'mcp' as const };
+      const result = destination_hint
+        ? {
+            ...(await getLiveBusStatus({
+              lineNumber: line_number,
+              userLat: user_location.lat,
+              userLon: user_location.lon,
+              destinationHint: destination_hint,
+              includeNearbyPlaces: include_nearby_places ?? false,
+              allowColdBootstrap: true
+            })),
+            entry_context: 'mcp' as const
+          }
+        : await dispatchSearchIntent({
+            query: `bus ${line_number}`,
+            userLocation: user_location,
+            entryContext: 'mcp',
+            includeNearbyPlaces: include_nearby_places ?? false,
+            allowColdBootstrap: true
+          });
 
       return {
         content: [

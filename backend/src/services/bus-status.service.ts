@@ -1,4 +1,5 @@
 import {
+  buildTimelineWindow,
   calculateEtaMinutes,
   calculateStopsAway,
   computeAspectCorrectedBbox,
@@ -51,6 +52,7 @@ export interface GetLiveBusStatusParams {
   includeNearbyPlaces?: boolean;
   preferredDirection?: 0 | 1;
   allowColdBootstrap?: boolean;
+  routeId?: string;
 }
 
 /**
@@ -66,7 +68,8 @@ export async function getLiveBusStatus(
     params.userLat,
     params.userLon,
     params.preferredDirection,
-    params.destinationHint
+    params.destinationHint,
+    params.routeId
   );
 
   const directionId = nearestStop.direction_id;
@@ -148,6 +151,28 @@ export async function getLiveBusStatus(
     nearestBus?.current_stop_sequence ?? 1
   );
 
+  const timelineWindow = buildTimelineWindow(
+    timelineStops,
+    nearestStop.stop_sequence,
+    nearestBus?.current_stop_sequence
+  );
+
+  const otherDirectionId: 0 | 1 = directionId === 0 ? 1 : 0;
+  const otherDirStops = await supabaseService.getDirectionStopCoords(
+    nearestStop.route_id,
+    otherDirectionId
+  );
+
+  const formatEndpointLabel = (stops: RouteStopCoord[], isHe: boolean): string => {
+    if (stops.length < 2) return nearestStop.route_long_name;
+    const first = isHe ? stops[0].stop_name_he : stops[0].stop_name;
+    const last = isHe ? stops[stops.length - 1].stop_name_he : stops[stops.length - 1].stop_name;
+    return `${first} -> ${last}`;
+  };
+
+  const dir0Stops = directionId === 0 ? allStops : otherDirStops;
+  const dir1Stops = directionId === 1 ? allStops : otherDirStops;
+
   // Only show cafes if user has to wait > 10 minutes for the bus!
   const hasLongWait =
     nearestBus?.eta_minutes !== undefined && nearestBus.eta_minutes > 10;
@@ -174,6 +199,7 @@ export async function getLiveBusStatus(
   const bbox = computeAspectCorrectedBbox(focusPoints);
 
   return {
+    intent_type: 'LINE_LOOKUP',
     render_mode: renderMode,
     updated_at: cachedState?.updated_at ?? new Date().toISOString(),
     cache_hit: cacheHit,
@@ -183,20 +209,17 @@ export async function getLiveBusStatus(
       short_name: nearestStop.route_short_name,
       long_name: nearestStop.route_long_name,
       direction_id: directionId,
-      direction_label:
-        directionId === 0
-          ? 'Tirat Carmel -> Hof HaCarmel'
-          : 'Hof HaCarmel -> Tirat Carmel',
+      direction_label: formatEndpointLabel(allStops, false),
       available_directions: [
         {
           direction_id: 0,
-          label: 'Tirat Carmel -> Hof HaCarmel',
-          label_he: 'טירת כרמל -> חוף הכרמל'
+          label: formatEndpointLabel(dir0Stops, false),
+          label_he: formatEndpointLabel(dir0Stops, true)
         },
         {
           direction_id: 1,
-          label: 'Hof HaCarmel -> Tirat Carmel',
-          label_he: 'חוף הכרמל -> טירת כרמל'
+          label: formatEndpointLabel(dir1Stops, false),
+          label_he: formatEndpointLabel(dir1Stops, true)
         }
       ]
     },
@@ -212,6 +235,7 @@ export async function getLiveBusStatus(
     },
     nearest_bus: nearestBus,
     timeline_stops: timelineStops,
+    timeline_window: timelineWindow,
     lite_map: {
       static_image_url: buildStaticMapUrl(bbox, nearestStop.route_id, directionId),
       bbox,

@@ -1,5 +1,72 @@
 export type RenderMode = 'lite' | 'interactive';
 export type EntryContext = 'mcp' | 'standalone';
+export type IntentType = 'LINE_LOOKUP' | 'LINE_DISAMBIGUATION' | 'TRIP_PLANNER';
+
+export interface LineCandidate {
+  route_id: string;
+  line_number: string;
+  route_long_name: string;
+  direction_id: 0 | 1;
+  origin_he: string;
+  destination_he: string;
+  nearest_stop_id: string;
+  nearest_stop_code: string;
+  nearest_stop_name: string;
+  nearest_stop_name_he: string;
+  nearest_stop_sequence: number;
+  stop_lat: number;
+  stop_lon: number;
+  distance_meters: number;
+  eta_minutes: number;
+}
+
+export interface TripLegBoardStop {
+  stop_id: string;
+  stop_code: string;
+  stop_name: string;
+  stop_name_he: string;
+  eta_minutes: number;
+  scheduled_time: string;
+}
+
+export interface TripLegAlightStop {
+  stop_id: string;
+  stop_code: string;
+  stop_name: string;
+  stop_name_he: string;
+  stops_count: number;
+}
+
+export interface TripLeg {
+  leg_type: 'BOARD_AND_RIDE' | 'TRANSFER';
+  line_number: string;
+  route_id: string;
+  direction_id: 0 | 1;
+  board_stop: TripLegBoardStop;
+  alight_stop: TripLegAlightStop;
+  transfer_wait_min?: number;
+  transfer_walk_meters?: number;
+  ride_duration_min: number;
+}
+
+export interface TripOption {
+  rank: 1 | 2 | 3;
+  total_duration_min: number;
+  estimated_arrival_time: string;
+  transfers_count: number;
+  legs: TripLeg[];
+}
+
+export interface TimelineWindow {
+  past_stops: StopTimelineItem[];
+  current_bus_stop: StopTimelineItem | null;
+  user_stop: StopTimelineItem | null;
+  upcoming_stops: StopTimelineItem[];
+  compact_stops: StopTimelineItem[];
+  hidden_past_count: number;
+  hidden_upcoming_count: number;
+  total_stops_count: number;
+}
 
 export interface GeocodedDestination {
   lat: number;
@@ -206,12 +273,16 @@ export interface RecommendedBusOption {
   estimated_arrival_time: string;
   leg1_alight_time?: string;
   timeline_stops: StopTimelineItem[];
+  timeline_window?: TimelineWindow;
   transfer_info?: TransferConnectionInfo;
   second_leg?: TransferLegDetail;
 }
 
 export interface LiveBusStatusResponse {
   entry_context?: EntryContext;
+  intent_type?: IntentType;
+  candidates?: LineCandidate[];
+  trip_options?: TripOption[];
   render_mode: RenderMode;
   updated_at: string;
   cache_hit: boolean;
@@ -222,6 +293,7 @@ export interface LiveBusStatusResponse {
   user_stop: UserStopInfo;
   nearest_bus: NearestBusInfo | null;
   timeline_stops: StopTimelineItem[];
+  timeline_window?: TimelineWindow;
   lite_map: LiteMapInfo;
   nearby_offers: NearbyOffer[];
 }

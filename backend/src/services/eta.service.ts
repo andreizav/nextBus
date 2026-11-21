@@ -1,4 +1,11 @@
-import type { BoundingBox, MapProjection, RenderMode, VehicleTelemetry } from '../types/bus.types.js';
+import type {
+  BoundingBox,
+  MapProjection,
+  RenderMode,
+  StopTimelineItem,
+  TimelineWindow,
+  VehicleTelemetry
+} from '../types/bus.types.js';
 
 const EARTH_RADIUS_METERS = 6_371_000;
 const AVG_URBAN_SPEED_KMH = 24;
@@ -167,5 +174,82 @@ export function computeAspectCorrectedBbox(
     maxLat: Number((centerLat + latSpan / 2).toFixed(5)),
     minLon: Number((centerLon - lonSpan / 2).toFixed(5)),
     maxLon: Number((centerLon + lonSpan / 2).toFixed(5))
+  };
+}
+
+/**
+ * Slices a potentially long stop timeline into a compact mobile window (up to `radius` stops back
+ * and `radius + 1` stops ahead around the user boarding stop, plus the current bus stop if visible),
+ * returning exact counts of hidden past/upcoming stops for progressive disclosure.
+ */
+export function buildTimelineWindow(
+  timelineStops: StopTimelineItem[],
+  userStopSequence: number,
+  busStopSequence?: number,
+  radius: number = 2
+): TimelineWindow {
+  const sorted = [...timelineStops].sort((a, b) => a.stop_sequence - b.stop_sequence);
+  if (sorted.length === 0) {
+    return {
+      past_stops: [],
+      current_bus_stop: null,
+      user_stop: null,
+      upcoming_stops: [],
+      compact_stops: [],
+      hidden_past_count: 0,
+      hidden_upcoming_count: 0,
+      total_stops_count: 0
+    };
+  }
+
+  let userIdx = sorted.findIndex((s) => s.stop_sequence === userStopSequence);
+  if (userIdx === -1) {
+    const fallbackIdx = sorted.findIndex((s) => s.status === 'user_stop');
+    userIdx = fallbackIdx !== -1 ? fallbackIdx : 0;
+  }
+
+  const busIdx =
+    busStopSequence !== undefined
+      ? sorted.findIndex((s) => s.stop_sequence === busStopSequence)
+      : -1;
+
+  const userStop = sorted[userIdx] ?? null;
+  const currentBusStop = busIdx !== -1 ? sorted[busIdx] : null;
+
+  const windowStart = Math.max(0, userIdx - radius);
+  const windowEnd = Math.min(sorted.length - 1, userIdx + radius + 1);
+
+  const includedIndices = new Set<number>();
+  if (busIdx !== -1 && busIdx < sorted.length) {
+    includedIndices.add(busIdx);
+  }
+  for (let i = windowStart; i <= windowEnd; i++) {
+    includedIndices.add(i);
+  }
+
+  const compactIndices = Array.from(includedIndices).sort((a, b) => a - b);
+  const compact_stops = compactIndices.map((idx) => sorted[idx]);
+
+  const past_stops = compact_stops.filter((_, i) => compactIndices[i] < userIdx);
+  const upcoming_stops = compact_stops.filter((_, i) => compactIndices[i] > userIdx);
+
+  let hidden_past_count = 0;
+  let hidden_upcoming_count = 0;
+  for (let i = 0; i < sorted.length; i++) {
+    if (!includedIndices.has(i)) {
+      if (i < userIdx) hidden_past_count++;
+      else if (i > userIdx) hidden_upcoming_count++;
+    }
+  }
+
+  return {
+    past_stops,
+    current_bus_stop: currentBusStop,
+    user_stop: userStop,
+    upcoming_stops,
+    compact_stops,
+    hidden_past_count,
+    hidden_upcoming_count,
+    total_stops_count: sorted.length
   };
 }

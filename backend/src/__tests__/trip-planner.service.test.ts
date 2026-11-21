@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildTripOptions,
   calculateTransferTripMetrics,
   calculateTripMetrics,
   filterApproachingVehicles,
@@ -313,6 +314,79 @@ describe('Trip Planner A -> B matching and Top-3 ranking', () => {
       expect(picked?.route.short_name).toBe('24');
       expect(picked?.is_transfer).toBe(true);
       expect(picked?.rank).toBe(1);
+    });
+  });
+
+  describe('buildTripOptions', () => {
+    it('builds structured legs for direct and transfer trips up to 3 options', () => {
+      const direct = makeOption('24', 3, 12);
+      const baseTransfer = makeOption('49', 4, 25);
+      const transfer: RecommendedBusOption = {
+        ...baseTransfer,
+        is_transfer: true,
+        stops_between: 9,
+        ride_duration_min: 17,
+        transfer_info: {
+          alight_stop: {
+            stop_id: 'stop-hub',
+            stop_code: '42656',
+            stop_name: 'Matam',
+            stop_name_he: 'מת"מ',
+            stop_sequence: 10,
+            lat: 32.7904,
+            lon: 34.9613
+          },
+          board_stop: {
+            stop_id: 'stop-hub2',
+            stop_code: '42658',
+            stop_name: 'Hof HaCarmel',
+            stop_name_he: 'חוף הכרמל',
+            stop_sequence: 1,
+            lat: 32.7933,
+            lon: 34.959
+          },
+          walk_meters: 95,
+          wait_minutes: 4,
+          arrive_at_hub_time: '19:12',
+          next_bus_board_time: '19:16',
+          instruction_ru: 'Выйти -> 17',
+          instruction_en: 'Exit -> 17',
+          instruction_he: 'לרדת -> 17'
+        },
+        second_leg: {
+          route: {
+            route_id: 'stride-10017',
+            short_name: '17',
+            long_name: 'Line 17',
+            direction_id: 0,
+            direction_label: 'Hof HaCarmel -> Rambam',
+            available_directions: []
+          },
+          board_stop: {
+            stop_id: 'stop-hub2',
+            stop_code: '42658',
+            stop_name: 'Hof HaCarmel',
+            stop_name_he: 'חוף הכרמל',
+            stop_sequence: 1,
+            lat: 32.7933,
+            lon: 34.959
+          },
+          alight_stop: baseTransfer.dest_stop,
+          bus: { ...baseTransfer.bus, eta_minutes: 16 },
+          stops_between: 3,
+          ride_duration_min: 9,
+          timeline_stops: []
+        }
+      };
+
+      const tripOpts = buildTripOptions([direct, transfer], new Date('2026-11-17T17:00:00.000Z'));
+      expect(tripOpts).toHaveLength(2);
+      expect(tripOpts[0].transfers_count).toBe(0);
+      expect(tripOpts[0].legs[0].leg_type).toBe('BOARD_AND_RIDE');
+      expect(tripOpts[1].transfers_count).toBe(1);
+      expect(tripOpts[1].legs.map((l) => l.leg_type)).toEqual(['BOARD_AND_RIDE', 'TRANSFER']);
+      expect(tripOpts[1].legs[1].line_number).toBe('17');
+      expect(tripOpts[1].legs[1].transfer_wait_min).toBe(4);
     });
   });
 });

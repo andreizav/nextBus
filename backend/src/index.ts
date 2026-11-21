@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { handleMcpPostRequest } from './mcp/server.js';
 import { getLiveBusStatus } from './services/bus-status.service.js';
-import { resolveDestinationText } from './services/geocoding.service.js';
+import { dispatchSearchIntent } from './services/intent-router.service.js';
 import { redisService } from './services/redis.service.js';
 import { generateStaticStreetMapSvg } from './services/static-map.service.js';
 import { supabaseService } from './services/supabase.service.js';
@@ -71,10 +71,13 @@ const searchRoutesBodySchema = z.object({
   user_location: z.object({
     lat: z.number().min(-90).max(90),
     lon: z.number().min(-180).max(180)
-  })
+  }),
+  route_id: z.string().trim().optional(),
+  direction_id: z.union([z.literal(0), z.literal(1)]).optional(),
+  include_nearby_places: z.boolean().optional()
 });
 
-// 4. Standalone A -> B Smart Search endpoint
+// 4. Standalone Smart Search & Intent Routing endpoint (lines, disambiguation, A->B transfers)
 app.post('/api/search-routes', async (req: Request, res: Response) => {
   try {
     const parsed = searchRoutesBodySchema.safeParse(req.body);
@@ -83,12 +86,14 @@ app.post('/api/search-routes', async (req: Request, res: Response) => {
       return;
     }
 
-    const { query, user_location } = parsed.data;
-    const destination = await resolveDestinationText(query, user_location);
-    const result = await planBestBusesToDestination({
+    const { query, user_location, route_id, direction_id, include_nearby_places } = parsed.data;
+    const result = await dispatchSearchIntent({
+      query,
       userLocation: user_location,
-      destination,
       entryContext: 'standalone',
+      routeId: route_id,
+      directionId: direction_id,
+      includeNearbyPlaces: include_nearby_places ?? false,
       allowColdBootstrap: true
     });
 
@@ -153,6 +158,7 @@ app.get('/api/live-status', async (req: Request, res: Response) => {
     }
 
     const lineNumber = String(req.query.line_number ?? '49');
+    const routeId = req.query.route_id ? String(req.query.route_id) : undefined;
     const dirQuery = req.query.direction_id;
     const preferredDirection: 0 | 1 | undefined =
       dirQuery === '0' ? 0 : dirQuery === '1' ? 1 : undefined;
@@ -164,7 +170,8 @@ app.get('/api/live-status', async (req: Request, res: Response) => {
       userLon: lon,
       preferredDirection,
       includeNearbyPlaces,
-      allowColdBootstrap: false
+      allowColdBootstrap: false,
+      routeId
     });
 
     if (!status.cache_hit) {

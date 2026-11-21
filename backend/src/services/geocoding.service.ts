@@ -298,6 +298,20 @@ async function queryNominatim(
 }
 
 /**
+ * Strips common conversational travel prefixes in Russian, Hebrew, and English
+ * (e.g. "Хочу поехать в больницу Рамбам" -> "больницу Рамбам") for clean geocoding.
+ */
+export function stripConversationalPrefix(rawQuery: string): string {
+  return rawQuery
+    .trim()
+    .replace(
+      /^(?:(?:я\s+хочу\s+поехать\s+(?:в|на|к)|хочу\s+поехать\s+(?:в|на|к)|поехать\s+(?:в|на|к)|как\s+(?:доехать|добраться)\s+(?:в|до|к|на)|доехать\s+(?:до|в|на)|маршрут\s+(?:в|до|на)|мне\s+нужно\s+(?:в|на|до)|take\s+me\s+to|how\s+to\s+get\s+to|i\s+want\s+to\s+go\s+to|go\s+to|directions\s+to)\s+|(?:אני\s+רוצה\s+לנסוע\s+ל|רוצה\s+לנסוע\s+ל|איך\s+מגיעים\s+ל|איך\s+נוסעים\s+ל|לנסוע\s+ל|מסלול\s+ל)\s*)/i,
+      ''
+    )
+    .trim();
+}
+
+/**
  * Resolves free-form destination text (Russian / Hebrew / English) into coordinates
  * via Google Places / Geocoding API (when GOOGLE_MAPS_API_KEY is configured),
  * falling back to Israel-wide gazetteer / OpenStreetMap Nominatim, with 24h Redis caching.
@@ -306,7 +320,8 @@ export async function resolveDestinationText(
   query: string,
   userLocation: { lat: number; lon: number }
 ): Promise<GeocodedDestination> {
-  const trimmed = query.trim();
+  const cleaned = stripConversationalPrefix(query);
+  const trimmed = cleaned || query.trim();
   if (!trimmed) {
     throw new Error('Destination query cannot be empty');
   }

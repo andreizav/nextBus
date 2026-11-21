@@ -32,6 +32,86 @@ export interface RouteStopCoord {
   lon: number;
 }
 
+export interface NearbyLineRpcRow {
+  route_id: string;
+  line_number: string;
+  route_long_name: string;
+  direction_id: 0 | 1;
+  origin_he: string;
+  destination_he: string;
+  nearest_stop_id: string;
+  nearest_stop_code: string;
+  nearest_stop_name: string;
+  nearest_stop_name_he: string;
+  nearest_stop_sequence: number;
+  stop_lat: number;
+  stop_lon: number;
+  distance_meters: number;
+}
+
+export interface TwoTransferTripMatch {
+  transfers_count: 1 | 2;
+  leg1_route_id: string;
+  leg1_route_short_name: string;
+  leg1_route_long_name: string;
+  leg1_direction_id: 0 | 1;
+  origin_stop_id: string;
+  origin_stop_code: string;
+  origin_stop_name: string;
+  origin_stop_name_he: string;
+  origin_stop_sequence: number;
+  origin_lat: number;
+  origin_lon: number;
+  xfer1_alight_stop_id: string;
+  xfer1_alight_stop_code: string;
+  xfer1_alight_stop_name: string;
+  xfer1_alight_stop_name_he: string;
+  xfer1_alight_stop_sequence: number;
+  xfer1_alight_lat: number;
+  xfer1_alight_lon: number;
+  leg1_stops_between: number;
+  xfer1_walk_meters: number;
+  leg2_route_id: string;
+  leg2_route_short_name: string;
+  leg2_route_long_name: string;
+  leg2_direction_id: 0 | 1;
+  xfer1_board_stop_id: string;
+  xfer1_board_stop_code: string;
+  xfer1_board_stop_name: string;
+  xfer1_board_stop_name_he: string;
+  xfer1_board_stop_sequence: number;
+  xfer1_board_lat: number;
+  xfer1_board_lon: number;
+  xfer2_alight_stop_id?: string | null;
+  xfer2_alight_stop_code?: string | null;
+  xfer2_alight_stop_name?: string | null;
+  xfer2_alight_stop_name_he?: string | null;
+  xfer2_alight_stop_sequence?: number | null;
+  xfer2_alight_lat?: number | null;
+  xfer2_alight_lon?: number | null;
+  leg2_stops_between: number;
+  xfer2_walk_meters: number;
+  leg3_route_id?: string | null;
+  leg3_route_short_name?: string | null;
+  leg3_route_long_name?: string | null;
+  leg3_direction_id?: 0 | 1 | null;
+  xfer2_board_stop_id?: string | null;
+  xfer2_board_stop_code?: string | null;
+  xfer2_board_stop_name?: string | null;
+  xfer2_board_stop_name_he?: string | null;
+  xfer2_board_stop_sequence?: number | null;
+  xfer2_board_lat?: number | null;
+  xfer2_board_lon?: number | null;
+  dest_stop_id: string;
+  dest_stop_code: string;
+  dest_stop_name: string;
+  dest_stop_name_he: string;
+  dest_stop_sequence: number;
+  dest_lat: number;
+  dest_lon: number;
+  leg3_stops_between: number;
+}
+
 const LINE_49_FALLBACK_STOPS: RouteStopCoord[] = [
   {
     stop_id: 'stop-41949',
@@ -144,9 +224,62 @@ class SupabaseService {
     userLat: number,
     userLon: number,
     preferredDirection?: 0 | 1,
-    destinationHint?: string
+    destinationHint?: string,
+    routeId?: string
   ): Promise<NearestStopRpcRow> {
     this.ensureInit();
+
+    if (routeId) {
+      const dirId: 0 | 1 = preferredDirection ?? 0;
+      const dirStops = await this.getDirectionStopCoords(routeId, dirId);
+      if (dirStops.length > 0) {
+        let best = dirStops[0];
+        let minDist = Infinity;
+        for (const s of dirStops) {
+          const d = haversineDistanceMeters(userLat, userLon, s.lat, s.lon);
+          if (d < minDist) {
+            minDist = d;
+            best = s;
+          }
+        }
+        let routeShort = lineNum;
+        let routeLong = `Line ${lineNum}`;
+        if (this.client) {
+          const { data: rMeta } = await this.client
+            .from('routes')
+            .select('route_short_name, route_long_name')
+            .eq('route_id', routeId)
+            .maybeSingle();
+          if (rMeta) {
+            routeShort = String(rMeta.route_short_name ?? routeShort);
+            routeLong = String(rMeta.route_long_name ?? routeLong);
+          }
+        } else if (this.pgPool) {
+          const rRes = await this.pgPool.query(
+            `SELECT route_short_name, route_long_name FROM routes WHERE route_id = $1 LIMIT 1`,
+            [routeId]
+          );
+          if (rRes.rows[0]) {
+            routeShort = String(rRes.rows[0].route_short_name ?? routeShort);
+            routeLong = String(rRes.rows[0].route_long_name ?? routeLong);
+          }
+        }
+        return {
+          route_id: routeId,
+          direction_id: dirId,
+          stop_id: best.stop_id,
+          stop_sequence: best.stop_sequence,
+          stop_code: best.stop_code,
+          stop_name: best.stop_name,
+          stop_name_he: best.stop_name_he,
+          stop_lat: best.lat,
+          stop_lon: best.lon,
+          route_short_name: routeShort,
+          route_long_name: routeLong,
+          distance_meters: Math.round(minDist)
+        };
+      }
+    }
 
     if (this.client && preferredDirection === undefined) {
       try {
@@ -311,17 +444,7 @@ class SupabaseService {
   ): Promise<StopTimelineItem[]> {
     const allStops = await this.getDirectionStopCoords(routeId, directionId);
 
-    // Return focused window around bus & user stop (plus endpoints) if route has > 12 stops
-    let selected = allStops;
-    if (allStops.length > 14) {
-      const startSeq = Math.max(1, Math.min(busStopSequence, userStopSequence) - 3);
-      const endSeq = Math.min(allStops.length, Math.max(busStopSequence, userStopSequence) + 4);
-      selected = allStops.filter(
-        (s) => s.stop_sequence === 1 || (s.stop_sequence >= startSeq && s.stop_sequence <= endSeq)
-      );
-    }
-
-    return selected.map((stop) => {
+    return allStops.map((stop) => {
       let status: StopTimelineItem['status'] = 'upcoming';
       if (stop.stop_sequence < busStopSequence) {
         status = 'passed';
@@ -517,6 +640,262 @@ class SupabaseService {
     }
 
     return [];
+  }
+
+  private mapNearbyLineRow(row: Record<string, unknown>): NearbyLineRpcRow {
+    return {
+      route_id: String(row.route_id),
+      line_number: String(row.line_number ?? row.route_short_name ?? ''),
+      route_long_name: String(row.route_long_name ?? ''),
+      direction_id: Number(row.direction_id) === 1 ? 1 : 0,
+      origin_he: String(row.origin_he ?? ''),
+      destination_he: String(row.destination_he ?? row.route_long_name ?? ''),
+      nearest_stop_id: String(row.nearest_stop_id),
+      nearest_stop_code: String(row.nearest_stop_code ?? row.nearest_stop_id),
+      nearest_stop_name: String(row.nearest_stop_name),
+      nearest_stop_name_he: String(row.nearest_stop_name_he ?? row.nearest_stop_name),
+      nearest_stop_sequence: Number(row.nearest_stop_sequence),
+      stop_lat: Number(row.stop_lat),
+      stop_lon: Number(row.stop_lon),
+      distance_meters: Math.round(Number(row.distance_meters ?? 0))
+    };
+  }
+
+  /**
+   * Geo-filtered bus line lookup around `(userLat, userLon)` using PostGIS `find_nearby_lines_by_number`
+   * with progressive radius fallback and PostgREST/table-scan resilience.
+   */
+  async findNearbyLinesByNumber(
+    lineNum: string,
+    userLat: number,
+    userLon: number,
+    radiusMeters = 600
+  ): Promise<NearbyLineRpcRow[]> {
+    this.ensureInit();
+    const cleanedLine = lineNum.trim();
+    if (!cleanedLine) return [];
+
+    const radiiToTry = [radiusMeters, Math.max(1500, radiusMeters * 2), 3500];
+
+    for (const radius of radiiToTry) {
+      if (this.client) {
+        try {
+          const { data, error } = await this.client.rpc('find_nearby_lines_by_number', {
+            line_num: cleanedLine,
+            user_lat: userLat,
+            user_lon: userLon,
+            radius_meters: radius
+          });
+          if (!error && Array.isArray(data) && data.length > 0) {
+            return data.map((row) => this.mapNearbyLineRow(row as Record<string, unknown>));
+          }
+        } catch (err) {
+          console.warn('[Supabase] find_nearby_lines RPC fallback:', (err as Error).message);
+        }
+      }
+
+      if (this.pgPool) {
+        try {
+          const res = await this.pgPool.query(
+            `SELECT * FROM find_nearby_lines_by_number($1, $2, $3, $4)`,
+            [cleanedLine, userLat, userLon, radius]
+          );
+          if (res.rows.length > 0) {
+            return res.rows.map((row) => this.mapNearbyLineRow(row as Record<string, unknown>));
+          }
+        } catch (err) {
+          console.warn('[PostgreSQL] find_nearby_lines query error:', (err as Error).message);
+        }
+      }
+    }
+
+    // PostgREST table fallback when RPC function isn't loaded in remote Supabase schema yet
+    if (this.client) {
+      try {
+        const escaped = cleanedLine.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const linePattern = new RegExp(`^${escaped}([^0-9]|$)`, 'i');
+        const { data: routesData } = await this.client
+          .from('routes')
+          .select('route_id, route_short_name, route_long_name')
+          .ilike('route_short_name', `${cleanedLine}%`)
+          .limit(20);
+
+        const matched = (routesData ?? []).filter((r) =>
+          linePattern.test(String(r.route_short_name ?? '').trim())
+        );
+
+        const candidates: NearbyLineRpcRow[] = [];
+        for (const r of matched) {
+          for (const dir of [0, 1] as const) {
+            const stops = await this.getDirectionStopCoords(String(r.route_id), dir);
+            if (stops.length === 0) continue;
+            let bestStop = stops[0];
+            let minDist = Infinity;
+            for (const s of stops) {
+              const d = haversineDistanceMeters(userLat, userLon, s.lat, s.lon);
+              if (d < minDist) {
+                minDist = d;
+                bestStop = s;
+              }
+            }
+            if (minDist <= 3500) {
+              candidates.push({
+                route_id: String(r.route_id),
+                line_number: String(r.route_short_name),
+                route_long_name: String(r.route_long_name ?? ''),
+                direction_id: dir,
+                origin_he: stops[0].stop_name_he,
+                destination_he: stops[stops.length - 1].stop_name_he,
+                nearest_stop_id: bestStop.stop_id,
+                nearest_stop_code: bestStop.stop_code,
+                nearest_stop_name: bestStop.stop_name,
+                nearest_stop_name_he: bestStop.stop_name_he,
+                nearest_stop_sequence: bestStop.stop_sequence,
+                stop_lat: bestStop.lat,
+                stop_lon: bestStop.lon,
+                distance_meters: Math.round(minDist)
+              });
+            }
+          }
+        }
+
+        if (candidates.length > 0) {
+          return candidates.sort((a, b) => a.distance_meters - b.distance_meters);
+        }
+      } catch (err) {
+        console.warn('[Supabase] Table scan fallback error:', (err as Error).message);
+      }
+    }
+
+    const fallbackStop = await this.findNearestStopForLine(cleanedLine, userLat, userLon);
+    return [
+      {
+        route_id: fallbackStop.route_id,
+        line_number: fallbackStop.route_short_name,
+        route_long_name: fallbackStop.route_long_name,
+        direction_id: fallbackStop.direction_id,
+        origin_he: fallbackStop.direction_id === 0 ? 'טירת כרמל' : 'חוף הכרמל חיפה',
+        destination_he: fallbackStop.direction_id === 0 ? 'חוף הכרמל חיפה' : 'טירת כרמל',
+        nearest_stop_id: fallbackStop.stop_id,
+        nearest_stop_code: fallbackStop.stop_code,
+        nearest_stop_name: fallbackStop.stop_name,
+        nearest_stop_name_he: fallbackStop.stop_name_he,
+        nearest_stop_sequence: fallbackStop.stop_sequence,
+        stop_lat: fallbackStop.stop_lat,
+        stop_lon: fallbackStop.stop_lon,
+        distance_meters: fallbackStop.distance_meters
+      }
+    ];
+  }
+
+  async findDirectTrips(
+    originLat: number,
+    originLon: number,
+    destLat: number,
+    destLon: number,
+    radiusMeters = 500
+  ): Promise<DirectRouteMatch[]> {
+    return this.findDirectRoutesBetweenPoints(originLat, originLon, destLat, destLon, radiusMeters);
+  }
+
+  async findTransferTrips(
+    originLat: number,
+    originLon: number,
+    destLat: number,
+    destLon: number,
+    radiusMeters = 500,
+    maxTransfers = 2
+  ): Promise<TwoTransferTripMatch[]> {
+    this.ensureInit();
+    const radiiToTry = [radiusMeters, Math.max(1500, radiusMeters * 2), 3000];
+
+    for (const radius of radiiToTry) {
+      if (this.client) {
+        try {
+          const { data, error } = await this.client.rpc('find_transfer_trips', {
+            origin_lat: originLat,
+            origin_lon: originLon,
+            dest_lat: destLat,
+            dest_lon: destLon,
+            radius_meters: radius,
+            max_transfers: maxTransfers
+          });
+          if (!error && Array.isArray(data) && data.length > 0) {
+            return data as TwoTransferTripMatch[];
+          }
+        } catch (err) {
+          console.warn('[Supabase] find_transfer_trips RPC fallback:', (err as Error).message);
+        }
+      }
+
+      if (this.pgPool) {
+        try {
+          const res = await this.pgPool.query(
+            `SELECT * FROM find_transfer_trips($1, $2, $3, $4, $5, $6)`,
+            [originLat, originLon, destLat, destLon, radius, maxTransfers]
+          );
+          if (res.rows.length > 0) {
+            return res.rows as TwoTransferTripMatch[];
+          }
+        } catch (err) {
+          console.warn('[PostgreSQL] find_transfer_trips error:', (err as Error).message);
+        }
+      }
+    }
+
+    // Compatibility fallback to findTransferRoutesBetweenPoints
+    const singleTransfers = await this.findTransferRoutesBetweenPoints(
+      originLat,
+      originLon,
+      destLat,
+      destLon,
+      radiusMeters,
+      260
+    );
+    return singleTransfers.map((m) => ({
+      transfers_count: 1 as const,
+      leg1_route_id: m.leg1_route_id,
+      leg1_route_short_name: m.leg1_route_short_name,
+      leg1_route_long_name: m.leg1_route_long_name,
+      leg1_direction_id: m.leg1_direction_id,
+      origin_stop_id: m.origin_stop_id,
+      origin_stop_code: m.origin_stop_code,
+      origin_stop_name: m.origin_stop_name,
+      origin_stop_name_he: m.origin_stop_name_he,
+      origin_stop_sequence: m.origin_stop_sequence,
+      origin_lat: m.origin_lat,
+      origin_lon: m.origin_lon,
+      xfer1_alight_stop_id: m.xfer_alight_stop_id,
+      xfer1_alight_stop_code: m.xfer_alight_stop_code,
+      xfer1_alight_stop_name: m.xfer_alight_stop_name,
+      xfer1_alight_stop_name_he: m.xfer_alight_stop_name_he,
+      xfer1_alight_stop_sequence: m.xfer_alight_stop_sequence,
+      xfer1_alight_lat: m.xfer_alight_lat,
+      xfer1_alight_lon: m.xfer_alight_lon,
+      leg1_stops_between: m.leg1_stops_between,
+      xfer1_walk_meters: m.transfer_walk_meters_actual,
+      leg2_route_id: m.leg2_route_id,
+      leg2_route_short_name: m.leg2_route_short_name,
+      leg2_route_long_name: m.leg2_route_long_name,
+      leg2_direction_id: m.leg2_direction_id,
+      xfer1_board_stop_id: m.xfer_board_stop_id,
+      xfer1_board_stop_code: m.xfer_board_stop_code,
+      xfer1_board_stop_name: m.xfer_board_stop_name,
+      xfer1_board_stop_name_he: m.xfer_board_stop_name_he,
+      xfer1_board_stop_sequence: m.xfer_board_stop_sequence,
+      xfer1_board_lat: m.xfer_board_lat,
+      xfer1_board_lon: m.xfer_board_lon,
+      leg2_stops_between: m.leg2_stops_between,
+      xfer2_walk_meters: 0,
+      dest_stop_id: m.dest_stop_id,
+      dest_stop_code: m.dest_stop_code,
+      dest_stop_name: m.dest_stop_name,
+      dest_stop_name_he: m.dest_stop_name_he,
+      dest_stop_sequence: m.dest_stop_sequence,
+      dest_lat: m.dest_lat,
+      dest_lon: m.dest_lon,
+      leg3_stops_between: 0
+    }));
   }
 }
 

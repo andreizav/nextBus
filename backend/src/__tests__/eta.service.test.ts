@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildTimelineWindow,
   calculateEtaMinutes,
   calculateStopsAway,
   projectCoordinatesToBbox,
   resolveRenderMode,
   selectNearestApproachingVehicle
 } from '../services/eta.service.js';
-import type { BoundingBox, VehicleTelemetry } from '../types/bus.types.js';
+import type { BoundingBox, StopTimelineItem, VehicleTelemetry } from '../types/bus.types.js';
 
 describe('ETA and Hybrid Rendering calculations', () => {
   describe('calculateStopsAway', () => {
@@ -122,6 +123,33 @@ describe('ETA and Hybrid Rendering calculations', () => {
 
     it('returns null when no vehicles are active', () => {
       expect(selectNearestApproachingVehicle([], 5, 32.7804, 34.9658)).toBeNull();
+    });
+  });
+
+  describe('buildTimelineWindow', () => {
+    it('slices long 30-stop routes into a compact window and preserves hidden counts', () => {
+      const longStops: StopTimelineItem[] = Array.from({ length: 30 }, (_, idx) => {
+        const seq = idx + 1;
+        return {
+          stop_id: `s-${seq}`,
+          stop_code: `${40000 + seq}`,
+          stop_name: `Stop ${seq}`,
+          stop_name_he: `תחנה ${seq}`,
+          stop_sequence: seq,
+          lat: 32.75 + seq * 0.001,
+          lon: 34.96,
+          status: seq < 16 ? 'passed' : seq === 20 ? 'user_stop' : 'upcoming'
+        };
+      });
+
+      const win = buildTimelineWindow(longStops, 20, 16, 2);
+      expect(win.total_stops_count).toBe(30);
+      expect(win.user_stop?.stop_sequence).toBe(20);
+      expect(win.current_bus_stop?.stop_sequence).toBe(16);
+      expect(win.compact_stops.map((s) => s.stop_sequence)).toEqual([16, 18, 19, 20, 21, 22, 23]);
+      expect(win.compact_stops.length + win.hidden_past_count + win.hidden_upcoming_count).toBe(30);
+      expect(win.hidden_past_count).toBe(16);
+      expect(win.hidden_upcoming_count).toBe(7);
     });
   });
 });

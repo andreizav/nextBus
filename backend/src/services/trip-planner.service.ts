@@ -1,4 +1,5 @@
 import {
+  buildTimelineWindow,
   calculateEtaMinutes,
   calculateStopsAway,
   computeAspectCorrectedBbox,
@@ -10,7 +11,11 @@ import { fetchRealNearbyCafes } from './places.service.js';
 import { redisService } from './redis.service.js';
 import { buildStaticMapUrl } from './static-map.service.js';
 import { fetchLiveVehiclesFromStride } from './stride.service.js';
-import { supabaseService, type RouteStopCoord } from './supabase.service.js';
+import {
+  supabaseService,
+  type RouteStopCoord,
+  type TwoTransferTripMatch
+} from './supabase.service.js';
 import type {
   CachedRouteState,
   DirectRouteMatch,
@@ -20,6 +25,8 @@ import type {
   NearestBusInfo,
   RecommendedBusOption,
   TransferRouteMatch,
+  TripLeg,
+  TripOption,
   UserStopInfo,
   VehicleTelemetry
 } from '../types/bus.types.js';
@@ -273,6 +280,126 @@ export function selectBestSingleOption(
   return { ...winner, rank: 1 };
 }
 
+/**
+ * Converts ranked RecommendedBusOptions into clean step-by-step TripOption contracts
+ * with ordered `legs[]` (`BOARD_AND_RIDE` / `TRANSFER`) for the mobile UI and MCP consumers.
+ */
+export function buildTripOptions(
+  options: RecommendedBusOption[],
+  now: Date = new Date(),
+  extraThreeLegOptions: Map<string, TripLeg[]> = new Map()
+): TripOption[] {
+  return options.slice(0, 3).map((opt, idx) => {
+    const customLegs = extraThreeLegOptions.get(`${opt.route.route_id}:${opt.dest_stop.stop_id}`);
+    if (customLegs && customLegs.length > 0) {
+      return {
+        rank: (idx + 1) as 1 | 2 | 3,
+        total_duration_min: opt.total_arrival_min,
+        estimated_arrival_time: opt.estimated_arrival_time,
+        transfers_count: Math.max(0, customLegs.length - 1),
+        legs: customLegs
+      };
+    }
+
+    const boardTime = formatTimeHHMM(new Date(now.getTime() + opt.eta_to_boarding_min * 60_000));
+    const isTransfer = Boolean(opt.is_transfer && opt.transfer_info && opt.second_leg);
+
+    if (!isTransfer) {
+      const leg: TripLeg = {
+        leg_type: 'BOARD_AND_RIDE',
+        line_number: opt.route.short_name,
+        route_id: opt.route.route_id,
+        direction_id: opt.route.direction_id,
+        board_stop: {
+          stop_id: opt.origin_stop.stop_id,
+          stop_code: opt.origin_stop.stop_code,
+          stop_name: opt.origin_stop.stop_name,
+          stop_name_he: opt.origin_stop.stop_name_he,
+          eta_minutes: opt.eta_to_boarding_min,
+          scheduled_time: boardTime
+        },
+        alight_stop: {
+          stop_id: opt.dest_stop.stop_id,
+          stop_code: opt.dest_stop.stop_code,
+          stop_name: opt.dest_stop.stop_name,
+          stop_name_he: opt.dest_stop.stop_name_he,
+          stops_count: opt.stops_between
+        },
+        ride_duration_min: opt.ride_duration_min
+      };
+
+      return {
+        rank: (idx + 1) as 1 | 2 | 3,
+        total_duration_min: opt.total_arrival_min,
+        estimated_arrival_time: opt.estimated_arrival_time,
+        transfers_count: 0,
+        legs: [leg]
+      };
+    }
+
+    const xfer = opt.transfer_info!;
+    const sec = opt.second_leg!;
+    const leg1RideMin = Math.max(1, opt.ride_duration_min - sec.ride_duration_min);
+    const leg1StopsCount = Math.max(1, opt.stops_between - sec.stops_between);
+
+    const leg1: TripLeg = {
+      leg_type: 'BOARD_AND_RIDE',
+      line_number: opt.route.short_name,
+      route_id: opt.route.route_id,
+      direction_id: opt.route.direction_id,
+      board_stop: {
+        stop_id: opt.origin_stop.stop_id,
+        stop_code: opt.origin_stop.stop_code,
+        stop_name: opt.origin_stop.stop_name,
+        stop_name_he: opt.origin_stop.stop_name_he,
+        eta_minutes: opt.eta_to_boarding_min,
+        scheduled_time: boardTime
+      },
+      alight_stop: {
+        stop_id: xfer.alight_stop.stop_id,
+        stop_code: xfer.alight_stop.stop_code,
+        stop_name: xfer.alight_stop.stop_name,
+        stop_name_he: xfer.alight_stop.stop_name_he,
+        stops_count: leg1StopsCount
+      },
+      ride_duration_min: leg1RideMin
+    };
+
+    const leg2: TripLeg = {
+      leg_type: 'TRANSFER',
+      line_number: sec.route.short_name,
+      route_id: sec.route.route_id,
+      direction_id: sec.route.direction_id,
+      board_stop: {
+        stop_id: sec.board_stop.stop_id,
+        stop_code: sec.board_stop.stop_code,
+        stop_name: sec.board_stop.stop_name,
+        stop_name_he: sec.board_stop.stop_name_he,
+        eta_minutes: sec.bus.eta_minutes,
+        scheduled_time: xfer.next_bus_board_time
+      },
+      alight_stop: {
+        stop_id: opt.dest_stop.stop_id,
+        stop_code: opt.dest_stop.stop_code,
+        stop_name: opt.dest_stop.stop_name,
+        stop_name_he: opt.dest_stop.stop_name_he,
+        stops_count: sec.stops_between
+      },
+      transfer_wait_min: xfer.wait_minutes,
+      transfer_walk_meters: xfer.walk_meters,
+      ride_duration_min: sec.ride_duration_min
+    };
+
+    return {
+      rank: (idx + 1) as 1 | 2 | 3,
+      total_duration_min: opt.total_arrival_min,
+      estimated_arrival_time: opt.estimated_arrival_time,
+      transfers_count: 1,
+      legs: [leg1, leg2]
+    };
+  });
+}
+
 function synthesizeNextApproach(
   allStops: RouteStopCoord[],
   boardingStopSequence: number,
@@ -410,23 +537,71 @@ export async function planBestBusesToDestination(
 ): Promise<LiveBusStatusResponse> {
   const { userLocation, destination, entryContext, routeIdsFilter, allowColdBootstrap = true } = params;
 
-  const [rawDirect, rawTransfer] = await Promise.all([
-    supabaseService.findDirectRoutesBetweenPoints(
+  const [rawDirect, rawTransfersAll] = await Promise.all([
+    supabaseService.findDirectTrips(
       userLocation.lat,
       userLocation.lon,
       destination.lat,
       destination.lon,
       650
     ),
-    supabaseService.findTransferRoutesBetweenPoints(
+    supabaseService.findTransferTrips(
       userLocation.lat,
       userLocation.lon,
       destination.lat,
       destination.lon,
       650,
-      260
+      2
     )
   ]);
+
+  const rawTransfer: TransferRouteMatch[] = rawTransfersAll
+    .filter((t) => Number(t.transfers_count ?? 1) === 1)
+    .map((t) => ({
+      leg1_route_id: t.leg1_route_id,
+      leg1_route_short_name: t.leg1_route_short_name,
+      leg1_route_long_name: t.leg1_route_long_name,
+      leg1_direction_id: t.leg1_direction_id,
+      origin_stop_id: t.origin_stop_id,
+      origin_stop_code: t.origin_stop_code,
+      origin_stop_name: t.origin_stop_name,
+      origin_stop_name_he: t.origin_stop_name_he,
+      origin_stop_sequence: t.origin_stop_sequence,
+      origin_lat: t.origin_lat,
+      origin_lon: t.origin_lon,
+      xfer_alight_stop_id: t.xfer1_alight_stop_id,
+      xfer_alight_stop_code: t.xfer1_alight_stop_code,
+      xfer_alight_stop_name: t.xfer1_alight_stop_name,
+      xfer_alight_stop_name_he: t.xfer1_alight_stop_name_he,
+      xfer_alight_stop_sequence: t.xfer1_alight_stop_sequence,
+      xfer_alight_lat: t.xfer1_alight_lat,
+      xfer_alight_lon: t.xfer1_alight_lon,
+      leg1_stops_between: t.leg1_stops_between,
+      transfer_walk_meters_actual: t.xfer1_walk_meters,
+      leg2_route_id: t.leg2_route_id,
+      leg2_route_short_name: t.leg2_route_short_name,
+      leg2_route_long_name: t.leg2_route_long_name,
+      leg2_direction_id: t.leg2_direction_id,
+      xfer_board_stop_id: t.xfer1_board_stop_id,
+      xfer_board_stop_code: t.xfer1_board_stop_code,
+      xfer_board_stop_name: t.xfer1_board_stop_name,
+      xfer_board_stop_name_he: t.xfer1_board_stop_name_he,
+      xfer_board_stop_sequence: t.xfer1_board_stop_sequence,
+      xfer_board_lat: t.xfer1_board_lat,
+      xfer_board_lon: t.xfer1_board_lon,
+      dest_stop_id: t.dest_stop_id,
+      dest_stop_code: t.dest_stop_code,
+      dest_stop_name: t.dest_stop_name,
+      dest_stop_name_he: t.dest_stop_name_he,
+      dest_stop_sequence: t.dest_stop_sequence,
+      dest_lat: t.dest_lat,
+      dest_lon: t.dest_lon,
+      leg2_stops_between: t.leg2_stops_between
+    }));
+
+  const twoTransferRows: TwoTransferTripMatch[] = rawTransfersAll.filter(
+    (t) => Number(t.transfers_count ?? 1) === 2 && Boolean(t.leg3_route_id)
+  );
 
   let directMatches = filterValidDirectionMatches(rawDirect);
   let transferMatches = filterValidTransferMatches(rawTransfer);
@@ -720,7 +895,265 @@ export async function planBestBusesToDestination(
     });
   }
 
-  const best = selectBestSingleOption(directCandidates, transferCandidates);
+  const extraThreeLegOptions = new Map<string, TripLeg[]>();
+
+  // Handle up to 2 two-transfer options when direct & 1-transfer don't already cover all slots
+  if (directCandidates.length === 0 && transferCandidates.length === 0 && twoTransferRows.length > 0) {
+    for (const row of twoTransferRows.slice(0, 2)) {
+      if (!row.leg3_route_id || !row.leg3_route_short_name || !row.xfer2_board_stop_id || !row.xfer2_alight_stop_id) {
+        continue;
+      }
+      const leg1Dir: 0 | 1 = Number(row.leg1_direction_id) === 1 ? 1 : 0;
+      const leg2Dir: 0 | 1 = Number(row.leg2_direction_id) === 1 ? 1 : 0;
+      const leg3Dir: 0 | 1 = Number(row.leg3_direction_id) === 1 ? 1 : 0;
+
+      const [leg1Stops, leg2Stops, leg3Stops] = await Promise.all([
+        supabaseService.getDirectionStopCoords(row.leg1_route_id, leg1Dir),
+        supabaseService.getDirectionStopCoords(row.leg2_route_id, leg2Dir),
+        supabaseService.getDirectionStopCoords(row.leg3_route_id, leg3Dir)
+      ]);
+      const leg1State = (await resolveRouteLiveState(row.leg1_route_id, leg1Dir, allowColdBootstrap)).state;
+      const leg1Bus = buildBusInfoForStop(
+        leg1Stops,
+        leg1State,
+        row.origin_stop_sequence,
+        row.origin_lat,
+        row.origin_lon,
+        row.leg1_route_short_name,
+        leg1Dir
+      );
+      const leg2Bus = buildBusInfoForStop(
+        leg2Stops,
+        null,
+        row.xfer1_board_stop_sequence,
+        row.xfer1_board_lat,
+        row.xfer1_board_lon,
+        row.leg2_route_short_name,
+        leg2Dir
+      );
+      const leg3Bus = buildBusInfoForStop(
+        leg3Stops,
+        null,
+        row.xfer2_board_stop_sequence ?? 1,
+        row.xfer2_board_lat ?? row.dest_lat,
+        row.xfer2_board_lon ?? row.dest_lon,
+        row.leg3_route_short_name,
+        leg3Dir
+      );
+
+      const leg1RideMin = Math.max(2, Math.round(Math.max(1, row.leg1_stops_between) * MINUTES_PER_STOP_AVG));
+      const leg2RideMin = Math.max(3, Math.round(Math.max(1, row.leg2_stops_between) * MINUTES_PER_STOP_AVG));
+      const leg3RideMin = Math.max(2, Math.round(Math.max(1, row.leg3_stops_between) * MINUTES_PER_STOP_AVG));
+      const wait1Min = 5;
+      const wait2Min = 6;
+      const totalMin = leg1Bus.etaMinutes + leg1RideMin + wait1Min + leg2RideMin + wait2Min + leg3RideMin;
+      const arrivalDate = new Date(now.getTime() + totalMin * 60_000);
+
+      const board1Time = formatTimeHHMM(new Date(now.getTime() + leg1Bus.etaMinutes * 60_000));
+      const board2Time = formatTimeHHMM(new Date(now.getTime() + (leg1Bus.etaMinutes + leg1RideMin + wait1Min) * 60_000));
+      const board3Time = formatTimeHHMM(
+        new Date(now.getTime() + (leg1Bus.etaMinutes + leg1RideMin + wait1Min + leg2RideMin + wait2Min) * 60_000)
+      );
+
+      const legs: TripLeg[] = [
+        {
+          leg_type: 'BOARD_AND_RIDE',
+          line_number: row.leg1_route_short_name,
+          route_id: row.leg1_route_id,
+          direction_id: leg1Dir,
+          board_stop: {
+            stop_id: row.origin_stop_id,
+            stop_code: row.origin_stop_code,
+            stop_name: row.origin_stop_name,
+            stop_name_he: row.origin_stop_name_he,
+            eta_minutes: leg1Bus.etaMinutes,
+            scheduled_time: board1Time
+          },
+          alight_stop: {
+            stop_id: row.xfer1_alight_stop_id,
+            stop_code: row.xfer1_alight_stop_code,
+            stop_name: row.xfer1_alight_stop_name,
+            stop_name_he: row.xfer1_alight_stop_name_he,
+            stops_count: row.leg1_stops_between
+          },
+          ride_duration_min: leg1RideMin
+        },
+        {
+          leg_type: 'TRANSFER',
+          line_number: row.leg2_route_short_name,
+          route_id: row.leg2_route_id,
+          direction_id: leg2Dir,
+          board_stop: {
+            stop_id: row.xfer1_board_stop_id,
+            stop_code: row.xfer1_board_stop_code,
+            stop_name: row.xfer1_board_stop_name,
+            stop_name_he: row.xfer1_board_stop_name_he,
+            eta_minutes: leg2Bus.etaMinutes,
+            scheduled_time: board2Time
+          },
+          alight_stop: {
+            stop_id: row.xfer2_alight_stop_id,
+            stop_code: row.xfer2_alight_stop_code ?? row.xfer2_alight_stop_id,
+            stop_name: row.xfer2_alight_stop_name ?? row.xfer2_alight_stop_id,
+            stop_name_he: row.xfer2_alight_stop_name_he ?? row.xfer2_alight_stop_name ?? row.xfer2_alight_stop_id,
+            stops_count: row.leg2_stops_between
+          },
+          transfer_wait_min: wait1Min,
+          transfer_walk_meters: row.xfer1_walk_meters,
+          ride_duration_min: leg2RideMin
+        },
+        {
+          leg_type: 'TRANSFER',
+          line_number: row.leg3_route_short_name,
+          route_id: row.leg3_route_id,
+          direction_id: leg3Dir,
+          board_stop: {
+            stop_id: row.xfer2_board_stop_id,
+            stop_code: row.xfer2_board_stop_code ?? row.xfer2_board_stop_id,
+            stop_name: row.xfer2_board_stop_name ?? row.xfer2_board_stop_id,
+            stop_name_he: row.xfer2_board_stop_name_he ?? row.xfer2_board_stop_name ?? row.xfer2_board_stop_id,
+            eta_minutes: leg3Bus.etaMinutes,
+            scheduled_time: board3Time
+          },
+          alight_stop: {
+            stop_id: row.dest_stop_id,
+            stop_code: row.dest_stop_code,
+            stop_name: row.dest_stop_name,
+            stop_name_he: row.dest_stop_name_he,
+            stops_count: row.leg3_stops_between
+          },
+          transfer_wait_min: wait2Min,
+          transfer_walk_meters: row.xfer2_walk_meters,
+          ride_duration_min: leg3RideMin
+        }
+      ];
+
+      extraThreeLegOptions.set(`${row.leg1_route_id}:${row.dest_stop_id}`, legs);
+
+      const leg1Timeline = await buildLegTimelineSlice(
+        row.leg1_route_id,
+        leg1Dir,
+        row.origin_stop_sequence,
+        row.xfer1_alight_stop_sequence,
+        leg1Bus.busInfo.current_stop_sequence
+      );
+      const leg2Timeline = await buildLegTimelineSlice(
+        row.leg2_route_id,
+        leg2Dir,
+        row.xfer1_board_stop_sequence,
+        row.xfer2_alight_stop_sequence ?? row.dest_stop_sequence,
+        leg2Bus.busInfo.current_stop_sequence
+      );
+
+      transferCandidates.push({
+        rank: 1,
+        is_transfer: true,
+        route: {
+          route_id: row.leg1_route_id,
+          short_name: row.leg1_route_short_name,
+          long_name: row.leg1_route_long_name,
+          direction_id: leg1Dir,
+          direction_label: `${row.origin_stop_name} -> ${row.dest_stop_name}`,
+          available_directions: []
+        },
+        origin_stop: {
+          stop_id: row.origin_stop_id,
+          stop_code: row.origin_stop_code,
+          stop_name: row.origin_stop_name,
+          stop_name_he: row.origin_stop_name_he,
+          stop_sequence: row.origin_stop_sequence,
+          lat: row.origin_lat,
+          lon: row.origin_lon,
+          distance_meters: Math.round(haversineDistanceMeters(userLocation.lat, userLocation.lon, row.origin_lat, row.origin_lon))
+        },
+        dest_stop: {
+          stop_id: row.dest_stop_id,
+          stop_code: row.dest_stop_code,
+          stop_name: row.dest_stop_name,
+          stop_name_he: row.dest_stop_name_he,
+          stop_sequence: row.dest_stop_sequence,
+          lat: row.dest_lat,
+          lon: row.dest_lon
+        },
+        bus: leg1Bus.busInfo,
+        eta_to_boarding_min: leg1Bus.etaMinutes,
+        stops_between: row.leg1_stops_between + row.leg2_stops_between + row.leg3_stops_between,
+        ride_duration_min: leg1RideMin + leg2RideMin + leg3RideMin,
+        total_arrival_min: totalMin,
+        estimated_arrival_time: formatTimeHHMM(arrivalDate),
+        timeline_stops: leg1Timeline,
+        transfer_info: {
+          alight_stop: {
+            stop_id: row.xfer1_alight_stop_id,
+            stop_code: row.xfer1_alight_stop_code,
+            stop_name: row.xfer1_alight_stop_name,
+            stop_name_he: row.xfer1_alight_stop_name_he,
+            stop_sequence: row.xfer1_alight_stop_sequence,
+            lat: row.xfer1_alight_lat,
+            lon: row.xfer1_alight_lon
+          },
+          board_stop: {
+            stop_id: row.xfer1_board_stop_id,
+            stop_code: row.xfer1_board_stop_code,
+            stop_name: row.xfer1_board_stop_name,
+            stop_name_he: row.xfer1_board_stop_name_he,
+            stop_sequence: row.xfer1_board_stop_sequence,
+            lat: row.xfer1_board_lat,
+            lon: row.xfer1_board_lon
+          },
+          walk_meters: row.xfer1_walk_meters,
+          wait_minutes: wait1Min,
+          arrive_at_hub_time: formatTimeHHMM(new Date(now.getTime() + (leg1Bus.etaMinutes + leg1RideMin) * 60_000)),
+          next_bus_board_time: board2Time,
+          instruction_ru: `Пересадки: №${row.leg1_route_short_name} -> №${row.leg2_route_short_name} -> №${row.leg3_route_short_name}`,
+          instruction_en: `Transfers: Line ${row.leg1_route_short_name} -> Line ${row.leg2_route_short_name} -> Line ${row.leg3_route_short_name}`,
+          instruction_he: `החלפות: קו ${row.leg1_route_short_name} <- קו ${row.leg2_route_short_name} <- קו ${row.leg3_route_short_name}`
+        },
+        second_leg: {
+          route: {
+            route_id: row.leg2_route_id,
+            short_name: `${row.leg2_route_short_name}→${row.leg3_route_short_name}`,
+            long_name: row.leg2_route_long_name,
+            direction_id: leg2Dir,
+            direction_label: row.dest_stop_name,
+            available_directions: []
+          },
+          board_stop: {
+            stop_id: row.xfer1_board_stop_id,
+            stop_code: row.xfer1_board_stop_code,
+            stop_name: row.xfer1_board_stop_name,
+            stop_name_he: row.xfer1_board_stop_name_he,
+            stop_sequence: row.xfer1_board_stop_sequence,
+            lat: row.xfer1_board_lat,
+            lon: row.xfer1_board_lon
+          },
+          alight_stop: {
+            stop_id: row.dest_stop_id,
+            stop_code: row.dest_stop_code,
+            stop_name: row.dest_stop_name,
+            stop_name_he: row.dest_stop_name_he,
+            stop_sequence: row.dest_stop_sequence,
+            lat: row.dest_lat,
+            lon: row.dest_lon
+          },
+          bus: leg2Bus.busInfo,
+          stops_between: row.leg2_stops_between + row.leg3_stops_between,
+          ride_duration_min: leg2RideMin + leg3RideMin,
+          timeline_stops: leg2Timeline
+        }
+      });
+    }
+  }
+
+  const directRouteIds = new Set(directCandidates.map((o) => o.route.route_id));
+  const nonRedundantTransfers = transferCandidates.filter(
+    (t) =>
+      !directRouteIds.has(t.route.route_id) &&
+      (!t.second_leg || !directRouteIds.has(t.second_leg.route.route_id))
+  );
+
+  let selectedOptions = selectTop3MixedOptions(directCandidates, nonRedundantTransfers, 3);
+  const best = selectedOptions[0] ?? selectBestSingleOption(directCandidates, transferCandidates);
 
   const distToDestKm = Math.round(
     haversineDistanceMeters(userLocation.lat, userLocation.lon, destination.lat, destination.lon) / 1000
@@ -818,8 +1251,18 @@ export async function planBestBusesToDestination(
     };
   }
 
-  const recommendedOptions = effectiveBest ? [effectiveBest] : [];
-  const primary = effectiveBest;
+  const rawOptionsList =
+    selectedOptions.length > 0 ? selectedOptions : effectiveBest ? [effectiveBest] : [];
+  const recommendedOptions = rawOptionsList.map((opt) => ({
+    ...opt,
+    timeline_window: buildTimelineWindow(
+      opt.timeline_stops,
+      opt.origin_stop.stop_sequence,
+      opt.bus.current_stop_sequence
+    )
+  }));
+  const primary = recommendedOptions[0] ?? null;
+  const tripOptions = buildTripOptions(recommendedOptions, now, extraThreeLegOptions);
 
   // Only fetch nearby cafes if there is a long wait (> 10 minutes) at a waiting or transfer point!
   let nearbyOffers: Awaited<ReturnType<typeof fetchRealNearbyCafes>> = [];
@@ -870,6 +1313,8 @@ export async function planBestBusesToDestination(
 
   return {
     entry_context: entryContext,
+    intent_type: 'TRIP_PLANNER',
+    trip_options: tripOptions,
     render_mode: 'interactive',
     updated_at: now.toISOString(),
     cache_hit: anyCacheHit,
@@ -895,6 +1340,13 @@ export async function planBestBusesToDestination(
     },
     nearest_bus: primary?.bus ?? null,
     timeline_stops: primary?.timeline_stops ?? [],
+    timeline_window:
+      primary?.timeline_window ??
+      buildTimelineWindow(
+        primary?.timeline_stops ?? [],
+        primary?.origin_stop.stop_sequence ?? 1,
+        primary?.bus?.current_stop_sequence
+      ),
     lite_map: {
       static_image_url: buildStaticMapUrl(
         bbox,
