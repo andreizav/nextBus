@@ -44,6 +44,7 @@ export interface TripLegBoardStop {
   stop_code: string;
   stop_name: string;
   stop_name_he: string;
+  stop_sequence?: number;
   eta_minutes: number;
   scheduled_time: string;
   lat?: number;
@@ -55,6 +56,7 @@ export interface TripLegAlightStop {
   stop_code: string;
   stop_name: string;
   stop_name_he: string;
+  stop_sequence?: number;
   stops_count: number;
   lat?: number;
   lon?: number;

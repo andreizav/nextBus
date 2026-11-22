@@ -327,6 +327,21 @@ describe('Trip Planner A -> B matching and Top-3 ranking', () => {
       expect(picked[2].is_transfer).toBe(true);
       expect(picked[2].route.short_name).toBe('49');
     });
+
+    it('prefers direct route over slower transfer even when transfer boards at a closer stop within 600m', () => {
+      const direct = makeOption('47', 4, 11);
+      direct.origin_stop.distance_meters = 260;
+
+      const slowCloserTransfer: RecommendedBusOption = {
+        ...makeOption('14', 3, 24),
+        is_transfer: true
+      };
+      slowCloserTransfer.origin_stop.distance_meters = 110;
+
+      const picked = selectTop3MixedOptions([direct], [slowCloserTransfer], 3);
+      expect(picked[0].route.short_name).toBe('47');
+      expect(picked[0].is_transfer).toBeFalsy();
+    });
   });
 
   describe('selectBestSingleOption', () => {
@@ -426,6 +441,33 @@ describe('Trip Planner A -> B matching and Top-3 ranking', () => {
       expect(tripOpts[1].legs.map((l) => l.leg_type)).toEqual(['BOARD_AND_RIDE', 'TRANSFER']);
       expect(tripOpts[1].legs[1].line_number).toBe('17');
       expect(tripOpts[1].legs[1].transfer_wait_min).toBe(4);
+    });
+
+    it('slices TripLeg.timeline_stops strictly between board and alight sequences while keeping full option timeline', () => {
+      const fullTimeline = Array.from({ length: 8 }, (_, idx) => ({
+        stop_id: `stop-${idx + 1}`,
+        stop_code: String(40001 + idx),
+        stop_name: `Stop ${idx + 1}`,
+        stop_name_he: `תחנה ${idx + 1}`,
+        stop_sequence: idx + 1,
+        lat: 32.75 + idx * 0.002,
+        lon: 34.97 + idx * 0.001,
+        status: (idx + 1 === 3 ? 'user_stop' : idx + 1 < 2 ? 'passed' : 'upcoming') as
+          | 'passed'
+          | 'approaching'
+          | 'user_stop'
+          | 'upcoming'
+      }));
+      const direct = makeOption('47', 3, 12);
+      direct.origin_stop.stop_sequence = 3;
+      direct.dest_stop.stop_sequence = 6;
+      direct.timeline_stops = fullTimeline;
+
+      const tripOpts = buildTripOptions([direct], new Date('2026-11-17T17:00:00.000Z'));
+      expect(direct.timeline_stops).toHaveLength(8);
+      expect(tripOpts[0].legs[0].board_stop.stop_sequence).toBe(3);
+      expect(tripOpts[0].legs[0].alight_stop.stop_sequence).toBe(6);
+      expect(tripOpts[0].legs[0].timeline_stops?.map((s) => s.stop_sequence)).toEqual([3, 4, 5, 6]);
     });
   });
 

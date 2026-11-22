@@ -43,6 +43,7 @@ export interface TripLegBoardStop {
   stop_code: string;
   stop_name: string;
   stop_name_he: string;
+  stop_sequence?: number;
   eta_minutes: number;
   scheduled_time: string;
   lat?: number;
@@ -54,6 +55,7 @@ export interface TripLegAlightStop {
   stop_code: string;
   stop_name: string;
   stop_name_he: string;
+  stop_sequence?: number;
   stops_count: number;
   lat?: number;
   lon?: number;
@@ -96,7 +98,7 @@ export interface GeocodedDestination {
   lon: number;
   place_name: string;
   formatted_address: string;
-  source?: 'cache' | 'google_places' | 'google_geocoding' | 'osm_nominatim' | 'gazetteer' | 'mcp' | 'gtfs_db';
+  source?: 'cache' | 'google_places' | 'google_geocoding' | 'osm_nominatim' | 'osm_photon' | 'gazetteer' | 'mcp' | 'gtfs_db';
   destination_granularity?: DestinationGranularity;
   city_name?: string;
   street_name?: string;

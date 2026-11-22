@@ -222,6 +222,15 @@ function compareBusOptionsByDistanceThenTime(
   a: RecommendedBusOption,
   b: RecommendedBusOption
 ): number {
+  const aDirect = !a.is_transfer;
+  const bDirect = !b.is_transfer;
+  if (aDirect !== bDirect && isWithinOriginRadius(a) && isWithinOriginRadius(b)) {
+    const directOpt = aDirect ? a : b;
+    const transferOpt = aDirect ? b : a;
+    if (directOpt.total_arrival_min <= transferOpt.total_arrival_min + 8) {
+      return aDirect ? -1 : 1;
+    }
+  }
   const distA = a.origin_stop.distance_meters ?? 0;
   const distB = b.origin_stop.distance_meters ?? 0;
   if (distA !== distB) {
@@ -362,13 +371,31 @@ export function selectBestSingleOption(
  * Converts ranked RecommendedBusOptions into clean step-by-step TripOption contracts
  * with ordered `legs[]` (`BOARD_AND_RIDE` / `TRANSFER`) for the mobile UI and MCP consumers.
  */
+export function sliceTimelineStopsForLeg(
+  fullStops: TripLeg['timeline_stops'],
+  startSeq?: number,
+  endSeq?: number
+): TripLeg['timeline_stops'] {
+  if (!fullStops || fullStops.length === 0) return [];
+  if (startSeq === undefined || endSeq === undefined || endSeq < startSeq) {
+    return fullStops;
+  }
+  const sliced = fullStops.filter(
+    (s) => s.stop_sequence >= startSeq && s.stop_sequence <= endSeq
+  );
+  return sliced.length > 0 ? sliced : fullStops;
+}
+
 export function buildTripOptions(
   options: RecommendedBusOption[],
   now: Date = new Date(),
   extraThreeLegOptions: Map<string, TripLeg[]> = new Map()
 ): TripOption[] {
   return options.slice(0, 3).map((opt, idx) => {
-    const customLegs = extraThreeLegOptions.get(`${opt.route.route_id}:${opt.dest_stop.stop_id}`);
+    const detailedKey = `${opt.route.route_id}:${opt.second_leg?.route.route_id ?? ''}:${opt.third_leg?.route.route_id ?? ''}:${opt.dest_stop.stop_id}`;
+    const customLegs =
+      extraThreeLegOptions.get(detailedKey) ??
+      extraThreeLegOptions.get(`${opt.route.route_id}:${opt.dest_stop.stop_id}`);
     if (customLegs && customLegs.length > 0) {
       return {
         rank: (idx + 1) as 1 | 2 | 3,
@@ -383,6 +410,11 @@ export function buildTripOptions(
     const isTransfer = Boolean(opt.is_transfer && opt.transfer_info && opt.second_leg);
 
     if (!isTransfer) {
+      const legStops = sliceTimelineStopsForLeg(
+        opt.timeline_stops,
+        opt.origin_stop.stop_sequence,
+        opt.dest_stop.stop_sequence
+      );
       const leg: TripLeg = {
         leg_type: 'BOARD_AND_RIDE',
         line_number: opt.route.short_name,
@@ -393,6 +425,7 @@ export function buildTripOptions(
           stop_code: opt.origin_stop.stop_code,
           stop_name: opt.origin_stop.stop_name,
           stop_name_he: opt.origin_stop.stop_name_he,
+          stop_sequence: opt.origin_stop.stop_sequence,
           eta_minutes: opt.eta_to_boarding_min,
           scheduled_time: boardTime,
           lat: opt.origin_stop.lat,
@@ -403,12 +436,13 @@ export function buildTripOptions(
           stop_code: opt.dest_stop.stop_code,
           stop_name: opt.dest_stop.stop_name,
           stop_name_he: opt.dest_stop.stop_name_he,
+          stop_sequence: opt.dest_stop.stop_sequence,
           stops_count: opt.stops_between,
           lat: opt.dest_stop.lat,
           lon: opt.dest_stop.lon
         },
         ride_duration_min: opt.ride_duration_min,
-        timeline_stops: opt.timeline_stops
+        timeline_stops: legStops
       };
 
       return {
@@ -425,6 +459,17 @@ export function buildTripOptions(
     const leg1RideMin = Math.max(1, opt.ride_duration_min - sec.ride_duration_min);
     const leg1StopsCount = Math.max(1, opt.stops_between - sec.stops_between);
 
+    const leg1Timeline = sliceTimelineStopsForLeg(
+      opt.timeline_stops,
+      opt.origin_stop.stop_sequence,
+      xfer.alight_stop.stop_sequence
+    );
+    const leg2Timeline = sliceTimelineStopsForLeg(
+      sec.timeline_stops,
+      sec.board_stop.stop_sequence,
+      sec.alight_stop?.stop_sequence ?? opt.dest_stop.stop_sequence
+    );
+
     const leg1: TripLeg = {
       leg_type: 'BOARD_AND_RIDE',
       line_number: opt.route.short_name,
@@ -435,6 +480,7 @@ export function buildTripOptions(
         stop_code: opt.origin_stop.stop_code,
         stop_name: opt.origin_stop.stop_name,
         stop_name_he: opt.origin_stop.stop_name_he,
+        stop_sequence: opt.origin_stop.stop_sequence,
         eta_minutes: opt.eta_to_boarding_min,
         scheduled_time: boardTime,
         lat: opt.origin_stop.lat,
@@ -445,12 +491,13 @@ export function buildTripOptions(
         stop_code: xfer.alight_stop.stop_code,
         stop_name: xfer.alight_stop.stop_name,
         stop_name_he: xfer.alight_stop.stop_name_he,
+        stop_sequence: xfer.alight_stop.stop_sequence,
         stops_count: leg1StopsCount,
         lat: xfer.alight_stop.lat,
         lon: xfer.alight_stop.lon
       },
       ride_duration_min: leg1RideMin,
-      timeline_stops: opt.timeline_stops
+      timeline_stops: leg1Timeline
     };
 
     const leg2: TripLeg = {
@@ -463,24 +510,26 @@ export function buildTripOptions(
         stop_code: sec.board_stop.stop_code,
         stop_name: sec.board_stop.stop_name,
         stop_name_he: sec.board_stop.stop_name_he,
+        stop_sequence: sec.board_stop.stop_sequence,
         eta_minutes: sec.bus.eta_minutes,
         scheduled_time: xfer.next_bus_board_time,
         lat: sec.board_stop.lat,
         lon: sec.board_stop.lon
       },
       alight_stop: {
-        stop_id: opt.dest_stop.stop_id,
-        stop_code: opt.dest_stop.stop_code,
-        stop_name: opt.dest_stop.stop_name,
-        stop_name_he: opt.dest_stop.stop_name_he,
+        stop_id: sec.alight_stop?.stop_id ?? opt.dest_stop.stop_id,
+        stop_code: sec.alight_stop?.stop_code ?? opt.dest_stop.stop_code,
+        stop_name: sec.alight_stop?.stop_name ?? opt.dest_stop.stop_name,
+        stop_name_he: sec.alight_stop?.stop_name_he ?? opt.dest_stop.stop_name_he,
+        stop_sequence: sec.alight_stop?.stop_sequence ?? opt.dest_stop.stop_sequence,
         stops_count: sec.stops_between,
-        lat: opt.dest_stop.lat,
-        lon: opt.dest_stop.lon
+        lat: sec.alight_stop?.lat ?? opt.dest_stop.lat,
+        lon: sec.alight_stop?.lon ?? opt.dest_stop.lon
       },
       transfer_wait_min: xfer.wait_minutes,
       transfer_walk_meters: xfer.walk_meters,
       ride_duration_min: sec.ride_duration_min,
-      timeline_stops: sec.timeline_stops
+      timeline_stops: leg2Timeline
     };
 
     return {
@@ -601,11 +650,13 @@ function findClosestValidOriginStop(
   userLat: number,
   userLon: number,
   maxStopSequence: number,
-  maxRadiusMeters = FALLBACK_ORIGIN_SEARCH_RADIUS_METERS
+  maxRadiusMeters = FALLBACK_ORIGIN_SEARCH_RADIUS_METERS,
+  excludeStopId?: string
 ): (RouteStopCoord & { distance_meters: number }) | null {
   let best: (RouteStopCoord & { distance_meters: number }) | null = null;
   for (const stop of allStops) {
     if (stop.stop_sequence >= maxStopSequence) continue;
+    if (excludeStopId && stop.stop_id === excludeStopId) continue;
     const distance = haversineDistanceMeters(userLat, userLon, stop.lat, stop.lon);
     if (distance <= maxRadiusMeters && (!best || distance < best.distance_meters)) {
       best = { ...stop, distance_meters: Math.round(distance) };
@@ -811,7 +862,9 @@ export async function planBestBusesToDestination(
   const unfilteredTransfer = transferMatches;
   const unfilteredTwoTransfer = twoTransferRows;
 
-  const targetDestStopId = preferredDestStopId || destination.resolved_stop?.stop_id;
+  const targetDestStopId =
+    preferredDestStopId ||
+    (destination.destination_granularity === 'street' ? destination.resolved_stop?.stop_id : undefined);
   if (targetDestStopId) {
     const exactDestDirect = directMatches.filter((m) => m.dest_stop_id === targetDestStopId);
     const exactDestXfer = transferMatches.filter((m) => m.dest_stop_id === targetDestStopId);
@@ -871,7 +924,9 @@ export async function planBestBusesToDestination(
       allStops,
       userLocation.lat,
       userLocation.lon,
-      match.dest_stop_sequence
+      match.dest_stop_sequence,
+      FALLBACK_ORIGIN_SEARCH_RADIUS_METERS,
+      match.dest_stop_id
     );
     const originStopId = closestOrigin?.stop_id ?? match.origin_stop_id;
     const originStopCode = closestOrigin?.stop_code ?? match.origin_stop_code;
@@ -950,7 +1005,10 @@ export async function planBestBusesToDestination(
         stop_name_he: match.dest_stop_name_he,
         stop_sequence: match.dest_stop_sequence,
         lat: match.dest_lat,
-        lon: match.dest_lon
+        lon: match.dest_lon,
+        distance_meters: Math.round(
+          haversineDistanceMeters(destination.lat, destination.lon, match.dest_lat, match.dest_lon)
+        )
       },
       bus: busInfo,
       eta_to_boarding_min: etaMinutes,
@@ -987,7 +1045,9 @@ export async function planBestBusesToDestination(
       leg1AllStops,
       userLocation.lat,
       userLocation.lon,
-      match.xfer_alight_stop_sequence
+      match.xfer_alight_stop_sequence,
+      FALLBACK_ORIGIN_SEARCH_RADIUS_METERS,
+      match.xfer_alight_stop_id
     );
     const originStopId = closestOrigin?.stop_id ?? match.origin_stop_id;
     const originStopCode = closestOrigin?.stop_code ?? match.origin_stop_code;
@@ -1136,7 +1196,10 @@ export async function planBestBusesToDestination(
         stop_name_he: match.dest_stop_name_he,
         stop_sequence: match.dest_stop_sequence,
         lat: match.dest_lat,
-        lon: match.dest_lon
+        lon: match.dest_lon,
+        distance_meters: Math.round(
+          haversineDistanceMeters(destination.lat, destination.lon, match.dest_lat, match.dest_lon)
+        )
       },
       bus: leg1Bus.busInfo,
       eta_to_boarding_min: leg1Bus.etaMinutes,
@@ -1309,6 +1372,7 @@ export async function planBestBusesToDestination(
             stop_code: row.origin_stop_code,
             stop_name: row.origin_stop_name,
             stop_name_he: row.origin_stop_name_he,
+            stop_sequence: row.origin_stop_sequence,
             eta_minutes: leg1Bus.etaMinutes,
             scheduled_time: board1Time,
             lat: row.origin_lat,
@@ -1319,12 +1383,17 @@ export async function planBestBusesToDestination(
             stop_code: row.xfer1_alight_stop_code,
             stop_name: row.xfer1_alight_stop_name,
             stop_name_he: row.xfer1_alight_stop_name_he,
+            stop_sequence: row.xfer1_alight_stop_sequence,
             stops_count: row.leg1_stops_between,
             lat: row.xfer1_alight_lat,
             lon: row.xfer1_alight_lon
           },
           ride_duration_min: leg1RideMin,
-          timeline_stops: leg1Timeline
+          timeline_stops: sliceTimelineStopsForLeg(
+            leg1Timeline,
+            row.origin_stop_sequence,
+            row.xfer1_alight_stop_sequence
+          )
         },
         {
           leg_type: 'TRANSFER',
@@ -1336,6 +1405,7 @@ export async function planBestBusesToDestination(
             stop_code: row.xfer1_board_stop_code,
             stop_name: row.xfer1_board_stop_name,
             stop_name_he: row.xfer1_board_stop_name_he,
+            stop_sequence: row.xfer1_board_stop_sequence,
             eta_minutes: leg2Bus.etaMinutes,
             scheduled_time: board2Time,
             lat: row.xfer1_board_lat,
@@ -1346,6 +1416,7 @@ export async function planBestBusesToDestination(
             stop_code: row.xfer2_alight_stop_code ?? row.xfer2_board_stop_code ?? row.dest_stop_code,
             stop_name: row.xfer2_alight_stop_name ?? row.xfer2_board_stop_name ?? row.dest_stop_name,
             stop_name_he: row.xfer2_alight_stop_name_he ?? row.xfer2_board_stop_name_he ?? row.dest_stop_name_he,
+            stop_sequence: row.xfer2_alight_stop_sequence ?? row.dest_stop_sequence,
             stops_count: row.leg2_stops_between,
             lat: row.xfer2_alight_lat ?? row.xfer2_board_lat ?? row.dest_lat,
             lon: row.xfer2_alight_lon ?? row.xfer2_board_lon ?? row.dest_lon
@@ -1353,7 +1424,11 @@ export async function planBestBusesToDestination(
           transfer_wait_min: wait1Min,
           transfer_walk_meters: row.xfer1_walk_meters,
           ride_duration_min: leg2RideMin,
-          timeline_stops: leg2Timeline
+          timeline_stops: sliceTimelineStopsForLeg(
+            leg2Timeline,
+            row.xfer1_board_stop_sequence,
+            row.xfer2_alight_stop_sequence ?? row.dest_stop_sequence
+          )
         },
         {
           leg_type: 'TRANSFER',
@@ -1365,6 +1440,7 @@ export async function planBestBusesToDestination(
             stop_code: row.xfer2_board_stop_code ?? row.xfer2_board_stop_id,
             stop_name: row.xfer2_board_stop_name ?? row.xfer2_board_stop_id,
             stop_name_he: row.xfer2_board_stop_name_he ?? row.xfer2_board_stop_name ?? row.xfer2_board_stop_id,
+            stop_sequence: row.xfer2_board_stop_sequence ?? 1,
             eta_minutes: leg3Bus.etaMinutes,
             scheduled_time: board3Time,
             lat: row.xfer2_board_lat ?? row.xfer2_alight_lat ?? row.dest_lat,
@@ -1375,6 +1451,7 @@ export async function planBestBusesToDestination(
             stop_code: row.dest_stop_code,
             stop_name: row.dest_stop_name,
             stop_name_he: row.dest_stop_name_he,
+            stop_sequence: row.dest_stop_sequence,
             stops_count: row.leg3_stops_between,
             lat: row.dest_lat,
             lon: row.dest_lon
@@ -1382,11 +1459,18 @@ export async function planBestBusesToDestination(
           transfer_wait_min: wait2Min,
           transfer_walk_meters: row.xfer2_walk_meters,
           ride_duration_min: leg3RideMin,
-          timeline_stops: leg3Timeline
+          timeline_stops: sliceTimelineStopsForLeg(
+            leg3Timeline,
+            row.xfer2_board_stop_sequence ?? 1,
+            row.dest_stop_sequence
+          )
         }
       ];
 
-      extraThreeLegOptions.set(`${row.leg1_route_id}:${row.dest_stop_id}`, legs);
+      extraThreeLegOptions.set(
+        `${row.leg1_route_id}:${row.leg2_route_id}:${row.leg3_route_id}:${row.dest_stop_id}`,
+        legs
+      );
 
       transferCandidates.push({
         rank: 1,
@@ -1416,7 +1500,10 @@ export async function planBestBusesToDestination(
           stop_name_he: row.dest_stop_name_he,
           stop_sequence: row.dest_stop_sequence,
           lat: row.dest_lat,
-          lon: row.dest_lon
+          lon: row.dest_lon,
+          distance_meters: Math.round(
+            haversineDistanceMeters(destination.lat, destination.lon, row.dest_lat, row.dest_lon)
+          )
         },
         bus: leg1Bus.busInfo,
         eta_to_boarding_min: leg1Bus.etaMinutes,
@@ -1455,10 +1542,10 @@ export async function planBestBusesToDestination(
         second_leg: {
           route: {
             route_id: row.leg2_route_id,
-            short_name: `${row.leg2_route_short_name}→${row.leg3_route_short_name}`,
+            short_name: row.leg2_route_short_name,
             long_name: row.leg2_route_long_name,
             direction_id: leg2Dir,
-            direction_label: row.dest_stop_name,
+            direction_label: row.xfer2_alight_stop_name ?? row.dest_stop_name,
             available_directions: []
           },
           board_stop: {
@@ -1472,18 +1559,18 @@ export async function planBestBusesToDestination(
             distance_meters: row.xfer1_walk_meters
           },
           alight_stop: {
-            stop_id: row.dest_stop_id,
-            stop_code: row.dest_stop_code,
-            stop_name: row.dest_stop_name,
-            stop_name_he: row.dest_stop_name_he,
-            stop_sequence: row.dest_stop_sequence,
-            lat: row.dest_lat,
-            lon: row.dest_lon,
+            stop_id: row.xfer2_alight_stop_id ?? row.dest_stop_id,
+            stop_code: row.xfer2_alight_stop_code ?? row.dest_stop_code,
+            stop_name: row.xfer2_alight_stop_name ?? row.dest_stop_name,
+            stop_name_he: row.xfer2_alight_stop_name_he ?? row.dest_stop_name_he,
+            stop_sequence: row.xfer2_alight_stop_sequence ?? row.dest_stop_sequence,
+            lat: row.xfer2_alight_lat ?? row.dest_lat,
+            lon: row.xfer2_alight_lon ?? row.dest_lon,
             distance_meters: 0
           },
           bus: leg2Bus.busInfo,
-          stops_between: row.leg2_stops_between + row.leg3_stops_between,
-          ride_duration_min: leg2RideMin + leg3RideMin,
+          stops_between: row.leg2_stops_between,
+          ride_duration_min: leg2RideMin,
           timeline_stops: leg2Timeline
         },
         third_leg: {
@@ -1557,7 +1644,13 @@ export async function planBestBusesToDestination(
     }
   }
 
-  const transferPool =
+  const directWithinOrigin = directCandidates.filter((d) => isWithinOriginRadius(d));
+  const bestDirectArrival =
+    directWithinOrigin.length > 0
+      ? Math.min(...directWithinOrigin.map((d) => d.total_arrival_min))
+      : undefined;
+
+  const rawTransferPool =
     directCandidates.length + distinctStopRouteTransfers.length >= 3
       ? distinctStopRouteTransfers
       : [
@@ -1567,6 +1660,11 @@ export async function planBestBusesToDestination(
             Math.max(0, 3 - directCandidates.length - distinctStopRouteTransfers.length)
           )
         ];
+
+  const transferPool =
+    bestDirectArrival !== undefined
+      ? rawTransferPool.filter((t) => t.total_arrival_min <= bestDirectArrival + 12)
+      : rawTransferPool;
 
   const selectedOptions = selectTop3MixedOptions(directCandidates, transferPool, 3);
   const best = selectedOptions[0] ?? selectBestSingleOption(directCandidates, transferCandidates);

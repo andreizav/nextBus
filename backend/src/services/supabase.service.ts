@@ -722,9 +722,17 @@ class SupabaseService {
   ): Promise<DirectRouteMatch[]> {
     this.ensureInit();
 
-    const radiiToTry = Array.from(new Set([radiusMeters, Math.max(1100, radiusMeters)]));
+    const tripDist = haversineDistanceMeters(originLat, originLon, destLat, destLon);
+    let radiiToTry: number[];
+    if (tripDist < 1200) {
+      radiiToTry = Array.from(new Set([Math.min(radiusMeters, 450), 600]));
+    } else if (tripDist < 2500) {
+      radiiToTry = Array.from(new Set([Math.min(radiusMeters, 600), Math.max(radiusMeters, 750)]));
+    } else {
+      radiiToTry = Array.from(new Set([radiusMeters, Math.max(1100, radiusMeters)]));
+    }
+
     const collected = new Map<string, DirectRouteMatch>();
-    let dbSucceeded = false;
 
     for (const radius of radiiToTry) {
       let batch: DirectRouteMatch[] = [];
@@ -739,7 +747,6 @@ class SupabaseService {
             radius_meters: radius
           });
           if (!error && Array.isArray(data)) {
-            dbSucceeded = true;
             batch = data.map((row) => this.mapDirectRouteRow(row as Record<string, unknown>));
           }
         } catch (err) {
@@ -753,7 +760,6 @@ class SupabaseService {
             `SELECT * FROM find_direct_routes_between_points($1, $2, $3, $4, $5)`,
             [originLat, originLon, destLat, destLon, radius]
           );
-          dbSucceeded = true;
           batch = res.rows.map((row) => this.mapDirectRouteRow(row as Record<string, unknown>));
         } catch (err) {
           console.warn('[PostgreSQL] find_direct_routes query error:', (err as Error).message);
@@ -761,6 +767,14 @@ class SupabaseService {
       }
 
       for (const item of batch) {
+        const origDist = haversineDistanceMeters(originLat, originLon, item.origin_lat, item.origin_lon);
+        const destDist = haversineDistanceMeters(destLat, destLon, item.dest_lat, item.dest_lon);
+        if (tripDist >= 300) {
+          if (destDist >= tripDist || origDist >= tripDist) continue;
+        } else {
+          if (destDist > 260 || item.stops_between > 4) continue;
+        }
+
         const key = `${item.route_id}:${item.direction_id}`;
         if (!collected.has(key)) {
           collected.set(key, item);
@@ -773,13 +787,17 @@ class SupabaseService {
     }
 
     if (collected.size > 0) {
-      return Array.from(collected.values());
-    }
-
-    // If database queried cleanly and found 0 direct routes, do not fabricate direct matches;
-    // let the transfer router compute 1-transfer connections.
-    if (dbSucceeded) {
-      return [];
+      return Array.from(collected.values()).sort((a, b) => {
+        const scoreA =
+          haversineDistanceMeters(originLat, originLon, a.origin_lat, a.origin_lon) +
+          haversineDistanceMeters(destLat, destLon, a.dest_lat, a.dest_lon) +
+          a.stops_between * 35;
+        const scoreB =
+          haversineDistanceMeters(originLat, originLon, b.origin_lat, b.origin_lon) +
+          haversineDistanceMeters(destLat, destLon, b.dest_lat, b.dest_lon) +
+          b.stops_between * 35;
+        return scoreA - scoreB;
+      });
     }
 
     return [];
@@ -845,7 +863,7 @@ class SupabaseService {
       .sort((a, b) => a.distOrigin + a.distDest - (b.distOrigin + b.distDest))
       .slice(0, 4);
 
-    const matches: TransferRouteMatch[] = [];
+    const scoredMatches: Array<{ estMin: number; match: TransferRouteMatch }> = [];
 
     const hubResults = await Promise.all(
       candidateHubs.map(async (h) => {
@@ -858,60 +876,86 @@ class SupabaseService {
     );
 
     for (const { l1, l2 } of hubResults) {
-      for (const leg1 of l1.slice(0, 3)) {
-        for (const leg2 of l2.slice(0, 3)) {
+      const sortedL1 = [...l1].sort((a, b) => a.stops_between - b.stops_between).slice(0, 4);
+      const sortedL2 = [...l2].sort((a, b) => a.stops_between - b.stops_between).slice(0, 4);
+      for (const leg1 of sortedL1) {
+        for (const leg2 of sortedL2) {
           if (leg1.route_id === leg2.route_id) continue;
           const walkMeters = Math.round(
             haversineDistanceMeters(leg1.dest_lat, leg1.dest_lon, leg2.origin_lat, leg2.origin_lon)
           );
           if (walkMeters > 900) continue;
 
-          matches.push({
-            leg1_route_id: leg1.route_id,
-            leg1_route_short_name: leg1.route_short_name,
-            leg1_route_long_name: leg1.route_long_name,
-            leg1_direction_id: leg1.direction_id,
-            origin_stop_id: leg1.origin_stop_id,
-            origin_stop_code: leg1.origin_stop_code,
-            origin_stop_name: leg1.origin_stop_name,
-            origin_stop_name_he: leg1.origin_stop_name_he,
-            origin_stop_sequence: leg1.origin_stop_sequence,
-            origin_lat: leg1.origin_lat,
-            origin_lon: leg1.origin_lon,
-            xfer_alight_stop_id: leg1.dest_stop_id,
-            xfer_alight_stop_code: leg1.dest_stop_code,
-            xfer_alight_stop_name: leg1.dest_stop_name,
-            xfer_alight_stop_name_he: leg1.dest_stop_name_he,
-            xfer_alight_stop_sequence: leg1.dest_stop_sequence,
-            xfer_alight_lat: leg1.dest_lat,
-            xfer_alight_lon: leg1.dest_lon,
-            leg1_stops_between: leg1.stops_between,
-            transfer_walk_meters_actual: walkMeters,
-            leg2_route_id: leg2.route_id,
-            leg2_route_short_name: leg2.route_short_name,
-            leg2_route_long_name: leg2.route_long_name,
-            leg2_direction_id: leg2.direction_id,
-            xfer_board_stop_id: leg2.origin_stop_id,
-            xfer_board_stop_code: leg2.origin_stop_code,
-            xfer_board_stop_name: leg2.origin_stop_name,
-            xfer_board_stop_name_he: leg2.origin_stop_name_he,
-            xfer_board_stop_sequence: leg2.origin_stop_sequence,
-            xfer_board_lat: leg2.origin_lat,
-            xfer_board_lon: leg2.origin_lon,
-            dest_stop_id: leg2.dest_stop_id,
-            dest_stop_code: leg2.dest_stop_code,
-            dest_stop_name: leg2.dest_stop_name,
-            dest_stop_name_he: leg2.dest_stop_name_he,
-            dest_stop_sequence: leg2.dest_stop_sequence,
-            dest_lat: leg2.dest_lat,
-            dest_lon: leg2.dest_lon,
-            leg2_stops_between: leg2.stops_between
+          const leg1Dist = haversineDistanceMeters(
+            leg1.origin_lat,
+            leg1.origin_lon,
+            leg1.dest_lat,
+            leg1.dest_lon
+          );
+          const leg2Dist = haversineDistanceMeters(
+            leg2.origin_lat,
+            leg2.origin_lon,
+            leg2.dest_lat,
+            leg2.dest_lon
+          );
+          const estMin =
+            leg1Dist / 350 +
+            leg2Dist / 350 +
+            (leg1.stops_between + leg2.stops_between) * 1.4 +
+            walkMeters / 70;
+
+          scoredMatches.push({
+            estMin,
+            match: {
+              leg1_route_id: leg1.route_id,
+              leg1_route_short_name: leg1.route_short_name,
+              leg1_route_long_name: leg1.route_long_name,
+              leg1_direction_id: leg1.direction_id,
+              origin_stop_id: leg1.origin_stop_id,
+              origin_stop_code: leg1.origin_stop_code,
+              origin_stop_name: leg1.origin_stop_name,
+              origin_stop_name_he: leg1.origin_stop_name_he,
+              origin_stop_sequence: leg1.origin_stop_sequence,
+              origin_lat: leg1.origin_lat,
+              origin_lon: leg1.origin_lon,
+              xfer_alight_stop_id: leg1.dest_stop_id,
+              xfer_alight_stop_code: leg1.dest_stop_code,
+              xfer_alight_stop_name: leg1.dest_stop_name,
+              xfer_alight_stop_name_he: leg1.dest_stop_name_he,
+              xfer_alight_stop_sequence: leg1.dest_stop_sequence,
+              xfer_alight_lat: leg1.dest_lat,
+              xfer_alight_lon: leg1.dest_lon,
+              leg1_stops_between: leg1.stops_between,
+              transfer_walk_meters_actual: walkMeters,
+              leg2_route_id: leg2.route_id,
+              leg2_route_short_name: leg2.route_short_name,
+              leg2_route_long_name: leg2.route_long_name,
+              leg2_direction_id: leg2.direction_id,
+              xfer_board_stop_id: leg2.origin_stop_id,
+              xfer_board_stop_code: leg2.origin_stop_code,
+              xfer_board_stop_name: leg2.origin_stop_name,
+              xfer_board_stop_name_he: leg2.origin_stop_name_he,
+              xfer_board_stop_sequence: leg2.origin_stop_sequence,
+              xfer_board_lat: leg2.origin_lat,
+              xfer_board_lon: leg2.origin_lon,
+              dest_stop_id: leg2.dest_stop_id,
+              dest_stop_code: leg2.dest_stop_code,
+              dest_stop_name: leg2.dest_stop_name,
+              dest_stop_name_he: leg2.dest_stop_name_he,
+              dest_stop_sequence: leg2.dest_stop_sequence,
+              dest_lat: leg2.dest_lat,
+              dest_lon: leg2.dest_lon,
+              leg2_stops_between: leg2.stops_between
+            }
           });
         }
       }
     }
 
-    return matches;
+    return scoredMatches
+      .sort((a, b) => a.estMin - b.estMin)
+      .slice(0, 6)
+      .map((item) => item.match);
   }
 
   async findTransferRoutesBetweenPoints(
@@ -1205,7 +1249,125 @@ class SupabaseService {
       MAJOR_INTERCITY_HUBS.find((h) => h.name === 'Hadera CBS')!
     ].filter(Boolean);
 
+    const directDist = haversineDistanceMeters(originLat, originLon, destLat, destLon);
     const collected = new Map<string, { score: number; row: TwoTransferTripMatch }>();
+
+    const collectCombos = (
+      leg1List: DirectRouteMatch[],
+      leg2List: DirectRouteMatch[],
+      leg3List: DirectRouteMatch[]
+    ): void => {
+      const s1 = [...leg1List].sort((a, b) => a.stops_between - b.stops_between).slice(0, 4);
+      const s2 = [...leg2List].sort((a, b) => a.stops_between - b.stops_between).slice(0, 4);
+      const s3 = [...leg3List].sort((a, b) => a.stops_between - b.stops_between).slice(0, 4);
+
+      for (const l1 of s1) {
+        for (const l2 of s2) {
+          for (const l3 of s3) {
+            if (
+              l1.route_id === l2.route_id ||
+              l2.route_id === l3.route_id ||
+              l1.route_id === l3.route_id ||
+              l1.origin_stop_sequence >= l1.dest_stop_sequence ||
+              l2.origin_stop_sequence >= l2.dest_stop_sequence ||
+              l3.origin_stop_sequence >= l3.dest_stop_sequence
+            ) {
+              continue;
+            }
+            const xfer1Walk = Math.round(
+              haversineDistanceMeters(l1.dest_lat, l1.dest_lon, l2.origin_lat, l2.origin_lon)
+            );
+            const xfer2Walk = Math.round(
+              haversineDistanceMeters(l2.dest_lat, l2.dest_lon, l3.origin_lat, l3.origin_lon)
+            );
+            if (xfer1Walk > 900 || xfer2Walk > 900) continue;
+
+            const l1Km =
+              haversineDistanceMeters(l1.origin_lat, l1.origin_lon, l1.dest_lat, l1.dest_lon) / 1000;
+            const l2Km =
+              haversineDistanceMeters(l2.origin_lat, l2.origin_lon, l2.dest_lat, l2.dest_lon) / 1000;
+            const l3Km =
+              haversineDistanceMeters(l3.origin_lat, l3.origin_lon, l3.dest_lat, l3.dest_lon) / 1000;
+            const totalStops = l1.stops_between + l2.stops_between + l3.stops_between;
+            const estMin =
+              (l1Km / 42) * 60 +
+              (l2Km / 55) * 60 +
+              (l3Km / 42) * 60 +
+              totalStops * 0.8 +
+              (xfer1Walk + xfer2Walk) / 75;
+            const key = `${l1.route_id}:${l2.route_id}:${l3.route_id}`;
+            const existing = collected.get(key);
+            if (existing && existing.score <= estMin) continue;
+
+            collected.set(key, {
+              score: estMin,
+              row: {
+                transfers_count: 2,
+                leg1_route_id: l1.route_id,
+                leg1_route_short_name: l1.route_short_name,
+                leg1_route_long_name: l1.route_long_name,
+                leg1_direction_id: l1.direction_id,
+                origin_stop_id: l1.origin_stop_id,
+                origin_stop_code: l1.origin_stop_code,
+                origin_stop_name: l1.origin_stop_name,
+                origin_stop_name_he: l1.origin_stop_name_he,
+                origin_stop_sequence: l1.origin_stop_sequence,
+                origin_lat: l1.origin_lat,
+                origin_lon: l1.origin_lon,
+                xfer1_alight_stop_id: l1.dest_stop_id,
+                xfer1_alight_stop_code: l1.dest_stop_code,
+                xfer1_alight_stop_name: l1.dest_stop_name,
+                xfer1_alight_stop_name_he: l1.dest_stop_name_he,
+                xfer1_alight_stop_sequence: l1.dest_stop_sequence,
+                xfer1_alight_lat: l1.dest_lat,
+                xfer1_alight_lon: l1.dest_lon,
+                leg1_stops_between: l1.stops_between,
+                xfer1_walk_meters: xfer1Walk,
+                leg2_route_id: l2.route_id,
+                leg2_route_short_name: l2.route_short_name,
+                leg2_route_long_name: l2.route_long_name,
+                leg2_direction_id: l2.direction_id,
+                xfer1_board_stop_id: l2.origin_stop_id,
+                xfer1_board_stop_code: l2.origin_stop_code,
+                xfer1_board_stop_name: l2.origin_stop_name,
+                xfer1_board_stop_name_he: l2.origin_stop_name_he,
+                xfer1_board_stop_sequence: l2.origin_stop_sequence,
+                xfer1_board_lat: l2.origin_lat,
+                xfer1_board_lon: l2.origin_lon,
+                xfer2_alight_stop_id: l2.dest_stop_id,
+                xfer2_alight_stop_code: l2.dest_stop_code,
+                xfer2_alight_stop_name: l2.dest_stop_name,
+                xfer2_alight_stop_name_he: l2.dest_stop_name_he,
+                xfer2_alight_stop_sequence: l2.dest_stop_sequence,
+                xfer2_alight_lat: l2.dest_lat,
+                xfer2_alight_lon: l2.dest_lon,
+                leg2_stops_between: l2.stops_between,
+                xfer2_walk_meters: xfer2Walk,
+                leg3_route_id: l3.route_id,
+                leg3_route_short_name: l3.route_short_name,
+                leg3_route_long_name: l3.route_long_name,
+                leg3_direction_id: l3.direction_id,
+                xfer2_board_stop_id: l3.origin_stop_id,
+                xfer2_board_stop_code: l3.origin_stop_code,
+                xfer2_board_stop_name: l3.origin_stop_name,
+                xfer2_board_stop_name_he: l3.origin_stop_name_he,
+                xfer2_board_stop_sequence: l3.origin_stop_sequence,
+                xfer2_board_lat: l3.origin_lat,
+                xfer2_board_lon: l3.origin_lon,
+                dest_stop_id: l3.dest_stop_id,
+                dest_stop_code: l3.dest_stop_code,
+                dest_stop_name: l3.dest_stop_name,
+                dest_stop_name_he: l3.dest_stop_name_he,
+                dest_stop_sequence: l3.dest_stop_sequence,
+                dest_lat: l3.dest_lat,
+                dest_lon: l3.dest_lon,
+                leg3_stops_between: l3.stops_between
+              }
+            });
+          }
+        }
+      }
+    };
 
     for (const oH of oHubs) {
       const leg1List = await this.findDirectRoutesBetweenPoints(
@@ -1221,107 +1383,25 @@ class SupabaseService {
         if (core.name === oH.name) {
           for (const dH of dHubs) {
             if (dH.name === oH.name) continue;
+            const detourDist =
+              haversineDistanceMeters(originLat, originLon, oH.lat, oH.lon) +
+              haversineDistanceMeters(oH.lat, oH.lon, dH.lat, dH.lon) +
+              haversineDistanceMeters(dH.lat, dH.lon, destLat, destLon);
+            if (detourDist > directDist * 1.45 + 15_000) continue;
+
             const [leg2List, leg3List] = await Promise.all([
               this.findDirectRoutesBetweenPoints(oH.lat, oH.lon, dH.lat, dH.lon, 950),
               this.findDirectRoutesBetweenPoints(dH.lat, dH.lon, destLat, destLon, Math.max(radiusMeters, 1000))
             ]);
-            for (const l1 of leg1List.slice(0, 3)) {
-              for (const l2 of leg2List.slice(0, 3)) {
-                for (const l3 of leg3List.slice(0, 3)) {
-                  if (
-                    l1.route_id === l2.route_id ||
-                    l2.route_id === l3.route_id ||
-                    l1.route_id === l3.route_id ||
-                    l1.origin_stop_sequence >= l1.dest_stop_sequence ||
-                    l2.origin_stop_sequence >= l2.dest_stop_sequence ||
-                    l3.origin_stop_sequence >= l3.dest_stop_sequence
-                  ) {
-                    continue;
-                  }
-                  const xfer1Walk = Math.round(
-                    haversineDistanceMeters(l1.dest_lat, l1.dest_lon, l2.origin_lat, l2.origin_lon)
-                  );
-                  const xfer2Walk = Math.round(
-                    haversineDistanceMeters(l2.dest_lat, l2.dest_lon, l3.origin_lat, l3.origin_lon)
-                  );
-                  if (xfer1Walk > 900 || xfer2Walk > 900) continue;
-
-                  const totalStops = l1.stops_between + l2.stops_between + l3.stops_between;
-                  const score = totalStops * 10 + xfer1Walk + xfer2Walk;
-                  const key = `${l1.route_id}:${l2.route_id}:${l3.route_id}`;
-                  const existing = collected.get(key);
-                  if (existing && existing.score <= score) continue;
-
-                  collected.set(key, {
-                    score,
-                    row: {
-                      transfers_count: 2,
-                      leg1_route_id: l1.route_id,
-                      leg1_route_short_name: l1.route_short_name,
-                      leg1_route_long_name: l1.route_long_name,
-                      leg1_direction_id: l1.direction_id,
-                      origin_stop_id: l1.origin_stop_id,
-                      origin_stop_code: l1.origin_stop_code,
-                      origin_stop_name: l1.origin_stop_name,
-                      origin_stop_name_he: l1.origin_stop_name_he,
-                      origin_stop_sequence: l1.origin_stop_sequence,
-                      origin_lat: l1.origin_lat,
-                      origin_lon: l1.origin_lon,
-                      xfer1_alight_stop_id: l1.dest_stop_id,
-                      xfer1_alight_stop_code: l1.dest_stop_code,
-                      xfer1_alight_stop_name: l1.dest_stop_name,
-                      xfer1_alight_stop_name_he: l1.dest_stop_name_he,
-                      xfer1_alight_stop_sequence: l1.dest_stop_sequence,
-                      xfer1_alight_lat: l1.dest_lat,
-                      xfer1_alight_lon: l1.dest_lon,
-                      leg1_stops_between: l1.stops_between,
-                      xfer1_walk_meters: xfer1Walk,
-                      leg2_route_id: l2.route_id,
-                      leg2_route_short_name: l2.route_short_name,
-                      leg2_route_long_name: l2.route_long_name,
-                      leg2_direction_id: l2.direction_id,
-                      xfer1_board_stop_id: l2.origin_stop_id,
-                      xfer1_board_stop_code: l2.origin_stop_code,
-                      xfer1_board_stop_name: l2.origin_stop_name,
-                      xfer1_board_stop_name_he: l2.origin_stop_name_he,
-                      xfer1_board_stop_sequence: l2.origin_stop_sequence,
-                      xfer1_board_lat: l2.origin_lat,
-                      xfer1_board_lon: l2.origin_lon,
-                      xfer2_alight_stop_id: l2.dest_stop_id,
-                      xfer2_alight_stop_code: l2.dest_stop_code,
-                      xfer2_alight_stop_name: l2.dest_stop_name,
-                      xfer2_alight_stop_name_he: l2.dest_stop_name_he,
-                      xfer2_alight_stop_sequence: l2.dest_stop_sequence,
-                      xfer2_alight_lat: l2.dest_lat,
-                      xfer2_alight_lon: l2.dest_lon,
-                      leg2_stops_between: l2.stops_between,
-                      xfer2_walk_meters: xfer2Walk,
-                      leg3_route_id: l3.route_id,
-                      leg3_route_short_name: l3.route_short_name,
-                      leg3_route_long_name: l3.route_long_name,
-                      leg3_direction_id: l3.direction_id,
-                      xfer2_board_stop_id: l3.origin_stop_id,
-                      xfer2_board_stop_code: l3.origin_stop_code,
-                      xfer2_board_stop_name: l3.origin_stop_name,
-                      xfer2_board_stop_name_he: l3.origin_stop_name_he,
-                      xfer2_board_stop_sequence: l3.origin_stop_sequence,
-                      xfer2_board_lat: l3.origin_lat,
-                      xfer2_board_lon: l3.origin_lon,
-                      dest_stop_id: l3.dest_stop_id,
-                      dest_stop_code: l3.dest_stop_code,
-                      dest_stop_name: l3.dest_stop_name,
-                      dest_stop_name_he: l3.dest_stop_name_he,
-                      dest_stop_sequence: l3.dest_stop_sequence,
-                      dest_lat: l3.dest_lat,
-                      dest_lon: l3.dest_lon,
-                      leg3_stops_between: l3.stops_between
-                    }
-                  });
-                }
-              }
-            }
+            collectCombos(leg1List, leg2List, leg3List);
           }
         } else {
+          const detourDist =
+            haversineDistanceMeters(originLat, originLon, oH.lat, oH.lon) +
+            haversineDistanceMeters(oH.lat, oH.lon, core.lat, core.lon) +
+            haversineDistanceMeters(core.lat, core.lon, destLat, destLon);
+          if (detourDist > directDist * 1.45 + 15_000) continue;
+
           const leg2List = await this.findDirectRoutesBetweenPoints(
             oH.lat,
             oH.lon,
@@ -1338,101 +1418,7 @@ class SupabaseService {
             destLon,
             Math.max(radiusMeters, 1000)
           );
-          for (const l1 of leg1List.slice(0, 3)) {
-            for (const l2 of leg2List.slice(0, 3)) {
-              for (const l3 of leg3List.slice(0, 3)) {
-                if (
-                  l1.route_id === l2.route_id ||
-                  l2.route_id === l3.route_id ||
-                  l1.route_id === l3.route_id ||
-                  l1.origin_stop_sequence >= l1.dest_stop_sequence ||
-                  l2.origin_stop_sequence >= l2.dest_stop_sequence ||
-                  l3.origin_stop_sequence >= l3.dest_stop_sequence
-                ) {
-                  continue;
-                }
-                const xfer1Walk = Math.round(
-                  haversineDistanceMeters(l1.dest_lat, l1.dest_lon, l2.origin_lat, l2.origin_lon)
-                );
-                const xfer2Walk = Math.round(
-                  haversineDistanceMeters(l2.dest_lat, l2.dest_lon, l3.origin_lat, l3.origin_lon)
-                );
-                if (xfer1Walk > 900 || xfer2Walk > 900) continue;
-
-                const totalStops = l1.stops_between + l2.stops_between + l3.stops_between;
-                const score = totalStops * 10 + xfer1Walk + xfer2Walk;
-                const key = `${l1.route_id}:${l2.route_id}:${l3.route_id}`;
-                const existing = collected.get(key);
-                if (existing && existing.score <= score) continue;
-
-                collected.set(key, {
-                  score,
-                  row: {
-                    transfers_count: 2,
-                    leg1_route_id: l1.route_id,
-                    leg1_route_short_name: l1.route_short_name,
-                    leg1_route_long_name: l1.route_long_name,
-                    leg1_direction_id: l1.direction_id,
-                    origin_stop_id: l1.origin_stop_id,
-                    origin_stop_code: l1.origin_stop_code,
-                    origin_stop_name: l1.origin_stop_name,
-                    origin_stop_name_he: l1.origin_stop_name_he,
-                    origin_stop_sequence: l1.origin_stop_sequence,
-                    origin_lat: l1.origin_lat,
-                    origin_lon: l1.origin_lon,
-                    xfer1_alight_stop_id: l1.dest_stop_id,
-                    xfer1_alight_stop_code: l1.dest_stop_code,
-                    xfer1_alight_stop_name: l1.dest_stop_name,
-                    xfer1_alight_stop_name_he: l1.dest_stop_name_he,
-                    xfer1_alight_stop_sequence: l1.dest_stop_sequence,
-                    xfer1_alight_lat: l1.dest_lat,
-                    xfer1_alight_lon: l1.dest_lon,
-                    leg1_stops_between: l1.stops_between,
-                    xfer1_walk_meters: xfer1Walk,
-                    leg2_route_id: l2.route_id,
-                    leg2_route_short_name: l2.route_short_name,
-                    leg2_route_long_name: l2.route_long_name,
-                    leg2_direction_id: l2.direction_id,
-                    xfer1_board_stop_id: l2.origin_stop_id,
-                    xfer1_board_stop_code: l2.origin_stop_code,
-                    xfer1_board_stop_name: l2.origin_stop_name,
-                    xfer1_board_stop_name_he: l2.origin_stop_name_he,
-                    xfer1_board_stop_sequence: l2.origin_stop_sequence,
-                    xfer1_board_lat: l2.origin_lat,
-                    xfer1_board_lon: l2.origin_lon,
-                    xfer2_alight_stop_id: l2.dest_stop_id,
-                    xfer2_alight_stop_code: l2.dest_stop_code,
-                    xfer2_alight_stop_name: l2.dest_stop_name,
-                    xfer2_alight_stop_name_he: l2.dest_stop_name_he,
-                    xfer2_alight_stop_sequence: l2.dest_stop_sequence,
-                    xfer2_alight_lat: l2.dest_lat,
-                    xfer2_alight_lon: l2.dest_lon,
-                    leg2_stops_between: l2.stops_between,
-                    xfer2_walk_meters: xfer2Walk,
-                    leg3_route_id: l3.route_id,
-                    leg3_route_short_name: l3.route_short_name,
-                    leg3_route_long_name: l3.route_long_name,
-                    leg3_direction_id: l3.direction_id,
-                    xfer2_board_stop_id: l3.origin_stop_id,
-                    xfer2_board_stop_code: l3.origin_stop_code,
-                    xfer2_board_stop_name: l3.origin_stop_name,
-                    xfer2_board_stop_name_he: l3.origin_stop_name_he,
-                    xfer2_board_stop_sequence: l3.origin_stop_sequence,
-                    xfer2_board_lat: l3.origin_lat,
-                    xfer2_board_lon: l3.origin_lon,
-                    dest_stop_id: l3.dest_stop_id,
-                    dest_stop_code: l3.dest_stop_code,
-                    dest_stop_name: l3.dest_stop_name,
-                    dest_stop_name_he: l3.dest_stop_name_he,
-                    dest_stop_sequence: l3.dest_stop_sequence,
-                    dest_lat: l3.dest_lat,
-                    dest_lon: l3.dest_lon,
-                    leg3_stops_between: l3.stops_between
-                  }
-                });
-              }
-            }
-          }
+          collectCombos(leg1List, leg2List, leg3List);
         }
       }
     }
@@ -1741,6 +1727,7 @@ class SupabaseService {
     if (/הנשיא|ха-?наси|hanassi/.test(q)) return ['הנשיא', 'hanassi'];
     if (/ההגנה|ха-?хагана|hagana/.test(q)) return ['ההגנה', 'hagana'];
     if (/נרקיסים|наркисим|narkisim/.test(q)) return ['נרקיסים', 'narkisim'];
+    if (/ביאליק|бялик|bialik/.test(q)) return ['ביאליק', 'bialik'];
     return q ? [q] : [];
   }
 
@@ -2007,10 +1994,13 @@ class SupabaseService {
     const cleaned = streetName.trim();
     if (!cleaned) return [];
 
+    const stKeywords = this.resolveStreetKeywords(cleaned);
+    const rpcStreet = stKeywords[0] ?? cleaned;
+
     if (this.client) {
       try {
         const { data, error } = await this.client.rpc('find_popular_stop_on_street', {
-          street_name: cleaned,
+          street_name: rpcStreet,
           city_hint: cityHint ?? null,
           near_lat: nearLat ?? null,
           near_lon: nearLon ?? null
@@ -2027,7 +2017,7 @@ class SupabaseService {
       try {
         const res = await this.pgPool.query(
           `SELECT * FROM find_popular_stop_on_street($1, $2, $3, $4)`,
-          [cleaned, cityHint ?? null, nearLat ?? null, nearLon ?? null]
+          [rpcStreet, cityHint ?? null, nearLat ?? null, nearLon ?? null]
         );
         if (res.rows.length > 0) {
           return res.rows.map((row) => this.mapResolvedStopRow(row as Record<string, unknown>));
@@ -2039,81 +2029,96 @@ class SupabaseService {
 
     if (this.client) {
       try {
-        const stKeywords = this.resolveStreetKeywords(cleaned);
         if (stKeywords.length === 0) return [];
-        const orFilter = stKeywords
-          .flatMap((kw) => [`stop_name.ilike.%${kw}%`, `stop_name_he.ilike.%${kw}%`])
+        const streetOrFilter = stKeywords
+          .flatMap((kw) => {
+            const safe = kw.replace(/,/g, ' ').trim();
+            return safe ? [`stop_name.ilike.%${safe}%`, `stop_name_he.ilike.%${safe}%`] : [];
+          })
           .join(',');
-        const { data: stopsData } = await this.client
+        if (!streetOrFilter) return [];
+
+        const cityKeywords = cityHint ? this.resolveCityKeywords(cityHint) : [];
+        let query = this.client
           .from('stops')
-          .select('stop_id, stop_code, stop_name, stop_name_he')
-          .or(orFilter)
-          .limit(20);
+          .select('stop_id, stop_code, stop_name, stop_name_he, location')
+          .or(streetOrFilter);
 
-        if (stopsData && stopsData.length > 0) {
-          const stopIds = stopsData.map((s) => String(s.stop_id));
-          const { data: rsData } = await this.client
-            .from('route_stops')
-            .select('stop_id, route_id, direction_id')
-            .in('stop_id', stopIds);
-
-          const routeCount = new Map<string, Set<string>>();
-          const sampleDir = new Map<string, { routeId: string; dir: 0 | 1 }>();
-          for (const rs of rsData ?? []) {
-            const sid = String(rs.stop_id);
-            const set = routeCount.get(sid) ?? new Set<string>();
-            set.add(String(rs.route_id));
-            routeCount.set(sid, set);
-            if (!sampleDir.has(sid)) {
-              sampleDir.set(sid, {
-                routeId: String(rs.route_id),
-                dir: Number(rs.direction_id) === 1 ? 1 : 0
-              });
-            }
+        if (cityKeywords.length > 0) {
+          const cityOrFilter = cityKeywords
+            .flatMap((ck) => {
+              const safe = ck.replace(/,/g, ' ').trim();
+              return safe ? [`stop_name.ilike.%${safe}%`, `stop_name_he.ilike.%${safe}%`] : [];
+            })
+            .join(',');
+          if (cityOrFilter) {
+            query = query.or(cityOrFilter);
           }
-
-          const cityKeywords = cityHint ? this.resolveCityKeywords(cityHint) : [];
-          const cityFiltered =
-            cityKeywords.length > 0
-              ? stopsData.filter((s) =>
-                  cityKeywords.some((ck) =>
-                    `${s.stop_name} ${s.stop_name_he ?? ''}`.toLowerCase().includes(ck.toLowerCase())
-                  )
-                )
-              : [];
-          const pool = cityFiltered.length > 0 ? cityFiltered : stopsData;
-
-          const resolved: ResolvedStopOption[] = [];
-          for (const s of pool) {
-            const ref = sampleDir.get(String(s.stop_id));
-            if (!ref) continue;
-            const coords = (await this.getDirectionStopCoords(ref.routeId, ref.dir)).find(
-              (c) => c.stop_id === s.stop_id
-            );
-            if (!coords) continue;
-            const dist =
-              nearLat !== undefined && nearLon !== undefined
-                ? Math.round(haversineDistanceMeters(nearLat, nearLon, coords.lat, coords.lon))
-                : undefined;
-            resolved.push({
-              stop_id: coords.stop_id,
-              stop_code: coords.stop_code,
-              stop_name: coords.stop_name,
-              stop_name_he: coords.stop_name_he,
-              lat: coords.lat,
-              lon: coords.lon,
-              routes_count: routeCount.get(String(s.stop_id))?.size ?? 1,
-              distance_meters: dist,
-              is_hub: /(מרכז|קניון|צומת|מרפאה|Center|Mall|Junction|Clinic)/i.test(
-                `${coords.stop_name} ${coords.stop_name_he}`
-              )
-            });
-          }
-
-          return resolved
-            .sort((a, b) => (b.routes_count ?? 0) - (a.routes_count ?? 0) || (a.distance_meters ?? 0) - (b.distance_meters ?? 0))
-            .slice(0, 6);
         }
+
+        const { data: stopsData } = await query.limit(40);
+        if (!stopsData || stopsData.length === 0) return [];
+
+        const pool =
+          cityKeywords.length > 0
+            ? stopsData.filter((s) =>
+                cityKeywords.some((ck) =>
+                  `${s.stop_name} ${s.stop_name_he ?? ''}`.toLowerCase().includes(ck.toLowerCase())
+                )
+              )
+            : stopsData;
+
+        if (pool.length === 0) {
+          return [];
+        }
+
+        const stopIds = pool.map((s) => String(s.stop_id));
+        const { data: rsData } = await this.client
+          .from('route_stops')
+          .select('stop_id, route_id')
+          .in('stop_id', stopIds);
+
+        const routeCount = new Map<string, Set<string>>();
+        for (const rs of rsData ?? []) {
+          const sid = String(rs.stop_id);
+          const set = routeCount.get(sid) ?? new Set<string>();
+          set.add(String(rs.route_id));
+          routeCount.set(sid, set);
+        }
+
+        const resolved: ResolvedStopOption[] = [];
+        for (const s of pool) {
+          const coords = parsePostgisPoint(s.location);
+          if (!coords) continue;
+          const sid = String(s.stop_id);
+          const stopName = String(s.stop_name ?? '');
+          const stopNameHe = String(s.stop_name_he ?? stopName);
+          const dist =
+            nearLat !== undefined && nearLon !== undefined
+              ? Math.round(haversineDistanceMeters(nearLat, nearLon, coords.lat, coords.lon))
+              : undefined;
+          resolved.push({
+            stop_id: sid,
+            stop_code: String(s.stop_code ?? sid),
+            stop_name: stopName,
+            stop_name_he: stopNameHe,
+            lat: coords.lat,
+            lon: coords.lon,
+            routes_count: routeCount.get(sid)?.size ?? 0,
+            ...(dist !== undefined ? { distance_meters: dist } : {}),
+            is_hub: /(מרכז|קניון|צומת|מרפאה|Center|Mall|Junction|Clinic)/i.test(
+              `${stopName} ${stopNameHe}`
+            )
+          });
+        }
+
+        return resolved
+          .sort(
+            (a, b) =>
+              (b.routes_count ?? 0) - (a.routes_count ?? 0) ||
+              (a.distance_meters ?? 0) - (b.distance_meters ?? 0)
+          )
+          .slice(0, 6);
       } catch (err) {
         console.warn('[Supabase] findPopularStopOnStreet fallback error:', (err as Error).message);
       }
@@ -2345,33 +2350,99 @@ class SupabaseService {
   async findStopsByNameQuery(
     query: string,
     nearLat?: number,
-    nearLon?: number
+    nearLon?: number,
+    cityHint?: string
   ): Promise<ResolvedStopOption[]> {
     this.ensureInit();
     const cleaned = query.trim();
     if (!cleaned) return [];
 
-    if (/^\d{4,6}$/.test(cleaned) && this.pgPool) {
-      try {
-        const res = await this.pgPool.query(
-          `SELECT
-             s.stop_id, s.stop_code, s.stop_name, COALESCE(s.stop_name_he, s.stop_name) AS stop_name_he,
-             ST_Y(s.location::geometry)::FLOAT AS stop_lat, ST_X(s.location::geometry)::FLOAT AS stop_lon,
-             CASE WHEN $2::FLOAT IS NOT NULL AND $3::FLOAT IS NOT NULL
-               THEN ROUND(ST_Distance(s.location, ST_SetSRID(ST_MakePoint($3, $2), 4326)::geography))::INT
-               ELSE NULL::INT END AS distance_meters
-           FROM stops s WHERE s.stop_code = $1 LIMIT 3`,
-          [cleaned, nearLat ?? null, nearLon ?? null]
-        );
-        if (res.rows.length > 0) {
-          return res.rows.map((r) => this.mapResolvedStopRow(r as Record<string, unknown>));
+    if (/^\d{4,6}$/.test(cleaned)) {
+      if (this.pgPool) {
+        try {
+          const res = await this.pgPool.query(
+            `SELECT
+               s.stop_id, s.stop_code, s.stop_name, COALESCE(s.stop_name_he, s.stop_name) AS stop_name_he,
+               ST_Y(s.location::geometry)::FLOAT AS stop_lat, ST_X(s.location::geometry)::FLOAT AS stop_lon,
+               CASE WHEN $2::FLOAT IS NOT NULL AND $3::FLOAT IS NOT NULL
+                 THEN ROUND(ST_Distance(s.location, ST_SetSRID(ST_MakePoint($3, $2), 4326)::geography))::INT
+                 ELSE NULL::INT END AS distance_meters
+             FROM stops s WHERE s.stop_code = $1 LIMIT 3`,
+            [cleaned, nearLat ?? null, nearLon ?? null]
+          );
+          if (res.rows.length > 0) {
+            return res.rows.map((r) => this.mapResolvedStopRow(r as Record<string, unknown>));
+          }
+        } catch {
+          // Fallback below
         }
-      } catch {
-        // Fallback below
+      }
+
+      if (this.client) {
+        try {
+          const { data } = await this.client
+            .from('stops')
+            .select('stop_id, stop_code, stop_name, stop_name_he, location')
+            .eq('stop_code', cleaned)
+            .limit(3);
+          if (data && data.length > 0) {
+            const parsed: ResolvedStopOption[] = [];
+            for (const s of data) {
+              const coords = parsePostgisPoint(s.location);
+              if (!coords) continue;
+              const sid = String(s.stop_id);
+              const stopName = String(s.stop_name ?? '');
+              const dist =
+                nearLat !== undefined && nearLon !== undefined
+                  ? Math.round(haversineDistanceMeters(nearLat, nearLon, coords.lat, coords.lon))
+                  : undefined;
+              parsed.push({
+                stop_id: sid,
+                stop_code: String(s.stop_code ?? sid),
+                stop_name: stopName,
+                stop_name_he: String(s.stop_name_he ?? stopName),
+                lat: coords.lat,
+                lon: coords.lon,
+                ...(dist !== undefined ? { distance_meters: dist } : {})
+              });
+            }
+            if (parsed.length > 0) return parsed;
+          }
+        } catch {
+          // Fallback below
+        }
       }
     }
 
-    return this.findPopularStopOnStreet(cleaned, undefined, nearLat, nearLon);
+    const directHits = await this.findPopularStopOnStreet(cleaned, cityHint, nearLat, nearLon);
+    if (directHits.length > 0) return directHits;
+
+    const normalized = cleaned
+      .replace(/אזור\s*תעשייה|אזה["״׳']{1,2}ת/g, 'אזהת')
+      .trim();
+    const genericTokens = new Set([
+      'קופת', 'חולים', 'אזור', 'תעשייה', 'אזהת', 'בית', 'מרכז', 'קניון',
+      'חוף', 'שוק', 'פארק', 'תחנת', 'תחנה', 'רחוב', 'שדרות', 'דרך', 'של', 'על'
+    ]);
+    const distinguishing = normalized
+      .split(/[\s,/"'״׳-]+/)
+      .map((t) => t.trim())
+      .filter((t) => t.length >= 2 && !genericTokens.has(t) && !/^\d+$/.test(t));
+
+    const candidatesToTry: string[] = [];
+    if (/(?:תעשייה|אזה["״׳']{0,2}ת|אזהת)/.test(cleaned) && distinguishing.length > 0) {
+      for (const tok of distinguishing) {
+        candidatesToTry.push(`אזה''ת ${tok}`, `תעשייה ${tok}`);
+      }
+    }
+    candidatesToTry.push(...distinguishing);
+
+    for (const candidate of candidatesToTry) {
+      const hits = await this.findPopularStopOnStreet(candidate, cityHint, nearLat, nearLon);
+      if (hits.length > 0) return hits;
+    }
+
+    return [];
   }
 
   async upsertUserRouteHistoryRow(input: UpsertUserHistoryInput): Promise<void> {

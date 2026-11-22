@@ -533,5 +533,96 @@ describe('Intent Router & Conversational Query Parsing', () => {
         vi.restoreAllMocks();
       }
     });
+
+    it('prevents city gazetteer from hijacking POIs like "סופרפארם טירת כרמל" to Tirat Carmel center', async () => {
+      expect(classifyDestinationGranularity('סופרפארם טירת כרמל')).toMatchObject({
+        granularity: 'poi',
+        cityName: 'טירת כרמל'
+      });
+
+      vi.spyOn(redisService, 'getJson').mockResolvedValue(null);
+      vi.spyOn(redisService, 'setJson').mockResolvedValue(undefined);
+      const centralSpy = vi.spyOn(supabaseService, 'findCentralStopForCity').mockResolvedValue(null);
+      vi.spyOn(supabaseService, 'findNearestStopsToPoint').mockResolvedValue([
+        {
+          stop_id: 'stop-42682',
+          stop_code: '42682',
+          stop_name: 'קופת חולים כללית /ששת הימים (טירת כרמל)',
+          stop_name_he: 'קופת חולים כללית /ששת הימים (טירת כרמל)',
+          lat: 32.7595,
+          lon: 34.9732,
+          distance_meters: 35
+        }
+      ]);
+
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+        const url = String(input);
+        if (url.includes('nominatim.openstreetmap.org')) {
+          return new Response(
+            JSON.stringify([
+              {
+                lat: '32.7595743',
+                lon: '34.9728838',
+                display_name: 'סופר-פארם, טירת כרמל, ישראל',
+                name: 'סופר-פארם',
+                addresstype: 'pharmacy',
+                type: 'pharmacy'
+              }
+            ]),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        return new Response(JSON.stringify({ features: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      });
+
+      try {
+        const res = await resolveDestinationText('סופרפארם טירת כרמל', { lat: 32.7662, lon: 34.9675 });
+        expect(res.source).toBe('osm_nominatim');
+        expect(res.lat).toBeCloseTo(32.7595743, 4);
+        expect(res.lon).toBeCloseTo(34.9728838, 4);
+        expect(res.resolved_stop?.stop_id).toBe('stop-42682');
+        expect(centralSpy).not.toHaveBeenCalled();
+        expect(fetchSpy).toHaveBeenCalled();
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
+
+    it('strips non-Haifa city names cleanly for street queries like "רחוב הרצל נתניה"', async () => {
+      expect(classifyDestinationGranularity('רחוב הרצל נתניה')).toMatchObject({
+        granularity: 'street',
+        cityName: 'נתניה',
+        streetName: 'הרצל'
+      });
+
+      vi.spyOn(redisService, 'getJson').mockResolvedValue(null);
+      vi.spyOn(redisService, 'setJson').mockResolvedValue(undefined);
+      const streetSpy = vi
+        .spyOn(supabaseService, 'findPopularStopOnStreet')
+        .mockResolvedValue([
+          {
+            stop_id: 'stop-39247',
+            stop_code: '39247',
+            stop_name: 'הרצל/עולי הגרדום (נתניה)',
+            stop_name_he: 'הרצל/עולי הגרדום (נתניה)',
+            lat: 32.327,
+            lon: 34.855,
+            routes_count: 14
+          }
+        ]);
+
+      try {
+        const res = await resolveDestinationText('רחוב הרצל נתניה', { lat: 32.28, lon: 34.858 });
+        expect(res.source).toBe('gtfs_db');
+        expect(res.city_name).toBe('נתניה');
+        expect(res.resolved_stop?.stop_id).toBe('stop-39247');
+        expect(streetSpy).toHaveBeenCalledWith('הרצל', 'נתניה', 32.28, 34.858);
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
   });
 });

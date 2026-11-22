@@ -958,6 +958,9 @@ export class LiteTimelineViewComponent {
 
   formatOptionRoute(opt: RecommendedBusOption): string {
     if (opt.is_transfer && opt.second_leg) {
+      if (opt.third_leg) {
+        return `${opt.route.short_name}→${opt.second_leg.route.short_name}→${opt.third_leg.route.short_name}`;
+      }
       return `${opt.route.short_name}→${opt.second_leg.route.short_name}`;
     }
     return opt.route.short_name;
@@ -969,8 +972,9 @@ export class LiteTimelineViewComponent {
     if (trip && trip.transfers_count > 0 && trip.legs.length > 1) {
       return trip.legs.map((l) => l.line_number).join('→');
     }
-    if (this.activeRecOption()?.is_transfer && this.activeRecOption()?.second_leg) {
-      return `${base}→${this.activeRecOption()!.second_leg!.route.short_name}`;
+    const rec = this.activeRecOption();
+    if (rec?.is_transfer && rec.second_leg) {
+      return this.formatOptionRoute(rec);
     }
     return base;
   });

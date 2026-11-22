@@ -16,6 +16,7 @@ import * as L from 'leaflet';
 import type {
   LiveBusStatusResponse,
   RecommendedBusOption,
+  TripLeg,
   TripOption,
   WidgetLang
 } from '../../models/bus.models';
@@ -670,6 +671,31 @@ import type {
         background: #3087f6;
         color: #ffffff;
         box-shadow: 0 0 0 5px rgba(59, 130, 246, 0.28), 0 3px 10px rgba(0, 0, 0, 0.5);
+      }
+
+      .nb-pin-gps {
+        inline-size: 18px;
+        block-size: 18px;
+        border-radius: 999px;
+        background: #2563eb;
+        border: 3px solid #ffffff;
+        box-shadow: 0 0 0 6px rgba(37, 99, 235, 0.35), 0 2px 8px rgba(0, 0, 0, 0.45);
+        animation: nb-gps-pulse 2s infinite ease-in-out;
+      }
+
+      @keyframes nb-gps-pulse {
+        0%, 100% {
+          box-shadow: 0 0 0 5px rgba(37, 99, 235, 0.35), 0 2px 8px rgba(0, 0, 0, 0.45);
+        }
+        50% {
+          box-shadow: 0 0 0 11px rgba(37, 99, 235, 0.14), 0 2px 8px rgba(0, 0, 0, 0.45);
+        }
+      }
+
+      .nb-pin-board {
+        background: #10b981;
+        color: #ffffff;
+        box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.28), 0 3px 10px rgba(0, 0, 0, 0.5);
       }
 
       .nb-pin-dest {
@@ -1357,6 +1383,9 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
 
   formatOptionRoute(opt: RecommendedBusOption): string {
     if (opt.is_transfer && opt.second_leg) {
+      if (opt.third_leg) {
+        return `${opt.route.short_name}→${opt.second_leg.route.short_name}→${opt.third_leg.route.short_name}`;
+      }
       return `${opt.route.short_name}→${opt.second_leg.route.short_name}`;
     }
     return opt.route.short_name;
@@ -1377,6 +1406,35 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
     if (!this.map) return;
     this.lastFitSignature = '';
     this.renderMapLayers(this.state(), this.lang(), this.clampedOptionIndex());
+  }
+
+  private approxMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
+    const dLat = (lat2 - lat1) * 111_000;
+    const dLon = (lon2 - lon1) * 111_000 * Math.cos((lat1 * Math.PI) / 180);
+    return Math.hypot(dLat, dLon);
+  }
+
+  private sliceLegStops(leg: TripLeg): NonNullable<TripLeg['timeline_stops']> {
+    const stops = leg.timeline_stops ?? [];
+    if (stops.length === 0) return [];
+    const startSeq = leg.board_stop.stop_sequence;
+    const endSeq = leg.alight_stop.stop_sequence;
+    if (startSeq !== undefined && endSeq !== undefined && endSeq >= startSeq) {
+      const sliced = stops.filter(
+        (s) => s.stop_sequence >= startSeq && s.stop_sequence <= endSeq
+      );
+      if (sliced.length > 0) return sliced;
+    }
+    const startIdx = stops.findIndex(
+      (s) => s.stop_id === leg.board_stop.stop_id || s.stop_code === leg.board_stop.stop_code
+    );
+    const endIdx = stops.findIndex(
+      (s) => s.stop_id === leg.alight_stop.stop_id || s.stop_code === leg.alight_stop.stop_code
+    );
+    if (startIdx >= 0 && endIdx >= startIdx) {
+      return stops.slice(startIdx, endIdx + 1);
+    }
+    return stops;
   }
 
   private renderMapLayers(
@@ -1402,10 +1460,11 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
         const legColor = legColors[legIdx % legColors.length];
         const stopFill = stopFillColors[legIdx % stopFillColors.length];
         const dashArray = legIdx === 1 ? '8, 6' : legIdx >= 2 ? '6, 6' : undefined;
+        const legStops = this.sliceLegStops(leg);
 
-        // Polyline from timeline_stops if available
-        if (leg.timeline_stops && leg.timeline_stops.length > 0) {
-          const legCoords: L.LatLngExpression[] = leg.timeline_stops.map((s) => [s.lat, s.lon]);
+        // Polyline from sliced leg stops if available
+        if (legStops.length > 0) {
+          const legCoords: L.LatLngExpression[] = legStops.map((s) => [s.lat, s.lon]);
           L.polyline(legCoords, {
             color: legColor,
             weight: 5,
@@ -1413,7 +1472,7 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
             dashArray
           }).addTo(this.markersLayer!);
 
-          for (const s of leg.timeline_stops) {
+          for (const s of legStops) {
             boundsPoints.push([s.lat, s.lon]);
             const isBoard = s.stop_id === leg.board_stop.stop_id || s.stop_code === leg.board_stop.stop_code;
             const isAlight = s.stop_id === leg.alight_stop.stop_id || s.stop_code === leg.alight_stop.stop_code;
@@ -1449,18 +1508,36 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
           boundsPoints.push([leg.alight_stop.lat, leg.alight_stop.lon]);
         }
 
-        // Leg 0: Initial Boarding Pin
+        // Leg 0: Walking connector from User GPS + crisp 🚏 Boarding Stop Pin
         if (legIdx === 0 && leg.board_stop.lat && leg.board_stop.lon) {
+          if (data.user_location) {
+            const walkToBoardM = this.approxMeters(
+              data.user_location.lat,
+              data.user_location.lon,
+              leg.board_stop.lat,
+              leg.board_stop.lon
+            );
+            if (walkToBoardM > 20) {
+              L.polyline(
+                [
+                  [data.user_location.lat, data.user_location.lon],
+                  [leg.board_stop.lat, leg.board_stop.lon]
+                ],
+                { color: '#60a5fa', weight: 3, dashArray: '4, 6', opacity: 0.85 }
+              ).addTo(this.markersLayer!);
+            }
+          }
+
           boundsPoints.push([leg.board_stop.lat, leg.board_stop.lon]);
           const boardIcon = L.divIcon({
             className: '',
-            html: '<div class="nb-pin-emoji nb-pin-user">📍</div>',
-            iconSize: [32, 32],
-            iconAnchor: [16, 16]
+            html: '<div class="nb-pin-emoji nb-pin-board">🚏</div>',
+            iconSize: [30, 30],
+            iconAnchor: [15, 15]
           });
           L.marker([leg.board_stop.lat, leg.board_stop.lon], { icon: boardIcon })
             .bindPopup(
-              `<strong>📍 ${lang === 'he' ? 'עליה לקו' : lang === 'en' ? 'Board Line' : 'Посадка на Линию'} ${leg.line_number}</strong><br/>${lang === 'he' ? leg.board_stop.stop_name_he : leg.board_stop.stop_name} (#${leg.board_stop.stop_code})`
+              `<strong>🚏 ${lang === 'he' ? 'עליה לקו' : lang === 'en' ? 'Board Line' : 'Посадка на Линию'} ${leg.line_number}</strong><br/>${lang === 'he' ? leg.board_stop.stop_name_he : leg.board_stop.stop_name} (#${leg.board_stop.stop_code})`
             )
             .addTo(this.markersLayer!);
         }
@@ -1511,29 +1588,67 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
           }
         }
 
-        // Final Destination Alighting Pin
+        // Final Alighting stop: dotted walk to destination (strictly ONE 🏁 rendered in Section 3, or here only if no destination)
         if (legIdx === tripOpt.legs.length - 1 && leg.alight_stop.lat && leg.alight_stop.lon) {
           boundsPoints.push([leg.alight_stop.lat, leg.alight_stop.lon]);
-          const alightIcon = L.divIcon({
-            className: '',
-            html: '<div class="nb-pin-emoji nb-pin-dest">🏁</div>',
-            iconSize: [32, 32],
-            iconAnchor: [16, 16]
-          });
-          L.marker([leg.alight_stop.lat, leg.alight_stop.lon], { icon: alightIcon })
-            .bindPopup(
-              `<strong>🏁 ${lang === 'he' ? 'ירידה סופית מקו' : lang === 'en' ? 'Final Alight from Line' : 'Высадка из Линии'} ${leg.line_number}</strong><br/>${lang === 'he' ? leg.alight_stop.stop_name_he : leg.alight_stop.stop_name} (#${leg.alight_stop.stop_code})`
-            )
-            .addTo(this.markersLayer!);
+          if (data.destination) {
+            if (legStops.length === 0) {
+              L.circleMarker([leg.alight_stop.lat, leg.alight_stop.lon], {
+                radius: 7,
+                color: '#0f172a',
+                weight: 2,
+                fillColor: '#ef4444',
+                fillOpacity: 1
+              })
+                .bindPopup(
+                  `<strong>${lang === 'he' ? 'ירידה מהקו' : lang === 'en' ? 'Alight Line' : 'Высадка из Линии'} ${leg.line_number}</strong><br/>${lang === 'he' ? leg.alight_stop.stop_name_he : leg.alight_stop.stop_name} (#${leg.alight_stop.stop_code})`
+                )
+                .addTo(this.markersLayer!);
+            }
+            const walkFromAlightM = this.approxMeters(
+              leg.alight_stop.lat,
+              leg.alight_stop.lon,
+              data.destination.lat,
+              data.destination.lon
+            );
+            if (walkFromAlightM > 25) {
+              L.polyline(
+                [
+                  [leg.alight_stop.lat, leg.alight_stop.lon],
+                  [data.destination.lat, data.destination.lon]
+                ],
+                { color: '#f87171', weight: 3, dashArray: '4, 6', opacity: 0.85 }
+              ).addTo(this.markersLayer!);
+            }
+          } else {
+            const alightIcon = L.divIcon({
+              className: '',
+              html: '<div class="nb-pin-emoji nb-pin-dest">🏁</div>',
+              iconSize: [32, 32],
+              iconAnchor: [16, 16]
+            });
+            L.marker([leg.alight_stop.lat, leg.alight_stop.lon], { icon: alightIcon })
+              .bindPopup(
+                `<strong>🏁 ${lang === 'he' ? 'ירידה סופית מקו' : lang === 'en' ? 'Final Alight from Line' : 'Высадка из Линии'} ${leg.line_number}</strong><br/>${lang === 'he' ? leg.alight_stop.stop_name_he : leg.alight_stop.stop_name} (#${leg.alight_stop.stop_code})`
+              )
+              .addTo(this.markersLayer!);
+          }
         }
       });
     } else {
       // 1. Primary Leg Polyline (#3087f6 electric blue) & stop dots fallback
-      const activeTimeline = activeOpt?.timeline_stops ?? data.timeline_stops;
+      const rawTimeline = activeOpt?.timeline_stops ?? data.timeline_stops;
       const originStopSeq = activeOpt?.origin_stop.stop_sequence ?? data.user_stop.stop_sequence;
       const destStopSeq = activeOpt?.is_transfer
         ? activeOpt.transfer_info?.alight_stop.stop_sequence
         : activeOpt?.dest_stop.stop_sequence;
+      const slicedTimeline =
+        originStopSeq !== undefined && destStopSeq !== undefined && destStopSeq >= originStopSeq
+          ? rawTimeline.filter(
+              (s) => s.stop_sequence >= originStopSeq && s.stop_sequence <= destStopSeq
+            )
+          : rawTimeline;
+      const activeTimeline = slicedTimeline.length > 0 ? slicedTimeline : rawTimeline;
 
       if (activeTimeline.length > 0) {
         const polyCoords: L.LatLngExpression[] = activeTimeline.map((s) => [s.lat, s.lon]);
@@ -1568,7 +1683,14 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
       // 1b. Transfer Leg 2 dashed amber polyline + walking connector + transfer hub pin
       if (activeOpt?.is_transfer && activeOpt.transfer_info && activeOpt.second_leg) {
         const xfer = activeOpt.transfer_info;
-        const leg2Stops = activeOpt.second_leg.timeline_stops;
+        const rawLeg2Stops = activeOpt.second_leg.timeline_stops;
+        const l2Start = activeOpt.second_leg.board_stop.stop_sequence;
+        const l2End = activeOpt.second_leg.alight_stop?.stop_sequence ?? activeOpt.dest_stop.stop_sequence;
+        const slicedLeg2 =
+          l2Start !== undefined && l2End !== undefined && l2End >= l2Start
+            ? rawLeg2Stops.filter((s) => s.stop_sequence >= l2Start && s.stop_sequence <= l2End)
+            : rawLeg2Stops;
+        const leg2Stops = slicedLeg2.length > 0 ? slicedLeg2 : rawLeg2Stops;
         if (leg2Stops.length > 0) {
           const leg2Coords: L.LatLngExpression[] = leg2Stops.map((s) => [s.lat, s.lon]);
           L.polyline(leg2Coords, {
@@ -1630,15 +1752,15 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
       }
     }
 
-    // 2. User GPS Marker (Signature Blue Pin)
+    // 2. User GPS Marker (strictly ONE pulsing blue GPS dot)
     if (data.user_location) {
       const userPos: L.LatLngExpression = [data.user_location.lat, data.user_location.lon];
       boundsPoints.push(userPos);
       const userIcon = L.divIcon({
         className: '',
-        html: '<div class="nb-pin-emoji nb-pin-user">📍</div>',
-        iconSize: [30, 30],
-        iconAnchor: [15, 15]
+        html: '<div class="nb-pin-gps"></div>',
+        iconSize: [20, 20],
+        iconAnchor: [10, 10]
       });
       L.marker(userPos, { icon: userIcon })
         .bindPopup(
@@ -1647,7 +1769,7 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
         .addTo(this.markersLayer);
     }
 
-    // 3. Destination Marker (Point B)
+    // 3. Destination Marker (strictly ONE 🏁 Finish Pin)
     if (data.destination) {
       const destPos: L.LatLngExpression = [data.destination.lat, data.destination.lon];
       boundsPoints.push(destPos);
@@ -1724,10 +1846,31 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
       });
     }
 
+    const tripSpanMeters =
+      data.user_location && data.destination
+        ? this.approxMeters(
+            data.user_location.lat,
+            data.user_location.lon,
+            data.destination.lat,
+            data.destination.lon
+          )
+        : 2500;
+    const maxBusBoundDist = Math.max(2500, tripSpanMeters * 1.5);
+    const originAnchor = data.user_location ?? data.user_stop;
+    const destAnchor = data.destination;
+
     for (const item of busEntries) {
       activeBusKeys.add(item.key);
       const busPos: L.LatLngExpression = [item.lat, item.lon];
-      boundsPoints.push(busPos);
+      const nearOrigin = originAnchor
+        ? this.approxMeters(item.lat, item.lon, originAnchor.lat, originAnchor.lon) <= maxBusBoundDist
+        : true;
+      const nearDest = destAnchor
+        ? this.approxMeters(item.lat, item.lon, destAnchor.lat, destAnchor.lon) <= maxBusBoundDist
+        : false;
+      if (nearOrigin || nearDest) {
+        boundsPoints.push(busPos);
+      }
       this.upsertBusMarker(
         item.key,
         busPos,
@@ -1761,8 +1904,11 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
         .addTo(this.markersLayer);
     }
 
+    const userKey = data.user_location
+      ? `${data.user_location.lat.toFixed(4)},${data.user_location.lon.toFixed(4)}`
+      : `${data.user_stop.lat.toFixed(4)},${data.user_stop.lon.toFixed(4)}`;
     const fitSignature = data.destination
-      ? `${data.destination.lat.toFixed(4)},${data.destination.lon.toFixed(4)}:${optionIdx}:${activeOpt?.route.route_id ?? ''}:${activeOpt?.origin_stop.stop_id ?? ''}`
+      ? `${userKey}->${data.destination.lat.toFixed(4)},${data.destination.lon.toFixed(4)}:${optionIdx}:${activeOpt?.route.route_id ?? ''}:${activeOpt?.origin_stop.stop_id ?? ''}`
       : `${data.route.route_id}:${data.route.direction_id}`;
 
     if (this.lastFitSignature !== fitSignature && boundsPoints.length >= 2) {
