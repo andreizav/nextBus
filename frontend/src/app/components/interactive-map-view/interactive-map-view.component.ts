@@ -37,10 +37,6 @@ import type {
       <!-- 1. Redesigned Unified Route & Arrival Hero Card -->
       <header class="nb-map-hero">
         <div class="nb-hero-route-group">
-          <div class="nb-hero-line-badge" [class.is-compact]="heroRouteDisplay().length > 4">
-            <span aria-hidden="true">🚌</span>
-            <span>{{ heroRouteDisplay() }}</span>
-          </div>
           <div class="nb-hero-route-meta">
             <span class="nb-map-metric-caption">{{ labels().busRoute }}</span>
             @if (activeBus()) {
@@ -52,6 +48,21 @@ import type {
                 <span class="nb-map-eta-dot" aria-hidden="true"></span>
                 <span>{{ etaStatusText() }}</span>
               </div>
+            }
+          </div>
+
+          <div
+            class="nb-hero-line-badge"
+            [class.is-compact]="heroRouteDisplay().length > 4 || heroRouteLegs().length > 1"
+            [class.is-long]="heroRouteDisplay().length > 8 || heroRouteLegs().length >= 3"
+            dir="ltr"
+          >
+            <span class="nb-hero-bus-icon" aria-hidden="true">🚌</span>
+            @for (leg of heroRouteLegs(); track $index; let isLast = $last) {
+              <span class="nb-hero-leg-num">{{ leg }}</span>
+              @if (!isLast) {
+                <span class="nb-hero-leg-sep" aria-hidden="true">→</span>
+              }
             }
           </div>
         </div>
@@ -107,7 +118,7 @@ import type {
             >
               <div class="nb-map-var-top">
                 <span class="nb-map-var-rank">{{ labels().optionWord }} {{ opt.rank }}</span>
-                <span class="nb-map-var-route">🚌 {{ formatOptionRoute(opt) }}</span>
+                <span class="nb-map-var-route" dir="ltr">🚌 {{ formatOptionRoute(opt) }}</span>
                 <span class="nb-map-var-time">{{ opt.total_arrival_min }} {{ labels().minShort }}</span>
               </div>
               <div class="nb-map-var-bottom" dir="auto">
@@ -284,16 +295,17 @@ import type {
         inline-size: 100%;
         min-inline-size: 0;
         max-inline-size: 100%;
-        overflow: hidden;
+        container: nb-card / inline-size;
+        overflow: clip;
         color: #f8fafc;
       }
 
       /* 1. Unified Hero Summary Card (identical to Lite View) */
       .nb-map-hero {
-        display: flex;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
         align-items: center;
-        justify-content: space-between;
-        gap: 0.75rem;
+        gap: 0.7rem;
         min-inline-size: 0;
         max-inline-size: 100%;
         padding: 0.72rem 0.88rem;
@@ -305,41 +317,66 @@ import type {
 
       .nb-hero-route-group {
         display: flex;
-        align-items: center;
-        gap: 0.65rem;
-        flex: 1 1 auto;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.44rem;
         min-inline-size: 0;
+        max-inline-size: 100%;
       }
 
       .nb-hero-line-badge {
         display: inline-flex;
+        flex-wrap: wrap;
+        flex-wrap: balance;
         align-items: center;
-        justify-content: center;
-        gap: 0.35rem;
-        padding: 0.45rem 0.78rem;
+        justify-content: flex-start;
+        row-gap: 0.22rem;
+        column-gap: 0.26rem;
+        max-inline-size: 100%;
+        min-inline-size: 0;
+        padding: 0.42rem 0.72rem;
         border-radius: 0.88rem;
         background: linear-gradient(135deg, #3b82f6, #2563eb);
         color: #ffffff;
-        font-size: clamp(1.35rem, 5.5vw, 1.85rem);
+        font-size: clamp(1.2rem, 5.2cqi, 1.75rem);
         font-weight: 800;
-        line-height: 1;
+        line-height: 1.1;
         letter-spacing: -0.02em;
-        white-space: nowrap;
-        flex-shrink: 0;
         box-shadow: 0 6px 16px rgba(37, 99, 235, 0.38);
       }
 
       .nb-hero-line-badge.is-compact {
-        font-size: clamp(1rem, 4.2vw, 1.3rem);
-        padding: 0.45rem 0.6rem;
+        font-size: clamp(0.95rem, 3.8cqi, 1.24rem);
+        padding: 0.38rem 0.6rem;
+      }
+
+      .nb-hero-line-badge.is-long {
+        font-size: clamp(0.84rem, 3.2cqi, 1.06rem);
+        padding: 0.36rem 0.54rem;
+        column-gap: 0.2rem;
+      }
+
+      .nb-hero-bus-icon,
+      .nb-hero-leg-num,
+      .nb-hero-leg-sep {
+        white-space: nowrap;
+        flex-shrink: 0;
+      }
+
+      .nb-hero-leg-sep {
+        opacity: 0.78;
+        font-weight: 700;
+        font-size: 0.86em;
       }
 
       .nb-hero-route-meta {
         display: flex;
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 0.3rem;
+        flex-direction: row;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.28rem 0.45rem;
         min-inline-size: 0;
+        max-inline-size: 100%;
       }
 
       .nb-hero-eta-box {
@@ -347,8 +384,9 @@ import type {
         flex-direction: column;
         align-items: center;
         justify-content: center;
+        align-self: center;
         gap: 0.16rem;
-        min-inline-size: 92px;
+        min-inline-size: 88px;
         padding: 0.48rem 0.78rem;
         border-radius: 0.95rem;
         background: rgba(12, 18, 28, 0.78);
@@ -417,6 +455,21 @@ import type {
         border-radius: 50%;
         flex-shrink: 0;
         background: currentColor;
+      }
+
+      @container nb-card (inline-size < 290px) {
+        .nb-map-hero {
+          grid-template-columns: minmax(0, 1fr);
+          gap: 0.55rem;
+        }
+
+        .nb-hero-eta-box {
+          flex-direction: row;
+          justify-content: space-between;
+          inline-size: 100%;
+          min-inline-size: 0;
+          padding: 0.42rem 0.72rem;
+        }
       }
 
       /* 2. Clear Route Start / End Card */
@@ -1155,17 +1208,21 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
   readonly directionStartText = computed(() => this.resolveEndpointPair().start);
   readonly directionEndText = computed(() => this.resolveEndpointPair().end);
 
-  readonly heroRouteDisplay = computed(() => {
-    const base = this.activeDisplayRoute().short_name || '—';
+  readonly heroRouteLegs = computed<string[]>(() => {
     const trip = this.activeTripOption();
     if (trip && trip.transfers_count > 0 && trip.legs.length > 1) {
-      return trip.legs.map((l) => l.line_number).join('→');
+      return trip.legs.map((l) => l.line_number).filter(Boolean);
     }
-    if (this.activeOption()?.is_transfer && this.activeOption()?.second_leg) {
-      return `${base}→${this.activeOption()!.second_leg!.route.short_name}`;
+    const opt = this.activeOption();
+    if (opt?.is_transfer && opt.second_leg) {
+      const legs = [opt.route.short_name, opt.second_leg.route.short_name];
+      if (opt.third_leg) legs.push(opt.third_leg.route.short_name);
+      return legs.filter(Boolean);
     }
-    return base;
+    return [this.activeDisplayRoute().short_name || '—'];
   });
+
+  readonly heroRouteDisplay = computed(() => this.heroRouteLegs().join('→'));
 
   readonly etaDigits = computed(() => {
     const eta = this.activeBus()?.eta_minutes;

@@ -31,10 +31,6 @@ import type {
       <!-- 1. Redesigned Unified Route & Arrival Hero Card -->
       <header class="hero-metrics">
         <div class="hero-route-group">
-          <div class="hero-line-badge" [class.is-compact]="heroRouteDisplay().length > 4">
-            <span aria-hidden="true">🚌</span>
-            <span>{{ heroRouteDisplay() }}</span>
-          </div>
           <div class="hero-route-meta">
             <span class="metric-caption">{{ labels().busRoute }}</span>
             @if (activeBus()) {
@@ -46,6 +42,21 @@ import type {
                 <span class="eta-dot" aria-hidden="true"></span>
                 <span>{{ etaStatusText() }}</span>
               </div>
+            }
+          </div>
+
+          <div
+            class="hero-line-badge"
+            [class.is-compact]="heroRouteDisplay().length > 4 || heroRouteLegs().length > 1"
+            [class.is-long]="heroRouteDisplay().length > 8 || heroRouteLegs().length >= 3"
+            dir="ltr"
+          >
+            <span class="hero-bus-icon" aria-hidden="true">🚌</span>
+            @for (leg of heroRouteLegs(); track $index; let isLast = $last) {
+              <span class="hero-leg-num">{{ leg }}</span>
+              @if (!isLast) {
+                <span class="hero-leg-sep" aria-hidden="true">→</span>
+              }
             }
           </div>
         </div>
@@ -101,7 +112,7 @@ import type {
             >
               <div class="var-top">
                 <span class="var-rank">{{ labels().optionWord }} {{ opt.rank }}</span>
-                <span class="var-route">🚌 {{ formatOptionRoute(opt) }}</span>
+                <span class="var-route" dir="ltr">🚌 {{ formatOptionRoute(opt) }}</span>
                 <span class="var-time">{{ opt.total_arrival_min }} {{ labels().minShort }}</span>
               </div>
               <div class="var-bottom" dir="auto">
@@ -245,18 +256,20 @@ import type {
       .minimal-card-body {
         display: grid;
         grid-template-columns: minmax(0, 1fr);
+        inline-size: 100%;
         min-inline-size: 0;
         max-inline-size: 100%;
+        container: lite-card / inline-size;
         gap: 1.15rem;
         padding-block: 0.35rem 0.25rem;
       }
 
       /* 1. Unified Hero Summary Card */
       .hero-metrics {
-        display: flex;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
         align-items: center;
-        justify-content: space-between;
-        gap: 0.75rem;
+        gap: 0.7rem;
         min-inline-size: 0;
         max-inline-size: 100%;
         padding: 0.75rem 0.9rem;
@@ -268,41 +281,66 @@ import type {
 
       .hero-route-group {
         display: flex;
-        align-items: center;
-        gap: 0.65rem;
-        flex: 1 1 auto;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.44rem;
         min-inline-size: 0;
+        max-inline-size: 100%;
       }
 
       .hero-line-badge {
         display: inline-flex;
+        flex-wrap: wrap;
+        flex-wrap: balance;
         align-items: center;
-        justify-content: center;
-        gap: 0.35rem;
-        padding: 0.45rem 0.78rem;
+        justify-content: flex-start;
+        row-gap: 0.22rem;
+        column-gap: 0.26rem;
+        max-inline-size: 100%;
+        min-inline-size: 0;
+        padding: 0.42rem 0.72rem;
         border-radius: 0.88rem;
         background: linear-gradient(135deg, #3b82f6, #2563eb);
         color: #ffffff;
-        font-size: clamp(1.35rem, 5.5vw, 1.85rem);
+        font-size: clamp(1.2rem, 5.2cqi, 1.75rem);
         font-weight: 800;
-        line-height: 1;
+        line-height: 1.1;
         letter-spacing: -0.02em;
-        white-space: nowrap;
-        flex-shrink: 0;
         box-shadow: 0 6px 16px rgba(37, 99, 235, 0.38);
       }
 
       .hero-line-badge.is-compact {
-        font-size: clamp(1rem, 4.2vw, 1.3rem);
-        padding: 0.45rem 0.6rem;
+        font-size: clamp(0.95rem, 3.8cqi, 1.24rem);
+        padding: 0.38rem 0.6rem;
+      }
+
+      .hero-line-badge.is-long {
+        font-size: clamp(0.84rem, 3.2cqi, 1.06rem);
+        padding: 0.36rem 0.54rem;
+        column-gap: 0.2rem;
+      }
+
+      .hero-bus-icon,
+      .hero-leg-num,
+      .hero-leg-sep {
+        white-space: nowrap;
+        flex-shrink: 0;
+      }
+
+      .hero-leg-sep {
+        opacity: 0.78;
+        font-weight: 700;
+        font-size: 0.86em;
       }
 
       .hero-route-meta {
         display: flex;
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 0.3rem;
+        flex-direction: row;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.28rem 0.45rem;
         min-inline-size: 0;
+        max-inline-size: 100%;
       }
 
       .hero-eta-box {
@@ -310,8 +348,9 @@ import type {
         flex-direction: column;
         align-items: center;
         justify-content: center;
+        align-self: center;
         gap: 0.16rem;
-        min-inline-size: 92px;
+        min-inline-size: 88px;
         padding: 0.48rem 0.78rem;
         border-radius: 0.95rem;
         background: rgba(12, 18, 28, 0.78);
@@ -380,6 +419,21 @@ import type {
         border-radius: 50%;
         flex-shrink: 0;
         background: currentColor;
+      }
+
+      @container lite-card (inline-size < 290px) {
+        .hero-metrics {
+          grid-template-columns: minmax(0, 1fr);
+          gap: 0.55rem;
+        }
+
+        .hero-eta-box {
+          flex-direction: row;
+          justify-content: space-between;
+          inline-size: 100%;
+          min-inline-size: 0;
+          padding: 0.42rem 0.72rem;
+        }
       }
 
       /* 2. Clear Route Start / End Card */
@@ -971,18 +1025,21 @@ export class LiteTimelineViewComponent {
     return opt.route.short_name;
   }
 
-  readonly heroRouteDisplay = computed(() => {
-    const base = this.activeRoute().short_name || '—';
+  readonly heroRouteLegs = computed<string[]>(() => {
     const trip = this.activeTripOption();
     if (trip && trip.transfers_count > 0 && trip.legs.length > 1) {
-      return trip.legs.map((l) => l.line_number).join('→');
+      return trip.legs.map((l) => l.line_number).filter(Boolean);
     }
     const rec = this.activeRecOption();
     if (rec?.is_transfer && rec.second_leg) {
-      return this.formatOptionRoute(rec);
+      const legs = [rec.route.short_name, rec.second_leg.route.short_name];
+      if (rec.third_leg) legs.push(rec.third_leg.route.short_name);
+      return legs.filter(Boolean);
     }
-    return base;
+    return [this.activeRoute().short_name || '—'];
   });
+
+  readonly heroRouteDisplay = computed(() => this.heroRouteLegs().join('→'));
 
   readonly etaDigits = computed(() => {
     const eta = this.activeBus()?.eta_minutes;
