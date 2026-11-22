@@ -1,13 +1,12 @@
 import {
   buildTimelineWindow,
-  calculateEtaMinutes,
   calculateRoutePathDistanceMeters,
-  calculateStopsAway,
+  calculateWalkMinutes,
   computeAspectCorrectedBbox,
-  filterFreshVehicles,
+  estimateVehicleEta,
   haversineDistanceMeters,
   projectCoordinatesToBbox,
-  selectNearestApproachingVehicle
+  selectCatchableVehicle
 } from './eta.service.js';
 import { fetchRealNearbyCafes } from './places.service.js';
 import {
@@ -15,6 +14,7 @@ import {
   buildRoutePairCacheKey,
   redisService
 } from './redis.service.js';
+import { scheduleService } from './schedule.service.js';
 import { buildStaticMapUrl } from './static-map.service.js';
 import { fetchLiveVehiclesFromStride } from './stride.service.js';
 import {
@@ -120,18 +120,26 @@ export function calculateTripMetrics(
   etaToBoardingMin: number,
   stopsBetween: number,
   now: Date = new Date(),
-  distanceMeters = 0
+  distanceMeters = 0,
+  walkToDestMin = 0,
+  scheduledRideMin?: number
 ): {
   ride_duration_min: number;
   total_arrival_min: number;
   estimated_arrival_time: string;
 } {
-  let ride_duration_min = Math.max(1, Math.round(Math.max(1, stopsBetween) * MINUTES_PER_STOP_AVG));
-  const distKm = distanceMeters / 1000;
-  if (distKm > 15) {
-    ride_duration_min = Math.max(ride_duration_min, Math.round(distKm * 0.85));
+  let ride_duration_min: number;
+  if (typeof scheduledRideMin === 'number' && Number.isFinite(scheduledRideMin) && scheduledRideMin > 0) {
+    ride_duration_min = Math.max(1, Math.round(scheduledRideMin));
+  } else {
+    ride_duration_min = Math.max(1, Math.round(Math.max(1, stopsBetween) * MINUTES_PER_STOP_AVG));
+    const distKm = distanceMeters / 1000;
+    if (distKm > 15) {
+      ride_duration_min = Math.max(ride_duration_min, Math.round(distKm * 0.85));
+    }
   }
-  const total_arrival_min = Math.max(ride_duration_min, etaToBoardingMin + ride_duration_min);
+  const finalWalk = Math.max(0, Math.round(walkToDestMin));
+  const total_arrival_min = Math.max(ride_duration_min, etaToBoardingMin + ride_duration_min) + finalWalk;
   const arrivalDate = new Date(now.getTime() + total_arrival_min * 60_000);
 
   return {
@@ -154,6 +162,9 @@ export function calculateTransferTripMetrics(params: {
   now?: Date;
   leg1DistanceMeters?: number;
   leg2DistanceMeters?: number;
+  walkToDestMin?: number;
+  leg1ScheduledRideMin?: number;
+  leg2ScheduledRideMin?: number;
 }): {
   leg1_ride_min: number;
   walk_min: number;
@@ -167,12 +178,21 @@ export function calculateTransferTripMetrics(params: {
   estimated_arrival_time: string;
 } {
   const now = params.now ?? new Date();
-  const leg1DistKm = (params.leg1DistanceMeters ?? 0) / 1000;
-  let leg1_ride_min = Math.max(1, Math.round(Math.max(1, params.leg1Stops) * MINUTES_PER_STOP_AVG));
-  if (leg1DistKm > 15) {
-    leg1_ride_min = Math.max(leg1_ride_min, Math.round(leg1DistKm * 0.85));
+  let leg1_ride_min: number;
+  if (
+    typeof params.leg1ScheduledRideMin === 'number' &&
+    Number.isFinite(params.leg1ScheduledRideMin) &&
+    params.leg1ScheduledRideMin > 0
+  ) {
+    leg1_ride_min = Math.max(1, Math.round(params.leg1ScheduledRideMin));
+  } else {
+    const leg1DistKm = (params.leg1DistanceMeters ?? 0) / 1000;
+    leg1_ride_min = Math.max(1, Math.round(Math.max(1, params.leg1Stops) * MINUTES_PER_STOP_AVG));
+    if (leg1DistKm > 15) {
+      leg1_ride_min = Math.max(leg1_ride_min, Math.round(leg1DistKm * 0.85));
+    }
   }
-  const walk_min = Math.ceil(Math.max(0, params.transferWalkMeters) / 80);
+  const walk_min = calculateTransferWalkMinutes(params.transferWalkMeters);
   const arrive_at_hub_min = params.etaToBoardingMin + leg1_ride_min;
 
   const minBoardOffset = arrive_at_hub_min + walk_min + 1;
@@ -184,12 +204,22 @@ export function calculateTransferTripMetrics(params: {
   );
 
   const next_bus_board_min = arrive_at_hub_min + wait_minutes;
-  const leg2DistKm = (params.leg2DistanceMeters ?? 0) / 1000;
-  let leg2_ride_min = Math.max(1, Math.round(Math.max(1, params.leg2Stops) * MINUTES_PER_STOP_AVG));
-  if (leg2DistKm > 15) {
-    leg2_ride_min = Math.max(leg2_ride_min, Math.round(leg2DistKm * 0.85));
+  let leg2_ride_min: number;
+  if (
+    typeof params.leg2ScheduledRideMin === 'number' &&
+    Number.isFinite(params.leg2ScheduledRideMin) &&
+    params.leg2ScheduledRideMin > 0
+  ) {
+    leg2_ride_min = Math.max(1, Math.round(params.leg2ScheduledRideMin));
+  } else {
+    const leg2DistKm = (params.leg2DistanceMeters ?? 0) / 1000;
+    leg2_ride_min = Math.max(1, Math.round(Math.max(1, params.leg2Stops) * MINUTES_PER_STOP_AVG));
+    if (leg2DistKm > 15) {
+      leg2_ride_min = Math.max(leg2_ride_min, Math.round(leg2DistKm * 0.85));
+    }
   }
-  const total_arrival_min = next_bus_board_min + leg2_ride_min;
+  const finalWalk = Math.max(0, Math.round(params.walkToDestMin ?? 0));
+  const total_arrival_min = next_bus_board_min + leg2_ride_min + finalWalk;
 
   return {
     leg1_ride_min,
@@ -203,6 +233,11 @@ export function calculateTransferTripMetrics(params: {
     total_arrival_min,
     estimated_arrival_time: formatTimeHHMM(new Date(now.getTime() + total_arrival_min * 60_000))
   };
+}
+
+/** Transfer walks are short, on-platform hops: 80 m/min, rounded up to whole minutes. */
+export function calculateTransferWalkMinutes(walkMeters: number): number {
+  return Math.ceil(Math.max(0, walkMeters) / 80);
 }
 
 export const MAX_ROUTE_ORIGIN_DISTANCE_METERS = 600;
@@ -392,6 +427,10 @@ export function buildTripOptions(
   extraThreeLegOptions: Map<string, TripLeg[]> = new Map()
 ): TripOption[] {
   return options.slice(0, 3).map((opt, idx) => {
+    const walkMeta = {
+      ...(opt.walk_to_dest_meters !== undefined ? { walk_to_dest_meters: opt.walk_to_dest_meters } : {}),
+      ...(opt.walk_to_dest_min !== undefined ? { walk_to_dest_min: opt.walk_to_dest_min } : {})
+    };
     const detailedKey = `${opt.route.route_id}:${opt.second_leg?.route.route_id ?? ''}:${opt.third_leg?.route.route_id ?? ''}:${opt.dest_stop.stop_id}`;
     const customLegs =
       extraThreeLegOptions.get(detailedKey) ??
@@ -401,6 +440,7 @@ export function buildTripOptions(
         rank: (idx + 1) as 1 | 2 | 3,
         total_duration_min: opt.total_arrival_min,
         estimated_arrival_time: opt.estimated_arrival_time,
+        ...walkMeta,
         transfers_count: Math.max(0, customLegs.length - 1),
         legs: customLegs
       };
@@ -449,6 +489,7 @@ export function buildTripOptions(
         rank: (idx + 1) as 1 | 2 | 3,
         total_duration_min: opt.total_arrival_min,
         estimated_arrival_time: opt.estimated_arrival_time,
+        ...walkMeta,
         transfers_count: 0,
         legs: [leg]
       };
@@ -536,6 +577,7 @@ export function buildTripOptions(
       rank: (idx + 1) as 1 | 2 | 3,
       total_duration_min: opt.total_arrival_min,
       estimated_arrival_time: opt.estimated_arrival_time,
+      ...walkMeta,
       transfers_count: 1,
       legs: [leg1, leg2]
     };
@@ -593,6 +635,12 @@ async function resolveRouteLiveState(
   return { state: null, cacheHit: false };
 }
 
+/**
+ * Resolves the bus a passenger should take from `boardStopSeq`.
+ * `minEtaMinutes` is when the passenger can be at the stop (walk to the stop, or arrival at a
+ * transfer hub + transfer walk): the first live vehicle arriving at/after it is preferred, so the
+ * plan never relies on a bus that will have left before the passenger gets there.
+ */
 function buildBusInfoForStop(
   allStops: RouteStopCoord[],
   cached: CachedRouteState | null,
@@ -600,29 +648,99 @@ function buildBusInfoForStop(
   boardLat: number,
   boardLon: number,
   shortName: string,
-  directionId: 0 | 1
+  directionId: 0 | 1,
+  minEtaMinutes = 0,
+  routeId = '',
+  now: Date = new Date()
 ): { busInfo: NearestBusInfo; etaMinutes: number } {
-  const freshVehicles = filterFreshVehicles(cached?.vehicles ?? []);
-  const approaching = filterApproachingVehicles(freshVehicles, boardStopSeq);
-  const liveMatch = selectNearestApproachingVehicle(approaching, boardStopSeq, boardLat, boardLon);
-  const isRealtime = Boolean(
-    liveMatch && cached?.source === 'stride' && liveMatch.is_realtime !== false
-  );
-  const chosenVehicle =
-    liveMatch ??
-    synthesizeNextApproach(allStops, boardStopSeq, boardLat, boardLon, shortName, directionId);
+  const liveEstimate =
+    cached?.source === 'stride'
+      ? selectCatchableVehicle(
+          cached.vehicles,
+          allStops,
+          boardStopSeq,
+          boardLat,
+          boardLon,
+          minEtaMinutes
+        )
+      : null;
 
-  const stopsAway = calculateStopsAway(boardStopSeq, chosenVehicle.current_stop_sequence);
-  const routeDistanceMeters = calculateRoutePathDistanceMeters(
-    allStops,
-    chosenVehicle.current_stop_sequence,
-    boardStopSeq,
-    chosenVehicle.lat,
-    chosenVehicle.lon,
-    boardLat,
-    boardLon
-  );
-  const etaMinutes = calculateEtaMinutes(stopsAway, routeDistanceMeters, chosenVehicle.speed_kmh);
+  let etaMinutes: number;
+  let etaSource: 'realtime' | 'scheduled' | 'estimated';
+  let isRealtime = false;
+  let chosenVehicle: VehicleTelemetry;
+  let routeDistanceMeters: number;
+  let stopsAway: number;
+
+  if (liveEstimate && liveEstimate.catchable) {
+    chosenVehicle = liveEstimate.vehicle;
+    isRealtime = chosenVehicle.is_realtime !== false;
+    etaSource = 'realtime';
+    etaMinutes = liveEstimate.etaMinutes;
+    routeDistanceMeters = liveEstimate.routeDistanceMeters;
+    stopsAway = liveEstimate.stopsAway;
+  } else {
+    const scheduled = routeId
+      ? scheduleService.getNextScheduledDeparture(
+          routeId,
+          directionId,
+          boardStopSeq,
+          now,
+          minEtaMinutes
+        )
+      : null;
+
+    if (scheduled) {
+      chosenVehicle = synthesizeNextApproach(
+        allStops,
+        boardStopSeq,
+        boardLat,
+        boardLon,
+        shortName,
+        directionId
+      );
+      const fallbackEstimate = estimateVehicleEta(
+        allStops,
+        chosenVehicle,
+        boardStopSeq,
+        boardLat,
+        boardLon
+      );
+      etaMinutes = scheduled.etaMinutes;
+      etaSource = 'scheduled';
+      isRealtime = false;
+      routeDistanceMeters = fallbackEstimate.routeDistanceMeters;
+      stopsAway = fallbackEstimate.stopsAway;
+    } else if (liveEstimate) {
+      chosenVehicle = liveEstimate.vehicle;
+      isRealtime = chosenVehicle.is_realtime !== false;
+      etaSource = 'realtime';
+      etaMinutes = liveEstimate.etaMinutes;
+      routeDistanceMeters = liveEstimate.routeDistanceMeters;
+      stopsAway = liveEstimate.stopsAway;
+    } else {
+      chosenVehicle = synthesizeNextApproach(
+        allStops,
+        boardStopSeq,
+        boardLat,
+        boardLon,
+        shortName,
+        directionId
+      );
+      const fallbackEstimate = estimateVehicleEta(
+        allStops,
+        chosenVehicle,
+        boardStopSeq,
+        boardLat,
+        boardLon
+      );
+      etaMinutes = fallbackEstimate.etaMinutes;
+      etaSource = 'estimated';
+      isRealtime = false;
+      routeDistanceMeters = fallbackEstimate.routeDistanceMeters;
+      stopsAway = fallbackEstimate.stopsAway;
+    }
+  }
 
   const matchedCurrentStop =
     allStops.find((s) => s.stop_sequence === chosenVehicle.current_stop_sequence) ??
@@ -633,7 +751,7 @@ function buildBusInfoForStop(
       ...chosenVehicle,
       last_updated_sec_ago: chosenVehicle.last_updated_sec_ago ?? 0,
       is_realtime: isRealtime,
-      eta_source: isRealtime ? 'realtime' : 'scheduled',
+      eta_source: etaSource,
       route_distance_meters: routeDistanceMeters,
       stops_away: stopsAway,
       eta_minutes: etaMinutes,
@@ -937,6 +1055,22 @@ export async function planBestBusesToDestination(
     const originLon = closestOrigin?.lon ?? match.origin_lon;
     const stopsBetween = Math.max(1, match.dest_stop_sequence - originSeq);
 
+    const originDistMeters = Math.round(
+      haversineDistanceMeters(userLocation.lat, userLocation.lon, originLat, originLon)
+    );
+    const walkToOriginMin = calculateWalkMinutes(originDistMeters);
+    const destDistMeters = Math.round(
+      haversineDistanceMeters(destination.lat, destination.lon, match.dest_lat, match.dest_lon)
+    );
+    const walkToDestMin = calculateWalkMinutes(destDistMeters);
+    const scheduledRideMin =
+      scheduleService.getScheduledRideDuration(
+        match.route_id,
+        match.direction_id,
+        originSeq,
+        match.dest_stop_sequence
+      ) ?? undefined;
+
     const cached = stateCacheMap.get(`${match.route_id}:${match.direction_id}`) ?? null;
     const { busInfo, etaMinutes } = buildBusInfoForStop(
       allStops,
@@ -945,13 +1079,11 @@ export async function planBestBusesToDestination(
       originLat,
       originLon,
       match.route_short_name,
-      match.direction_id
+      match.direction_id,
+      walkToOriginMin,
+      match.route_id,
+      now
     );
-
-    const originDistMeters = Math.round(
-      haversineDistanceMeters(userLocation.lat, userLocation.lon, originLat, originLon)
-    );
-    const walkToOriginMin = originDistMeters > 200 ? Math.round(originDistMeters / 75) : 0;
     const distM = calculateRoutePathDistanceMeters(
       allStops,
       originSeq,
@@ -961,7 +1093,14 @@ export async function planBestBusesToDestination(
       match.dest_lat,
       match.dest_lon
     );
-    const metrics = calculateTripMetrics(Math.max(etaMinutes, walkToOriginMin), stopsBetween, now, distM);
+    const metrics = calculateTripMetrics(
+      Math.max(etaMinutes, walkToOriginMin),
+      stopsBetween,
+      now,
+      distM,
+      walkToDestMin,
+      scheduledRideMin
+    );
     const timelineStops = await buildLegTimelineSlice(
       match.route_id,
       match.direction_id,
@@ -1006,16 +1145,16 @@ export async function planBestBusesToDestination(
         stop_sequence: match.dest_stop_sequence,
         lat: match.dest_lat,
         lon: match.dest_lon,
-        distance_meters: Math.round(
-          haversineDistanceMeters(destination.lat, destination.lon, match.dest_lat, match.dest_lon)
-        )
+        distance_meters: destDistMeters
       },
       bus: busInfo,
-      eta_to_boarding_min: etaMinutes,
+      eta_to_boarding_min: Math.max(etaMinutes, walkToOriginMin),
       stops_between: stopsBetween,
       ride_duration_min: metrics.ride_duration_min,
       total_arrival_min: metrics.total_arrival_min,
       estimated_arrival_time: metrics.estimated_arrival_time,
+      walk_to_dest_meters: destDistMeters,
+      walk_to_dest_min: walkToDestMin,
       timeline_stops: timelineStops
     });
   }
@@ -1061,6 +1200,15 @@ export async function planBestBusesToDestination(
     const cachedLeg1 = stateCacheMap.get(`${match.leg1_route_id}:${match.leg1_direction_id}`) ?? null;
     const cachedLeg2 = stateCacheMap.get(`${match.leg2_route_id}:${match.leg2_direction_id}`) ?? null;
 
+    const originDistMeters = Math.round(
+      haversineDistanceMeters(userLocation.lat, userLocation.lon, originLat, originLon)
+    );
+    const walkToOriginMin = calculateWalkMinutes(originDistMeters);
+    const destDistMeters = Math.round(
+      haversineDistanceMeters(destination.lat, destination.lon, match.dest_lat, match.dest_lon)
+    );
+    const walkToDestMin = calculateWalkMinutes(destDistMeters);
+
     const leg1Bus = buildBusInfoForStop(
       leg1AllStops,
       cachedLeg1,
@@ -1068,23 +1216,11 @@ export async function planBestBusesToDestination(
       originLat,
       originLon,
       match.leg1_route_short_name,
-      match.leg1_direction_id
+      match.leg1_direction_id,
+      walkToOriginMin,
+      match.leg1_route_id,
+      now
     );
-
-    const leg2Bus = buildBusInfoForStop(
-      leg2AllStops,
-      cachedLeg2,
-      match.xfer_board_stop_sequence,
-      match.xfer_board_lat,
-      match.xfer_board_lon,
-      match.leg2_route_short_name,
-      match.leg2_direction_id
-    );
-
-    const originDistMeters = Math.round(
-      haversineDistanceMeters(userLocation.lat, userLocation.lon, originLat, originLon)
-    );
-    const walkToOriginMin = originDistMeters > 200 ? Math.round(originDistMeters / 75) : 0;
 
     const leg1DistM = calculateRoutePathDistanceMeters(
       leg1AllStops,
@@ -1105,15 +1241,61 @@ export async function planBestBusesToDestination(
       match.dest_lon
     );
 
+    const leg1ScheduledRide =
+      scheduleService.getScheduledRideDuration(
+        match.leg1_route_id,
+        match.leg1_direction_id,
+        originSeq,
+        match.xfer_alight_stop_sequence
+      ) ?? undefined;
+    const leg2ScheduledRide =
+      scheduleService.getScheduledRideDuration(
+        match.leg2_route_id,
+        match.leg2_direction_id,
+        match.xfer_board_stop_sequence,
+        match.dest_stop_sequence
+      ) ?? undefined;
+
+    // Leg 2 must be a bus that reaches the hub AFTER the passenger arrives and walks across.
+    const leg1Board = Math.max(leg1Bus.etaMinutes, walkToOriginMin);
+    const leg1RideEst = calculateTripMetrics(
+      0,
+      leg1StopsBetween,
+      now,
+      leg1DistM,
+      0,
+      leg1ScheduledRide
+    ).ride_duration_min;
+    const passengerAtHubMin =
+      leg1Board +
+      leg1RideEst +
+      calculateTransferWalkMinutes(match.transfer_walk_meters_actual) +
+      1;
+    const leg2Bus = buildBusInfoForStop(
+      leg2AllStops,
+      cachedLeg2,
+      match.xfer_board_stop_sequence,
+      match.xfer_board_lat,
+      match.xfer_board_lon,
+      match.leg2_route_short_name,
+      match.leg2_direction_id,
+      passengerAtHubMin,
+      match.leg2_route_id,
+      now
+    );
+
     const metrics = calculateTransferTripMetrics({
-      etaToBoardingMin: Math.max(leg1Bus.etaMinutes, walkToOriginMin),
+      etaToBoardingMin: leg1Board,
       leg1Stops: leg1StopsBetween,
       transferWalkMeters: match.transfer_walk_meters_actual,
       leg2BusEtaMin: leg2Bus.etaMinutes,
       leg2Stops: match.leg2_stops_between,
       now,
       leg1DistanceMeters: leg1DistM,
-      leg2DistanceMeters: leg2DistM
+      leg2DistanceMeters: leg2DistM,
+      walkToDestMin,
+      leg1ScheduledRideMin: leg1ScheduledRide,
+      leg2ScheduledRideMin: leg2ScheduledRide
     });
 
     const [leg1Timeline, leg2Timeline] = await Promise.all([
@@ -1197,16 +1379,16 @@ export async function planBestBusesToDestination(
         stop_sequence: match.dest_stop_sequence,
         lat: match.dest_lat,
         lon: match.dest_lon,
-        distance_meters: Math.round(
-          haversineDistanceMeters(destination.lat, destination.lon, match.dest_lat, match.dest_lon)
-        )
+        distance_meters: destDistMeters
       },
       bus: leg1Bus.busInfo,
-      eta_to_boarding_min: leg1Bus.etaMinutes,
+      eta_to_boarding_min: leg1Board,
       stops_between: leg1StopsBetween + match.leg2_stops_between,
       ride_duration_min: metrics.leg1_ride_min + metrics.leg2_ride_min,
       total_arrival_min: metrics.total_arrival_min,
       estimated_arrival_time: metrics.estimated_arrival_time,
+      walk_to_dest_meters: destDistMeters,
+      walk_to_dest_min: walkToDestMin,
       leg1_alight_time: metrics.arrive_at_hub_time,
       timeline_stops: leg1Timeline,
       transfer_info: {
@@ -1259,12 +1441,25 @@ export async function planBestBusesToDestination(
       const leg2Dir: 0 | 1 = Number(row.leg2_direction_id) === 1 ? 1 : 0;
       const leg3Dir: 0 | 1 = Number(row.leg3_direction_id) === 1 ? 1 : 0;
 
-      const [leg1Stops, leg2Stops, leg3Stops] = await Promise.all([
+      const [leg1Stops, leg2Stops, leg3Stops, leg1Resolved, leg2State, leg3State] = await Promise.all([
         getDirectionStops(row.leg1_route_id, leg1Dir),
         getDirectionStops(row.leg2_route_id, leg2Dir),
-        getDirectionStops(row.leg3_route_id, leg3Dir)
+        getDirectionStops(row.leg3_route_id, leg3Dir),
+        resolveRouteLiveState(row.leg1_route_id, leg1Dir, allowColdBootstrap),
+        redisService.getBusState(row.leg2_route_id, leg2Dir),
+        redisService.getBusState(row.leg3_route_id, leg3Dir)
       ]);
-      const leg1State = (await resolveRouteLiveState(row.leg1_route_id, leg1Dir, allowColdBootstrap)).state;
+      const leg1State = leg1Resolved.state;
+
+      const originDistMeters = Math.round(
+        haversineDistanceMeters(userLocation.lat, userLocation.lon, row.origin_lat, row.origin_lon)
+      );
+      const walkToOriginMin = calculateWalkMinutes(originDistMeters);
+      const destDistMeters = Math.round(
+        haversineDistanceMeters(destination.lat, destination.lon, row.dest_lat, row.dest_lon)
+      );
+      const walkToDestMin = calculateWalkMinutes(destDistMeters);
+
       const leg1Bus = buildBusInfoForStop(
         leg1Stops,
         leg1State,
@@ -1272,26 +1467,12 @@ export async function planBestBusesToDestination(
         row.origin_lat,
         row.origin_lon,
         row.leg1_route_short_name,
-        leg1Dir
+        leg1Dir,
+        walkToOriginMin,
+        row.leg1_route_id,
+        now
       );
-      const leg2Bus = buildBusInfoForStop(
-        leg2Stops,
-        null,
-        row.xfer1_board_stop_sequence,
-        row.xfer1_board_lat,
-        row.xfer1_board_lon,
-        row.leg2_route_short_name,
-        leg2Dir
-      );
-      const leg3Bus = buildBusInfoForStop(
-        leg3Stops,
-        null,
-        row.xfer2_board_stop_sequence ?? 1,
-        row.xfer2_board_lat ?? row.dest_lat,
-        row.xfer2_board_lon ?? row.dest_lon,
-        row.leg3_route_short_name,
-        leg3Dir
-      );
+      const leg1Board = Math.max(leg1Bus.etaMinutes, walkToOriginMin);
 
       const leg1DistKm =
         haversineDistanceMeters(row.origin_lat, row.origin_lon, row.xfer1_alight_lat, row.xfer1_alight_lon) / 1000;
@@ -1310,31 +1491,92 @@ export async function planBestBusesToDestination(
           row.dest_lon
         ) / 1000;
 
-      const leg1RideMin = Math.max(
-        2,
-        Math.round(Math.max(1, row.leg1_stops_between) * MINUTES_PER_STOP_AVG),
-        leg1DistKm > 15 ? Math.round(leg1DistKm * 0.85) : 0
+      const leg1RideMin =
+        scheduleService.getScheduledRideDuration(
+          row.leg1_route_id,
+          leg1Dir,
+          row.origin_stop_sequence,
+          row.xfer1_alight_stop_sequence
+        ) ??
+        Math.max(
+          2,
+          Math.round(Math.max(1, row.leg1_stops_between) * MINUTES_PER_STOP_AVG),
+          leg1DistKm > 15 ? Math.round(leg1DistKm * 0.85) : 0
+        );
+      const arriveHub1Min = leg1Board + leg1RideMin;
+      const walk1Min = calculateTransferWalkMinutes(row.xfer1_walk_meters);
+      const minBoard2Min = arriveHub1Min + walk1Min + 1;
+
+      const leg2Bus = buildBusInfoForStop(
+        leg2Stops,
+        leg2State,
+        row.xfer1_board_stop_sequence,
+        row.xfer1_board_lat,
+        row.xfer1_board_lon,
+        row.leg2_route_short_name,
+        leg2Dir,
+        minBoard2Min,
+        row.leg2_route_id,
+        now
       );
-      const leg2RideMin = Math.max(
-        3,
-        Math.round(Math.max(1, row.leg2_stops_between) * MINUTES_PER_STOP_AVG),
-        leg2DistKm > 15 ? Math.round(leg2DistKm * 0.85) : 0
+      const hasRealLeg2 = leg2Bus.etaMinutes >= minBoard2Min && leg2Bus.busInfo.eta_source !== 'estimated';
+      const wait1Min = hasRealLeg2
+        ? Math.max(walk1Min + 1, leg2Bus.etaMinutes - arriveHub1Min)
+        : Math.max(walk1Min + 1, 5);
+      const board2Min = arriveHub1Min + wait1Min;
+
+      const leg2RideMin =
+        scheduleService.getScheduledRideDuration(
+          row.leg2_route_id,
+          leg2Dir,
+          row.xfer1_board_stop_sequence,
+          row.xfer2_alight_stop_sequence ?? row.dest_stop_sequence
+        ) ??
+        Math.max(
+          3,
+          Math.round(Math.max(1, row.leg2_stops_between) * MINUTES_PER_STOP_AVG),
+          leg2DistKm > 15 ? Math.round(leg2DistKm * 0.85) : 0
+        );
+      const arriveHub2Min = board2Min + leg2RideMin;
+      const walk2Min = calculateTransferWalkMinutes(row.xfer2_walk_meters);
+      const minBoard3Min = arriveHub2Min + walk2Min + 1;
+
+      const leg3Bus = buildBusInfoForStop(
+        leg3Stops,
+        leg3State,
+        row.xfer2_board_stop_sequence ?? 1,
+        row.xfer2_board_lat ?? row.dest_lat,
+        row.xfer2_board_lon ?? row.dest_lon,
+        row.leg3_route_short_name,
+        leg3Dir,
+        minBoard3Min,
+        row.leg3_route_id,
+        now
       );
-      const leg3RideMin = Math.max(
-        2,
-        Math.round(Math.max(1, row.leg3_stops_between) * MINUTES_PER_STOP_AVG),
-        leg3DistKm > 15 ? Math.round(leg3DistKm * 0.85) : 0
-      );
-      const wait1Min = 5;
-      const wait2Min = 6;
-      const totalMin = leg1Bus.etaMinutes + leg1RideMin + wait1Min + leg2RideMin + wait2Min + leg3RideMin;
+      const hasRealLeg3 = leg3Bus.etaMinutes >= minBoard3Min && leg3Bus.busInfo.eta_source !== 'estimated';
+      const wait2Min = hasRealLeg3
+        ? Math.max(walk2Min + 1, leg3Bus.etaMinutes - arriveHub2Min)
+        : Math.max(walk2Min + 1, 6);
+      const board3Min = arriveHub2Min + wait2Min;
+
+      const leg3RideMin =
+        scheduleService.getScheduledRideDuration(
+          row.leg3_route_id,
+          leg3Dir,
+          row.xfer2_board_stop_sequence ?? 1,
+          row.dest_stop_sequence
+        ) ??
+        Math.max(
+          2,
+          Math.round(Math.max(1, row.leg3_stops_between) * MINUTES_PER_STOP_AVG),
+          leg3DistKm > 15 ? Math.round(leg3DistKm * 0.85) : 0
+        );
+      const totalMin = board3Min + leg3RideMin + walkToDestMin;
       const arrivalDate = new Date(now.getTime() + totalMin * 60_000);
 
-      const board1Time = formatTimeHHMM(new Date(now.getTime() + leg1Bus.etaMinutes * 60_000));
-      const board2Time = formatTimeHHMM(new Date(now.getTime() + (leg1Bus.etaMinutes + leg1RideMin + wait1Min) * 60_000));
-      const board3Time = formatTimeHHMM(
-        new Date(now.getTime() + (leg1Bus.etaMinutes + leg1RideMin + wait1Min + leg2RideMin + wait2Min) * 60_000)
-      );
+      const board1Time = formatTimeHHMM(new Date(now.getTime() + leg1Board * 60_000));
+      const board2Time = formatTimeHHMM(new Date(now.getTime() + board2Min * 60_000));
+      const board3Time = formatTimeHHMM(new Date(now.getTime() + board3Min * 60_000));
 
       const leg1Timeline = await buildLegTimelineSlice(
         row.leg1_route_id,
@@ -1373,7 +1615,7 @@ export async function planBestBusesToDestination(
             stop_name: row.origin_stop_name,
             stop_name_he: row.origin_stop_name_he,
             stop_sequence: row.origin_stop_sequence,
-            eta_minutes: leg1Bus.etaMinutes,
+            eta_minutes: leg1Board,
             scheduled_time: board1Time,
             lat: row.origin_lat,
             lon: row.origin_lon
@@ -1491,7 +1733,7 @@ export async function planBestBusesToDestination(
           stop_sequence: row.origin_stop_sequence,
           lat: row.origin_lat,
           lon: row.origin_lon,
-          distance_meters: Math.round(haversineDistanceMeters(userLocation.lat, userLocation.lon, row.origin_lat, row.origin_lon))
+          distance_meters: originDistMeters
         },
         dest_stop: {
           stop_id: row.dest_stop_id,
@@ -1501,16 +1743,16 @@ export async function planBestBusesToDestination(
           stop_sequence: row.dest_stop_sequence,
           lat: row.dest_lat,
           lon: row.dest_lon,
-          distance_meters: Math.round(
-            haversineDistanceMeters(destination.lat, destination.lon, row.dest_lat, row.dest_lon)
-          )
+          distance_meters: destDistMeters
         },
         bus: leg1Bus.busInfo,
-        eta_to_boarding_min: leg1Bus.etaMinutes,
+        eta_to_boarding_min: leg1Board,
         stops_between: row.leg1_stops_between + row.leg2_stops_between + row.leg3_stops_between,
         ride_duration_min: leg1RideMin + leg2RideMin + leg3RideMin,
         total_arrival_min: totalMin,
         estimated_arrival_time: formatTimeHHMM(arrivalDate),
+        walk_to_dest_meters: destDistMeters,
+        walk_to_dest_min: walkToDestMin,
         timeline_stops: leg1Timeline,
         transfer_info: {
           alight_stop: {
@@ -1533,7 +1775,7 @@ export async function planBestBusesToDestination(
           },
           walk_meters: row.xfer1_walk_meters,
           wait_minutes: wait1Min,
-          arrive_at_hub_time: formatTimeHHMM(new Date(now.getTime() + (leg1Bus.etaMinutes + leg1RideMin) * 60_000)),
+          arrive_at_hub_time: formatTimeHHMM(new Date(now.getTime() + arriveHub1Min * 60_000)),
           next_bus_board_time: board2Time,
           instruction_ru: `Пересадки: №${row.leg1_route_short_name} -> №${row.leg2_route_short_name} -> №${row.leg3_route_short_name}`,
           instruction_en: `Transfers: Line ${row.leg1_route_short_name} -> Line ${row.leg2_route_short_name} -> Line ${row.leg3_route_short_name}`,

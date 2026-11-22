@@ -177,6 +177,11 @@ import type {
                 @if (trip.total_duration_min) {
                   • {{ trip.total_duration_min }} {{ labels().minShort }}
                 }
+                @if (trip.walk_to_dest_min && trip.walk_to_dest_min > 0) {
+                  <span class="nb-hud-muted">
+                    • 🚶 +{{ trip.walk_to_dest_min }} {{ labels().minShort }}@if (trip.walk_to_dest_meters) { ({{ trip.walk_to_dest_meters }} m)}
+                  </span>
+                }
               </span>
             </div>
 
@@ -1180,14 +1185,17 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
 
   readonly isScheduledEta = computed(() => {
     const bus = this.activeBus();
-    return bus?.eta_source === 'scheduled' || bus?.is_realtime === false;
+    return bus?.eta_source === 'scheduled' || bus?.eta_source === 'estimated' || bus?.is_realtime === false;
   });
 
   readonly etaStatusText = computed(() => {
     const bus = this.activeBus();
     if (!bus) return '';
-    if (this.isScheduledEta()) {
+    if (bus.eta_source === 'scheduled') {
       return this.labels().scheduledEta;
+    }
+    if (bus.eta_source === 'estimated' || bus.is_realtime === false) {
+      return this.labels().estimatedEta;
     }
     const sec = bus.last_updated_sec_ago;
     if (sec !== undefined && sec > 0) {
@@ -1224,6 +1232,7 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
           intercityAdvice:
             'היעד המבוקש נמצא מחוץ לרשת העירונית. מומלץ לקחת קו אקספרס 910/900 או רכבת ממרכזית חוף הכרמל.',
           scheduledEta: 'לפי לו״ז',
+          estimatedEta: 'זמן משוער',
           secShort: 'ש׳',
           fromWord: 'מוצא',
           toWord: 'יעד',
@@ -1248,6 +1257,7 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
           intercityAdvice:
             'الوجهة خارج الشبكة الحضرية المحلية. يُنصح بأخذ خط إكسبرس 900/910 أو القطار من محطة حوف هكرمل.',
           scheduledEta: 'حسب الجدول',
+          estimatedEta: 'وقت تقديري',
           secShort: 'ث',
           fromWord: 'من',
           toWord: 'إلى',
@@ -1272,6 +1282,7 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
           intercityAdvice:
             'Пункт призначення за межами міської мережі. Рекомендуємо експрес №900/910 або потяг від Хоф ха-Кармель.',
           scheduledEta: 'За розкладом',
+          estimatedEta: 'Орієнтовно',
           secShort: 'с',
           fromWord: 'Звідки',
           toWord: 'Куди',
@@ -1296,6 +1307,7 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
           intercityAdvice:
             'Destination is outside the local urban corridor. Take Express 910/900 or rail from Hof HaCarmel Central.',
           scheduledEta: 'Scheduled',
+          estimatedEta: 'Estimated',
           secShort: 's',
           fromWord: 'From',
           toWord: 'To',
@@ -1320,6 +1332,7 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
           intercityAdvice:
             'Пункт назначения находится за пределами городской сети. Рекомендуем экспресс №910/900 или поезд от Хоф ха-Кармель.',
           scheduledEta: 'По расписанию',
+          estimatedEta: 'Примерно',
           secShort: 'с',
           fromWord: 'Откуда',
           toWord: 'Куда',

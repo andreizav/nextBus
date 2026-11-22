@@ -23,6 +23,7 @@ COPY backend/package*.json ./backend/
 RUN cd backend && npm ci --omit=dev
 
 COPY --from=backend-builder /app/backend/dist ./backend/dist
+COPY backend/data ./backend/data
 COPY --from=frontend-builder /app/frontend/dist/frontend/browser ./frontend/dist/frontend/browser
 COPY docs ./docs
 

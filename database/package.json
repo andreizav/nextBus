@@ -7,6 +7,7 @@
     "seed": "tsx seed-gtfs.ts",
     "seed:nationwide": "tsx import-full-gtfs.ts --seed-verified",
     "import:gtfs": "tsx import-full-gtfs.ts --from-mot",
+    "import:schedules": "tsx import-gtfs-schedules.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

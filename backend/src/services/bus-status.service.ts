@@ -1,16 +1,15 @@
 import {
   buildTimelineWindow,
-  calculateEtaMinutes,
-  calculateRoutePathDistanceMeters,
-  calculateStopsAway,
+  calculateWalkMinutes,
   computeAspectCorrectedBbox,
-  filterFreshVehicles,
+  estimateVehicleEta,
   projectCoordinatesToBbox,
   resolveRenderMode,
-  selectNearestApproachingVehicle
+  selectCatchableVehicle
 } from './eta.service.js';
 import { fetchRealNearbyCafes } from './places.service.js';
 import { redisService } from './redis.service.js';
+import { scheduleService } from './schedule.service.js';
 import { buildStaticMapUrl } from './static-map.service.js';
 import { fetchLiveVehiclesFromStride } from './stride.service.js';
 import { supabaseService, type RouteStopCoord } from './supabase.service.js';
@@ -76,14 +75,18 @@ export async function getLiveBusStatus(
   );
 
   const directionId = nearestStop.direction_id;
+  const otherDirectionId: 0 | 1 = directionId === 0 ? 1 : 0;
 
-  // Register/refresh sliding 15m TTL in bus:active_routes for the background worker
-  await redisService.touchActiveRoute(nearestStop.route_id, directionId);
+  // Register/refresh sliding 15m TTL in bus:active_routes for the background worker.
+  // Static topology (both directions) is loaded in parallel with the live Redis state.
+  const [, initialState, allStops, otherDirStops] = await Promise.all([
+    redisService.touchActiveRoute(nearestStop.route_id, directionId),
+    redisService.getBusState(nearestStop.route_id, directionId),
+    supabaseService.getDirectionStopCoords(nearestStop.route_id, directionId),
+    supabaseService.getDirectionStopCoords(nearestStop.route_id, otherDirectionId)
+  ]);
 
-  let cachedState: CachedRouteState | null = await redisService.getBusState(
-    nearestStop.route_id,
-    directionId
-  );
+  let cachedState: CachedRouteState | null = initialState;
   const cacheHit = cachedState !== null;
 
   if (!cachedState && params.allowColdBootstrap) {
@@ -91,50 +94,71 @@ export async function getLiveBusStatus(
     await redisService.setBusState(nearestStop.route_id, directionId, cachedState);
   }
 
-  const allStops = await supabaseService.getDirectionStopCoords(
-    nearestStop.route_id,
-    directionId
-  );
+  // Prefer the first live bus the user can still reach on foot; otherwise fall back to GTFS schedule.
+  const now = new Date();
+  const walkToStopMin = calculateWalkMinutes(nearestStop.distance_meters);
+  const liveEstimate =
+    cachedState?.source === 'stride'
+      ? selectCatchableVehicle(
+          cachedState.vehicles,
+          allStops,
+          nearestStop.stop_sequence,
+          nearestStop.stop_lat,
+          nearestStop.stop_lon,
+          walkToStopMin
+        )
+      : null;
 
-  const freshVehicles = filterFreshVehicles(cachedState?.vehicles ?? []);
-  let nearestVehicle = selectNearestApproachingVehicle(
-    freshVehicles,
-    nearestStop.stop_sequence,
-    nearestStop.stop_lat,
-    nearestStop.stop_lon
-  );
-  const isRealtime = Boolean(
-    nearestVehicle &&
-      cachedState?.source === 'stride' &&
-      nearestVehicle.is_realtime !== false
-  );
+  const scheduled =
+    !liveEstimate || !liveEstimate.catchable
+      ? scheduleService.getNextScheduledDeparture(
+          nearestStop.route_id,
+          directionId,
+          nearestStop.stop_sequence,
+          now,
+          walkToStopMin
+        )
+      : null;
 
-  if (!nearestVehicle) {
-    nearestVehicle = synthesizeNextApproachingVehicle(
-      allStops,
-      nearestStop.stop_sequence,
-      directionId
-    );
+  let isRealtime = false;
+  let etaSource: 'realtime' | 'scheduled' | 'estimated' = 'estimated';
+  let nearestVehicle: VehicleTelemetry | null = null;
+  let etaMinutes = 12;
+
+  if (liveEstimate && liveEstimate.catchable) {
+    nearestVehicle = liveEstimate.vehicle;
+    isRealtime = nearestVehicle.is_realtime !== false;
+    etaSource = 'realtime';
+    etaMinutes = liveEstimate.etaMinutes;
+  } else if (scheduled) {
+    nearestVehicle = synthesizeNextApproachingVehicle(allStops, nearestStop.stop_sequence, directionId);
+    etaSource = 'scheduled';
+    etaMinutes = scheduled.etaMinutes;
+  } else if (liveEstimate) {
+    nearestVehicle = liveEstimate.vehicle;
+    isRealtime = nearestVehicle.is_realtime !== false;
+    etaSource = 'realtime';
+    etaMinutes = liveEstimate.etaMinutes;
+  } else {
+    nearestVehicle = synthesizeNextApproachingVehicle(allStops, nearestStop.stop_sequence, directionId);
   }
 
   let nearestBus: NearestBusInfo | null = null;
-  let etaMinutes = 12;
 
   if (nearestVehicle) {
-    const stopsAway = calculateStopsAway(
-      nearestStop.stop_sequence,
-      nearestVehicle.current_stop_sequence
-    );
-    const routeDistanceMeters = calculateRoutePathDistanceMeters(
-      allStops,
-      nearestVehicle.current_stop_sequence,
-      nearestStop.stop_sequence,
-      nearestVehicle.lat,
-      nearestVehicle.lon,
-      nearestStop.stop_lat,
-      nearestStop.stop_lon
-    );
-    etaMinutes = calculateEtaMinutes(stopsAway, routeDistanceMeters, nearestVehicle.speed_kmh);
+    const estimate =
+      liveEstimate && etaSource === 'realtime'
+        ? liveEstimate
+        : estimateVehicleEta(
+            allStops,
+            nearestVehicle,
+            nearestStop.stop_sequence,
+            nearestStop.stop_lat,
+            nearestStop.stop_lon
+          );
+    if (etaSource === 'estimated') {
+      etaMinutes = estimate.etaMinutes;
+    }
 
     const matchedStop =
       allStops.find((s) => s.stop_sequence === nearestVehicle.current_stop_sequence) ??
@@ -144,9 +168,9 @@ export async function getLiveBusStatus(
       ...nearestVehicle,
       last_updated_sec_ago: nearestVehicle.last_updated_sec_ago ?? 0,
       is_realtime: isRealtime,
-      eta_source: isRealtime ? 'realtime' : 'scheduled',
-      route_distance_meters: routeDistanceMeters,
-      stops_away: stopsAway,
+      eta_source: etaSource,
+      route_distance_meters: estimate.routeDistanceMeters,
+      stops_away: estimate.stopsAway,
       eta_minutes: etaMinutes,
       current_stop_code: matchedStop?.stop_code,
       current_stop_name: matchedStop?.stop_name,
@@ -159,9 +183,8 @@ export async function getLiveBusStatus(
   const busLat = nearestBus?.lat ?? nearestStop.stop_lat;
   const busLon = nearestBus?.lon ?? nearestStop.stop_lon;
 
-  const timelineStops = await supabaseService.getRouteStopsTimeline(
-    nearestStop.route_id,
-    directionId,
+  const timelineStops = supabaseService.buildStopsTimeline(
+    allStops,
     nearestStop.stop_sequence,
     nearestBus?.current_stop_sequence ?? 1
   );
@@ -170,12 +193,6 @@ export async function getLiveBusStatus(
     timelineStops,
     nearestStop.stop_sequence,
     nearestBus?.current_stop_sequence
-  );
-
-  const otherDirectionId: 0 | 1 = directionId === 0 ? 1 : 0;
-  const otherDirStops = await supabaseService.getDirectionStopCoords(
-    nearestStop.route_id,
-    otherDirectionId
   );
 
   const formatEndpointLabel = (stops: RouteStopCoord[], isHe: boolean): string => {

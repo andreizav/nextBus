@@ -9,6 +9,7 @@ import {
 } from './eta.service.js';
 import { resolveDestinationText } from './geocoding.service.js';
 import { redisService } from './redis.service.js';
+import { scheduleService } from './schedule.service.js';
 import { buildStaticMapUrl } from './static-map.service.js';
 import { supabaseService } from './supabase.service.js';
 import { planBestBusesToDestination } from './trip-planner.service.js';
@@ -599,10 +600,13 @@ export async function dispatchSearchIntent(
 
     const candidates: LineCandidate[] = await Promise.all(
       nearbyRows.slice(0, 6).map(async (row) => {
-        await redisService.touchActiveRoute(row.route_id, row.direction_id);
-        const cached = await redisService.getBusState(row.route_id, row.direction_id);
-        let etaMinutes = 5;
-        if (cached && cached.vehicles.length > 0) {
+        const [, cached] = await Promise.all([
+          redisService.touchActiveRoute(row.route_id, row.direction_id),
+          redisService.getBusState(row.route_id, row.direction_id)
+        ]);
+        // Prefer live telemetry, then real GTFS timetable, never fabricated heuristics.
+        let etaMinutes: number | undefined;
+        if (cached && cached.source === 'stride' && cached.vehicles.length > 0) {
           const approaching = selectNearestApproachingVehicle(
             cached.vehicles,
             row.nearest_stop_sequence,
@@ -614,10 +618,24 @@ export async function dispatchSearchIntent(
               row.nearest_stop_sequence,
               approaching.current_stop_sequence
             );
-            etaMinutes = calculateEtaMinutes(stopsAway, undefined, approaching.speed_kmh);
+            const straightLineMeters = haversineDistanceMeters(
+              approaching.lat,
+              approaching.lon,
+              row.stop_lat,
+              row.stop_lon
+            );
+            etaMinutes = calculateEtaMinutes(stopsAway, straightLineMeters, approaching.speed_kmh);
           }
-        } else {
-          etaMinutes = Math.max(2, Math.min(9, 3 + (row.direction_id * 2) + (row.line_number.length > 2 ? 2 : 0)));
+        }
+        if (etaMinutes === undefined) {
+          const sched = scheduleService.getNextScheduledDeparture(
+            row.route_id,
+            row.direction_id,
+            row.nearest_stop_sequence
+          );
+          if (sched) {
+            etaMinutes = sched.etaMinutes;
+          }
         }
 
         return {

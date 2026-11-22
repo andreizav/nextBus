@@ -28,6 +28,23 @@ import { LiteTimelineViewComponent } from '../lite-timeline-view/lite-timeline-v
 import { SearchBarComponent } from '../search-bar/search-bar.component';
 
 const POLL_INTERVAL_MS = 15_000;
+/** Wait this long for GPS before showing suggestions around the default service-area point. */
+const GEO_FALLBACK_DELAY_MS = 3_500;
+/** Re-ask once for local ETAs that were still warming up in the backend cache. */
+const PENDING_ETA_RETRY_MS = 5_000;
+/** Moving less than this does not justify re-querying with a refined GPS fix. */
+const GEO_REFINE_MIN_MOVE_METERS = 120;
+const SUGGESTIONS_CACHE_KEY = 'nb_local_suggestions_v1';
+const SUGGESTIONS_CACHE_MAX_AGE_MS = 30 * 60 * 1000;
+
+function approxDistanceMeters(
+  a: { lat: number; lon: number },
+  b: { lat: number; lon: number }
+): number {
+  const dLat = (b.lat - a.lat) * 111_320;
+  const dLon = (b.lon - a.lon) * 111_320 * Math.cos(((a.lat + b.lat) / 2) * (Math.PI / 180));
+  return Math.sqrt(dLat * dLat + dLon * dLon);
+}
 
 const DEFAULT_COORDS = {
   lat: 32.7895,
@@ -216,8 +233,19 @@ const EMPTY_INITIAL_STATE: LiveBusStatusResponse = {
           <div class="sug-block">
             <div class="sug-head">{{ welcomeLabels().localTitle }}</div>
 
-            @if (isLoadingSuggestions() && localLines().length === 0) {
-              <div class="sug-empty">{{ labels().locating }}</div>
+            @if (localLines().length === 0 && (isLoadingSuggestions() || geoStatus() === 'locating')) {
+              <div class="sug-list" role="status" aria-busy="true" [attr.aria-label]="loadingText()">
+                @for (i of skeletonRows; track i) {
+                  <div class="sug-card is-skeleton" aria-hidden="true">
+                    <div class="sug-row-top">
+                      <span class="skel skel-badge"></span>
+                      <span class="skel skel-line"></span>
+                      <span class="skel skel-pill"></span>
+                    </div>
+                    <div class="sug-row-meta"><span class="skel skel-line is-short"></span></div>
+                  </div>
+                }
+              </div>
             } @else if (localLines().length === 0) {
               <div class="sug-empty">{{ welcomeLabels().noLocalLines }}</div>
             } @else {
@@ -239,7 +267,14 @@ const EMPTY_INITIAL_STATE: LiveBusStatusResponse = {
                           )
                         }}
                       </span>
-                      <span class="sug-eta">{{ line.eta_minutes }} {{ minShort() }}</span>
+                      @if (line.eta_minutes !== undefined) {
+                        <span class="sug-eta">{{ line.eta_minutes }} {{ minShort() }}</span>
+                      } @else {
+                        <span class="sug-eta is-pending" [title]="etaPendingText()">
+                          <span class="pending-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+                          <span class="visually-hidden">{{ etaPendingText() }}</span>
+                        </span>
+                      }
                     </div>
                     <div class="sug-row-meta" dir="auto">
                       <span>
@@ -260,6 +295,30 @@ const EMPTY_INITIAL_STATE: LiveBusStatusResponse = {
               </div>
             }
           </div>
+        </section>
+      } @else if (showStatusSkeleton()) {
+        <!-- Skeleton while the first response for a new query is in flight -->
+        <section class="status-skeleton" role="status" aria-busy="true" [attr.aria-label]="loadingText()">
+          <div class="skel-hero">
+            <div class="skel-hero-left">
+              <span class="skel skel-badge is-lg"></span>
+              <span class="skel skel-line is-short"></span>
+            </div>
+            <div class="skel-hero-right">
+              <span class="skel skel-eta"></span>
+              <span class="skel skel-line is-tiny"></span>
+            </div>
+          </div>
+          <div class="skel-direction">
+            <span class="skel skel-line"></span>
+            <span class="skel skel-line is-short"></span>
+          </div>
+          <ol class="skel-timeline" aria-hidden="true">
+            @for (i of skeletonRows; track i) {
+              <li><span class="skel skel-dot"></span><span class="skel skel-line"></span></li>
+            }
+          </ol>
+          <div class="skel-caption">{{ loadingText() }}</div>
         </section>
       } @else if (busState().requires_confirmation && busState().confirmation_type === 'location_mismatch') {
         <!-- Location Mismatch Confirmation Card -->
@@ -350,6 +409,10 @@ const EMPTY_INITIAL_STATE: LiveBusStatusResponse = {
           </div>
         }
 
+        @if (isRefreshing()) {
+          <div class="refresh-bar" role="progressbar" [attr.aria-label]="loadingText()"></div>
+        }
+
         @if (viewMode() === 'lite') {
           <nb-lite-timeline-view
             [state]="busState()"
@@ -378,7 +441,10 @@ const EMPTY_INITIAL_STATE: LiveBusStatusResponse = {
               (reverseTrip)="onReverseTrip()"
             />
           } @loading (minimum 120ms) {
-            <div class="defer-status">{{ labels().loadingMap }}</div>
+            <div class="defer-status" role="status" aria-busy="true">
+              <span class="spinner" aria-hidden="true"></span>
+              <span>{{ labels().loadingMap }}</span>
+            </div>
           }
         }
 
@@ -668,9 +734,113 @@ const EMPTY_INITIAL_STATE: LiveBusStatusResponse = {
 
       .defer-status {
         padding-block: 2rem;
-        text-align: center;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.6rem;
         font-size: 0.85rem;
         color: #9aa6b4;
+      }
+
+      /* Loading skeletons & progress indicators */
+      .skel {
+        display: inline-block;
+        block-size: 0.7rem;
+        border-radius: 999px;
+        background: linear-gradient(
+          90deg,
+          rgba(255, 255, 255, 0.06) 0%,
+          rgba(255, 255, 255, 0.14) 50%,
+          rgba(255, 255, 255, 0.06) 100%
+        );
+        background-size: 200% 100%;
+        animation: nb-shimmer 1.2s ease-in-out infinite;
+      }
+
+      .skel-badge { inline-size: 2.4rem; block-size: 1.35rem; border-radius: 0.5rem; flex: none; }
+      .skel-badge.is-lg { inline-size: 4.2rem; block-size: 2rem; border-radius: 0.7rem; }
+      .skel-pill { inline-size: 2.6rem; block-size: 1.1rem; flex: none; }
+      .skel-line { inline-size: 100%; min-inline-size: 0; flex: 1 1 auto; }
+      .skel-line.is-short { inline-size: 55%; flex: none; }
+      .skel-line.is-tiny { inline-size: 3.2rem; flex: none; }
+      .skel-eta { inline-size: 4.4rem; block-size: 2.4rem; border-radius: 0.7rem; }
+      .skel-dot { inline-size: 0.8rem; block-size: 0.8rem; flex: none; }
+
+      .sug-card.is-skeleton { pointer-events: none; }
+      .sug-card.is-skeleton .sug-row-top { display: flex; align-items: center; gap: 0.5rem; }
+
+      .status-skeleton {
+        display: grid;
+        gap: 0.85rem;
+        padding: 0.9rem;
+        border-radius: 1.1rem;
+        background: rgba(255, 255, 255, 0.035);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+      }
+
+      .skel-hero { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+      .skel-hero-left, .skel-hero-right { display: grid; gap: 0.45rem; justify-items: start; min-inline-size: 0; flex: 1; }
+      .skel-hero-right { justify-items: end; flex: none; }
+      .skel-direction { display: grid; gap: 0.45rem; padding: 0.7rem; border-radius: 0.8rem; background: rgba(255, 255, 255, 0.03); }
+      .skel-timeline { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.75rem; }
+      .skel-timeline li { display: flex; align-items: center; gap: 0.7rem; }
+      .skel-caption { text-align: center; font-size: 0.75rem; color: #8b96a5; }
+
+      .refresh-bar {
+        block-size: 3px;
+        border-radius: 999px;
+        overflow: hidden;
+        background: rgba(59, 130, 246, 0.15);
+        position: relative;
+      }
+      .refresh-bar::after {
+        content: '';
+        position: absolute;
+        inset-block: 0;
+        inline-size: 35%;
+        border-radius: inherit;
+        background: #3b82f6;
+        animation: nb-indeterminate 1s ease-in-out infinite;
+      }
+
+      .spinner {
+        inline-size: 1rem;
+        block-size: 1rem;
+        border-radius: 50%;
+        border: 2px solid rgba(255, 255, 255, 0.15);
+        border-top-color: #3b82f6;
+        animation: nb-spin 0.8s linear infinite;
+      }
+
+      .sug-eta.is-pending { display: inline-flex; align-items: center; }
+      .pending-dots { display: inline-flex; gap: 3px; }
+      .pending-dots i {
+        inline-size: 4px;
+        block-size: 4px;
+        border-radius: 50%;
+        background: currentColor;
+        opacity: 0.35;
+        animation: nb-blink 1.2s ease-in-out infinite;
+      }
+      .pending-dots i:nth-child(2) { animation-delay: 0.2s; }
+      .pending-dots i:nth-child(3) { animation-delay: 0.4s; }
+
+      .visually-hidden {
+        position: absolute;
+        inline-size: 1px;
+        block-size: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
+      }
+
+      @keyframes nb-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+      @keyframes nb-indeterminate { from { inset-inline-start: -35%; } to { inset-inline-start: 100%; } }
+      @keyframes nb-spin { to { transform: rotate(360deg); } }
+      @keyframes nb-blink { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+
+      @media (prefers-reduced-motion: reduce) {
+        .skel, .refresh-bar::after, .spinner, .pending-dots i { animation-duration: 0s; animation-iteration-count: 1; }
       }
 
       /* Bottom Segmented Blue Pill Bar */
@@ -940,6 +1110,57 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
   readonly isPollingPaused = computed(
     () => this.isTabHidden() || !this.isInViewport()
   );
+
+  /** User-initiated refresh of an already displayed result (direction switch, reverse, ...). */
+  readonly isRefreshing = signal<boolean>(false);
+  readonly skeletonRows = [0, 1, 2];
+
+  /** Full skeleton only when there is nothing meaningful to show for the new query yet. */
+  readonly showStatusSkeleton = computed(
+    () =>
+      this.hasActiveSearch() &&
+      (this.isSearching() || this.busState() === EMPTY_INITIAL_STATE)
+  );
+
+  readonly loadingText = computed(() => {
+    switch (this.lang()) {
+      case 'he':
+        return 'טוען נתונים…';
+      case 'ar':
+        return 'جارٍ التحميل…';
+      case 'uk':
+        return 'Завантаження…';
+      case 'ru':
+        return 'Загрузка…';
+      default:
+        return 'Loading…';
+    }
+  });
+
+  readonly etaPendingText = computed(() => {
+    switch (this.lang()) {
+      case 'he':
+        return 'ממתין לנתוני זמן אמת';
+      case 'ar':
+        return 'بانتظار البيانات الحية';
+      case 'uk':
+        return 'Очікуємо дані в реальному часі';
+      case 'ru':
+        return 'Ждём данные в реальном времени';
+      default:
+        return 'Waiting for live data';
+    }
+  });
+
+  /**
+   * Monotonic id of the latest user action. Any response belonging to an older action (or a poll
+   * that started before it) is dropped, so a slow stale response can never overwrite a newer view.
+   */
+  private actionSeq = 0;
+  private pollInFlight = false;
+  private suggestionsSeq = 0;
+  private geoFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+  private pendingEtaTimer: ReturnType<typeof setTimeout> | null = null;
 
   readonly labels = computed(() => {
     switch (this.lang()) {
@@ -1324,7 +1545,19 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
       this.hasActiveSearch.set(false);
       this.stopPolling();
       if (this.entryContext() === 'standalone') {
-        void this.loadLocalSuggestions();
+        this.restoreCachedSuggestions();
+        if (this.userCoords() || this.geoStatus() !== 'locating') {
+          void this.loadLocalSuggestions();
+        } else {
+          // Do not flash lines around the default point while GPS is resolving; fall back only
+          // if GPS is slow. requestUserGeolocation() loads suggestions as soon as a fix arrives.
+          this.geoFallbackTimer = setTimeout(() => {
+            this.geoFallbackTimer = null;
+            if (!this.userCoords() && !this.hasActiveSearch()) {
+              void this.loadLocalSuggestions();
+            }
+          }, GEO_FALLBACK_DELAY_MS);
+        }
       }
     }
   }
@@ -1336,15 +1569,64 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
       this.observer = null;
     }
     this.stopPolling();
+    this.clearTimer('geoFallbackTimer');
+    this.clearTimer('pendingEtaTimer');
+  }
+
+  private clearTimer(name: 'geoFallbackTimer' | 'pendingEtaTimer'): void {
+    const t = this[name];
+    if (t !== null) {
+      clearTimeout(t);
+      this[name] = null;
+    }
   }
 
   startPolling(): void {
     this.stopPolling();
     this.pollTimer = setInterval(() => {
       if (!this.isPollingPaused() && this.hasActiveSearch()) {
-        void this.fetchLatestStatus();
+        void this.fetchLatestStatus(false, true);
       }
     }, POLL_INTERVAL_MS);
+  }
+
+  /** Starts a new user action and invalidates every in-flight response of older ones. */
+  private beginAction(): number {
+    // A superseded action never reaches its own `finally` reset, so clear loaders here.
+    this.isSearching.set(false);
+    this.isRefreshing.set(false);
+    return ++this.actionSeq;
+  }
+
+  private isCurrentAction(seq: number): boolean {
+    return seq === this.actionSeq;
+  }
+
+  private restoreCachedSuggestions(): void {
+    if (this.localLines().length > 0) return;
+    try {
+      const raw = window.localStorage?.getItem(SUGGESTIONS_CACHE_KEY);
+      if (!raw) return;
+      const cached = JSON.parse(raw) as { saved_at: number; local_lines: LocalLineSuggestion[] };
+      if (!cached?.saved_at || Date.now() - cached.saved_at > SUGGESTIONS_CACHE_MAX_AGE_MS) return;
+      // Lines at nearby stops are stable; ETAs are not — show them as pending until refreshed.
+      this.localLines.set(
+        (cached.local_lines ?? []).map((l) => ({ ...l, eta_minutes: undefined, eta_is_realtime: false }))
+      );
+    } catch {
+      // Ignore corrupt cache
+    }
+  }
+
+  private persistSuggestions(lines: LocalLineSuggestion[]): void {
+    try {
+      window.localStorage?.setItem(
+        SUGGESTIONS_CACHE_KEY,
+        JSON.stringify({ saved_at: Date.now(), local_lines: lines })
+      );
+    } catch {
+      // Storage full or unavailable — non-critical
+    }
   }
 
   stopPolling(): void {
@@ -1355,6 +1637,7 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
   }
 
   resetSearch(): void {
+    this.beginAction();
     this.stopPolling();
     this.hasActiveSearch.set(false);
     this.activeSearchLabel.set('');
@@ -1423,35 +1706,65 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
     }
 
     this.geoStatus.set('locating');
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        const detected = {
-          lat: position.coords.latitude,
-          lon: position.coords.longitude,
-          accuracy: Math.round(position.coords.accuracy)
-        };
-        this.userCoords.set(detected);
-        this.geoStatus.set('granted');
-        this.applyLocationDefaultLang(detected);
-        if (this.hasActiveSearch()) {
-          if (this.activeSearchLabel()) {
-            void this.onSearchDestination(this.activeSearchLabel());
-          } else {
-            void this.fetchLatestStatus();
-          }
-        } else if (this.entryContext() === 'standalone') {
+    let pending = 2;
+    let gotFix = false;
+
+    const onPosition = (position: GeolocationPosition) => {
+      gotFix = true;
+      const detected = {
+        lat: position.coords.latitude,
+        lon: position.coords.longitude,
+        accuracy: Math.round(position.coords.accuracy)
+      };
+      const previous = this.userCoords();
+      // Keep the more precise fix if the coarse one happens to resolve last.
+      if (previous?.accuracy !== undefined && detected.accuracy > previous.accuracy &&
+          approxDistanceMeters(previous, detected) < GEO_REFINE_MIN_MOVE_METERS) {
+        return;
+      }
+      this.userCoords.set(detected);
+      this.geoStatus.set('granted');
+      this.applyLocationDefaultLang(detected);
+      this.clearTimer('geoFallbackTimer');
+
+      const moved = !previous || approxDistanceMeters(previous, detected) >= GEO_REFINE_MIN_MOVE_METERS;
+      if (!moved) return;
+
+      if (this.hasActiveSearch()) {
+        if (this.activeSearchLabel()) {
+          void this.onSearchDestination(this.activeSearchLabel());
+        } else {
+          void this.fetchLatestStatus();
+        }
+      } else if (this.entryContext() === 'standalone') {
+        void this.loadLocalSuggestions();
+      }
+    };
+
+    const onError = (err: GeolocationPositionError) => {
+      pending -= 1;
+      if (gotFix) return;
+      if (err.code === err.PERMISSION_DENIED || pending === 0) {
+        this.geoStatus.set('denied');
+        this.clearTimer('geoFallbackTimer');
+        if (!this.hasActiveSearch() && this.entryContext() === 'standalone') {
           void this.loadLocalSuggestions();
         }
-      },
-      () => {
-        this.geoStatus.set('denied');
-      },
-      {
-        enableHighAccuracy: true,
-        timeout: 8000,
-        maximumAge: 15000
       }
-    );
+    };
+
+    // 1) Fast coarse fix (cached / network based) so the widget can render within ~0.5 s.
+    navigator.geolocation.getCurrentPosition(onPosition, onError, {
+      enableHighAccuracy: false,
+      timeout: 4000,
+      maximumAge: 5 * 60 * 1000
+    });
+    // 2) Precise GPS fix; only triggers a re-query if it moves the user noticeably.
+    navigator.geolocation.getCurrentPosition(onPosition, onError, {
+      enableHighAccuracy: true,
+      timeout: 10000,
+      maximumAge: 15000
+    });
   }
 
   onDirectionSwitch(directionId: 0 | 1): void {
@@ -1490,6 +1803,8 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
   }
 
   async loadLocalSuggestions(): Promise<void> {
+    const seq = ++this.suggestionsSeq;
+    this.clearTimer('pendingEtaTimer');
     this.isLoadingSuggestions.set(true);
     try {
       const coords = this.userCoords() ?? DEFAULT_COORDS;
@@ -1497,19 +1812,55 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
       const userParam = uid ? `&user_id=${encodeURIComponent(uid)}` : '';
       const url = `/api/local-suggestions?lat=${encodeURIComponent(coords.lat)}&lon=${encodeURIComponent(coords.lon)}${userParam}`;
       const response = await fetch(url);
-      if (response.ok) {
+      if (response.ok && seq === this.suggestionsSeq) {
         const data = (await response.json()) as LocalSuggestionsResponse;
+        if (seq !== this.suggestionsSeq) return;
+        const lines = data.local_lines ?? [];
         this.returningRoutes.set(data.returning_routes ?? []);
-        this.localLines.set(data.local_lines ?? []);
+        this.localLines.set(lines);
+        this.persistSuggestions(lines);
+
+        // The backend warms live state for these lines right now; ask again once shortly.
+        if (lines.some((l) => l.eta_minutes === undefined)) {
+          this.pendingEtaTimer = setTimeout(() => {
+            this.pendingEtaTimer = null;
+            if (!this.hasActiveSearch() && seq === this.suggestionsSeq) {
+              void this.refreshPendingEtas(seq);
+            }
+          }, PENDING_ETA_RETRY_MS);
+        }
       }
     } catch {
       // Keep current suggestions on transient error
     } finally {
-      this.isLoadingSuggestions.set(false);
+      if (seq === this.suggestionsSeq) {
+        this.isLoadingSuggestions.set(false);
+      }
+    }
+  }
+
+  /** Silent one-shot refresh: no skeleton, keeps the current list if anything fails. */
+  private async refreshPendingEtas(seq: number): Promise<void> {
+    try {
+      const coords = this.userCoords() ?? DEFAULT_COORDS;
+      const uid = this.userId().trim();
+      const userParam = uid ? `&user_id=${encodeURIComponent(uid)}` : '';
+      const response = await fetch(
+        `/api/local-suggestions?lat=${encodeURIComponent(coords.lat)}&lon=${encodeURIComponent(coords.lon)}${userParam}`
+      );
+      if (!response.ok || seq !== this.suggestionsSeq || this.hasActiveSearch()) return;
+      const data = (await response.json()) as LocalSuggestionsResponse;
+      if (seq !== this.suggestionsSeq || this.hasActiveSearch()) return;
+      this.returningRoutes.set(data.returning_routes ?? []);
+      this.localLines.set(data.local_lines ?? []);
+      this.persistSuggestions(data.local_lines ?? []);
+    } catch {
+      // Non-critical
     }
   }
 
   async onSelectLocalLine(line: LocalLineSuggestion): Promise<void> {
+    const seq = this.beginAction();
     this.isSearching.set(true);
     this.hasActiveSearch.set(true);
     this.selectedRouteId.set(line.route_id);
@@ -1536,6 +1887,7 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
       });
       if (response.ok) {
         const data = (await response.json()) as LiveBusStatusResponse;
+        if (!this.isCurrentAction(seq)) return;
         this.busState.set(data);
         this.startPolling();
         void this.loadLocalSuggestions();
@@ -1543,7 +1895,9 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
     } catch {
       // Keep state on transient error
     } finally {
-      this.isSearching.set(false);
+      if (this.isCurrentAction(seq)) {
+        this.isSearching.set(false);
+      }
     }
   }
 
@@ -1580,6 +1934,7 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
   }
 
   async onSelectCandidate(candidate: LineCandidate): Promise<void> {
+    const seq = this.beginAction();
     this.isSearching.set(true);
     this.selectedRouteId.set(candidate.route_id);
     this.selectedDirection.set(candidate.direction_id);
@@ -1606,6 +1961,7 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
       });
       if (response.ok) {
         const data = (await response.json()) as LiveBusStatusResponse;
+        if (!this.isCurrentAction(seq)) return;
         this.busState.set({
           ...data,
           candidates: existingCandidates ?? data.candidates
@@ -1618,7 +1974,9 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
     } catch {
       // Keep current state on temporary failure
     } finally {
-      this.isSearching.set(false);
+      if (this.isCurrentAction(seq)) {
+        this.isSearching.set(false);
+      }
     }
   }
 
@@ -1626,6 +1984,7 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
     const cleaned = query.trim();
     if (!cleaned) return;
 
+    const seq = this.beginAction();
     this.isSearching.set(true);
     this.hasActiveSearch.set(true);
     this.activeSearchLabel.set(cleaned);
@@ -1674,6 +2033,7 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
       });
       if (response.ok) {
         const data = (await response.json()) as LiveBusStatusResponse;
+        if (!this.isCurrentAction(seq)) return;
         this.busState.set(data);
         if (data.destination) {
           this.originalDestination.set(data.destination);
@@ -1692,7 +2052,9 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
     } catch {
       // Keep current state on temporary failure
     } finally {
-      this.isSearching.set(false);
+      if (this.isCurrentAction(seq)) {
+        this.isSearching.set(false);
+      }
     }
   }
 
@@ -1711,6 +2073,7 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
       label: prop.label,
       stop_id: prop.stop_id
     });
+    const seq = this.beginAction();
     this.isSearching.set(true);
 
     try {
@@ -1734,6 +2097,7 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
       });
       if (response.ok) {
         const data = (await response.json()) as LiveBusStatusResponse;
+        if (!this.isCurrentAction(seq)) return;
         this.busState.set(data);
         if (data.destination) {
           this.originalDestination.set(data.destination);
@@ -1745,7 +2109,9 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
     } catch {
       // Keep confirmation card if network failed
     } finally {
-      this.isSearching.set(false);
+      if (this.isCurrentAction(seq)) {
+        this.isSearching.set(false);
+      }
     }
   }
 
@@ -1763,6 +2129,7 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
       return;
     }
 
+    const seq = this.beginAction();
     this.isSearching.set(true);
     try {
       const coords = this.userCoords() ?? DEFAULT_COORDS;
@@ -1779,6 +2146,7 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
       });
       if (response.ok) {
         const data = (await response.json()) as LiveBusStatusResponse;
+        if (!this.isCurrentAction(seq)) return;
         this.busState.set(data);
         if (data.destination) {
           this.originalDestination.set(data.destination);
@@ -1792,7 +2160,9 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
     } catch {
       // Ignore transient error
     } finally {
-      this.isSearching.set(false);
+      if (this.isCurrentAction(seq)) {
+        this.isSearching.set(false);
+      }
     }
   }
 
@@ -1836,9 +2206,18 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
     await this.fetchLatestStatus(true);
   }
 
-  private async fetchLatestStatus(bootstrapLine = false): Promise<void> {
+  private async fetchLatestStatus(bootstrapLine = false, fromPoll = false): Promise<void> {
     if (!this.hasActiveSearch()) return;
     if (this.busState().requires_confirmation) return;
+
+    // Polls never overlap each other and never race a user action that is still loading.
+    if (fromPoll && (this.pollInFlight || this.isSearching() || this.isRefreshing())) return;
+    const seq = fromPoll ? this.actionSeq : this.beginAction();
+    if (fromPoll) {
+      this.pollInFlight = true;
+    } else if (this.busState() !== EMPTY_INITIAL_STATE) {
+      this.isRefreshing.set(true);
+    }
 
     try {
       const params = new URLSearchParams(window.location.search);
@@ -1890,6 +2269,7 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
         const response = await fetch(tripUrl);
         if (!response.ok) return;
         const data = (await response.json()) as LiveBusStatusResponse;
+        if (!this.isCurrentAction(seq)) return;
         // Preserve street granularity & alternative street stops across live polling refreshes
         if (!reversed && origDest?.alternative_street_stops?.length) {
           data.destination = {
@@ -1929,6 +2309,7 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
       if (!response.ok) return;
 
       const data = (await response.json()) as LiveBusStatusResponse;
+      if (!this.isCurrentAction(seq)) return;
       this.busState.set({
         ...data,
         candidates: current.candidates ?? data.candidates
@@ -1938,6 +2319,12 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
       }
     } catch {
       // Keep current signal snapshot if network temporarily fails
+    } finally {
+      if (fromPoll) {
+        this.pollInFlight = false;
+      } else if (this.isCurrentAction(seq)) {
+        this.isRefreshing.set(false);
+      }
     }
   }
 }

@@ -1296,47 +1296,53 @@ AS $$
     CROSS JOIN user_point up
     WHERE ST_DWithin(s.location, up.geog, radius_meters)
   ),
-  dir_endpoints AS (
-    SELECT DISTINCT ON (rs.route_id, rs.direction_id)
-      rs.route_id,
-      rs.direction_id,
-      MAX(rs.stop_sequence) OVER (
-        PARTITION BY rs.route_id, rs.direction_id
-      )::INT AS max_seq,
-      FIRST_VALUE(s.stop_name) OVER (
-        PARTITION BY rs.route_id, rs.direction_id ORDER BY rs.stop_sequence DESC
-      ) AS destination_name,
-      FIRST_VALUE(COALESCE(s.stop_name_he, s.stop_name)) OVER (
-        PARTITION BY rs.route_id, rs.direction_id ORDER BY rs.stop_sequence DESC
-      ) AS destination_he
+  nearby_route_stops AS (
+    SELECT rs.route_id, rs.direction_id, rs.stop_sequence, ns.*
     FROM route_stops rs
-    JOIN stops s ON s.stop_id = rs.stop_id
+    JOIN nearby_stops ns ON ns.stop_id = rs.stop_id
+  ),
+  dir_endpoints AS (
+    SELECT
+      d.route_id,
+      d.direction_id,
+      last_stop.stop_sequence AS max_seq,
+      ts.stop_name AS destination_name,
+      COALESCE(ts.stop_name_he, ts.stop_name) AS destination_he
+    FROM (SELECT DISTINCT nrs.route_id, nrs.direction_id FROM nearby_route_stops nrs) d
+    CROSS JOIN LATERAL (
+      SELECT rs2.stop_id, rs2.stop_sequence
+      FROM route_stops rs2
+      WHERE rs2.route_id = d.route_id AND rs2.direction_id = d.direction_id
+      ORDER BY rs2.stop_sequence DESC
+      LIMIT 1
+    ) last_stop
+    JOIN stops ts ON ts.stop_id = last_stop.stop_id
   ),
   closest_per_dir AS (
-    SELECT DISTINCT ON (r.route_id, rs.direction_id)
+    SELECT DISTINCT ON (r.route_id, nrs.direction_id)
       r.route_id::TEXT AS route_id,
       r.route_short_name::TEXT AS line_number,
       r.route_long_name::TEXT AS route_long_name,
-      rs.direction_id::SMALLINT AS direction_id,
-      ns.stop_id::TEXT AS nearest_stop_id,
-      ns.stop_code::TEXT AS nearest_stop_code,
-      ns.stop_name::TEXT AS nearest_stop_name,
-      ns.stop_name_he::TEXT AS nearest_stop_name_he,
-      rs.stop_sequence::INT AS nearest_stop_sequence,
-      ns.stop_lat,
-      ns.stop_lon,
-      ns.dist_m AS distance_meters,
+      nrs.direction_id::SMALLINT AS direction_id,
+      nrs.stop_id::TEXT AS nearest_stop_id,
+      nrs.stop_code::TEXT AS nearest_stop_code,
+      nrs.stop_name::TEXT AS nearest_stop_name,
+      nrs.stop_name_he::TEXT AS nearest_stop_name_he,
+      nrs.stop_sequence::INT AS nearest_stop_sequence,
+      nrs.stop_lat,
+      nrs.stop_lon,
+      nrs.dist_m AS distance_meters,
       COALESCE(ep.destination_name, r.route_long_name)::TEXT AS destination_name,
       COALESCE(ep.destination_he, r.route_long_name)::TEXT AS destination_he
-    FROM route_stops rs
-    JOIN nearby_stops ns ON ns.stop_id = rs.stop_id
-    JOIN routes r ON r.route_id = rs.route_id
-    JOIN dir_endpoints ep ON ep.route_id = rs.route_id AND ep.direction_id = rs.direction_id
-    WHERE rs.stop_sequence < ep.max_seq
+    FROM nearby_route_stops nrs
+    JOIN routes r ON r.route_id = nrs.route_id
+    JOIN dir_endpoints ep ON ep.route_id = nrs.route_id AND ep.direction_id = nrs.direction_id
+    -- Never suggest boarding at the terminus: the bus ends its trip there.
+    WHERE nrs.stop_sequence < ep.max_seq
     ORDER BY
       r.route_id,
-      rs.direction_id,
-      ns.dist_m ASC
+      nrs.direction_id,
+      nrs.dist_m ASC
   )
   SELECT *
   FROM closest_per_dir
@@ -1916,3 +1922,16 @@ AS $$
     ms.stop_id ASC
   LIMIT 1;
 $$;
+
+-- =========================================================================
+-- Migration 08: GTFS stop_times Schedules Table
+-- =========================================================================
+CREATE TABLE IF NOT EXISTS route_schedules (
+  route_id TEXT NOT NULL,
+  direction_id SMALLINT NOT NULL,
+  day_type CHAR(1) NOT NULL, -- 'u' (Sun), 'w' (Mon-Thu), 'f' (Fri), 's' (Sat)
+  departure_minutes SMALLINT[] NOT NULL,
+  stop_offset_minutes SMALLINT[] NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (route_id, direction_id, day_type)
+);

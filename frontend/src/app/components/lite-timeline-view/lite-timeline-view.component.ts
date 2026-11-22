@@ -124,7 +124,12 @@ import type {
             <div class="trip-summary-strip">
               <div class="trip-dest-row">
                 <span class="dest-label">🏁 {{ state().destination?.place_name }}</span>
-                <span class="dest-eta">{{ trip.estimated_arrival_time }}</span>
+                <span class="dest-eta">
+                  {{ trip.estimated_arrival_time }}
+                  @if (trip.walk_to_dest_min && trip.walk_to_dest_min > 0) {
+                    <span class="near-dist">• 🚶 +{{ trip.walk_to_dest_min }} {{ labels().minShort }}</span>
+                  }
+                </span>
               </div>
 
               @if (trip.transfers_count > 0) {
@@ -997,14 +1002,17 @@ export class LiteTimelineViewComponent {
 
   readonly isScheduledEta = computed(() => {
     const bus = this.activeBus();
-    return bus?.eta_source === 'scheduled' || bus?.is_realtime === false;
+    return bus?.eta_source === 'scheduled' || bus?.eta_source === 'estimated' || bus?.is_realtime === false;
   });
 
   readonly etaStatusText = computed(() => {
     const bus = this.activeBus();
     if (!bus) return '';
-    if (this.isScheduledEta()) {
+    if (bus.eta_source === 'scheduled') {
       return this.labels().scheduledEta;
+    }
+    if (bus.eta_source === 'estimated' || bus.is_realtime === false) {
+      return this.labels().estimatedEta;
     }
     const sec = bus.last_updated_sec_ago;
     if (sec !== undefined && sec > 0) {
@@ -1097,6 +1105,7 @@ export class LiteTimelineViewComponent {
           collapse: 'צמצם',
           busHere: 'האוטובוס כאן',
           scheduledEta: 'לפי לו״ז',
+          estimatedEta: 'זמן משוער',
           secShort: 'ש׳',
           fromWord: 'מוצא',
           toWord: 'יעד'
@@ -1116,6 +1125,7 @@ export class LiteTimelineViewComponent {
           collapse: 'تصغير',
           busHere: 'الحافلة هنا الآن',
           scheduledEta: 'حسب الجدول',
+          estimatedEta: 'وقت تقديري',
           secShort: 'ث',
           fromWord: 'من',
           toWord: 'إلى'
@@ -1135,6 +1145,7 @@ export class LiteTimelineViewComponent {
           collapse: 'Згорнути',
           busHere: 'Автобус зараз тут',
           scheduledEta: 'За розкладом',
+          estimatedEta: 'Орієнтовно',
           secShort: 'с',
           fromWord: 'Звідки',
           toWord: 'Куди'
@@ -1154,6 +1165,7 @@ export class LiteTimelineViewComponent {
           collapse: 'Свернуть',
           busHere: 'Автобус сейчас здесь',
           scheduledEta: 'По расписанию',
+          estimatedEta: 'Примерно',
           secShort: 'с',
           fromWord: 'Откуда',
           toWord: 'Куда'
@@ -1173,6 +1185,7 @@ export class LiteTimelineViewComponent {
           collapse: 'Compact',
           busHere: 'Bus is here',
           scheduledEta: 'Scheduled',
+          estimatedEta: 'Estimated',
           secShort: 's',
           fromWord: 'From',
           toWord: 'To'

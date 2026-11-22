@@ -1,4 +1,5 @@
 import {
+  AT_STOP_RADIUS_METERS,
   calculateTelemetryAgeSeconds,
   haversineDistanceMeters,
   MAX_VEHICLE_STALE_SECONDS
@@ -36,23 +37,46 @@ async function fetchWithTimeout<T>(url: string, timeoutMs = 5000): Promise<T | n
   }
 }
 
-function findClosestStopSequence(
+/**
+ * Maps a GPS fix onto the route as the sequence of the LAST stop the vehicle has reached.
+ * Picking simply the closest stop is wrong half of the time: a bus 50 m past the user's stop
+ * would still be matched to it and shown as "arriving now" although it already departed.
+ */
+export function findLastReachedStopSequence(
   lat: number,
   lon: number,
   stops: RouteStopCoord[],
   fallbackSeq: number
 ): number {
   if (stops.length === 0) return fallbackSeq;
-  let closestSeq = stops[0].stop_sequence;
+  const sorted = [...stops].sort((a, b) => a.stop_sequence - b.stop_sequence);
+
+  let closestIdx = 0;
   let minDist = Infinity;
-  for (const stop of stops) {
-    const dist = haversineDistanceMeters(lat, lon, stop.lat, stop.lon);
+  for (let i = 0; i < sorted.length; i++) {
+    const dist = haversineDistanceMeters(lat, lon, sorted[i].lat, sorted[i].lon);
     if (dist < minDist) {
       minDist = dist;
-      closestSeq = stop.stop_sequence;
+      closestIdx = i;
     }
   }
-  return closestSeq;
+
+  const closest = sorted[closestIdx];
+  if (minDist <= AT_STOP_RADIUS_METERS) return closest.stop_sequence;
+
+  const next = sorted[closestIdx + 1];
+  if (next) {
+    // Bus is between `closest` and `next` when it is nearer to `next` than `closest` itself is.
+    const segment = haversineDistanceMeters(closest.lat, closest.lon, next.lat, next.lon);
+    const toNext = haversineDistanceMeters(lat, lon, next.lat, next.lon);
+    if (toNext < segment) return closest.stop_sequence;
+  } else {
+    return closest.stop_sequence;
+  }
+
+  // Otherwise it has not reached `closest` yet.
+  const prev = sorted[closestIdx - 1];
+  return prev ? prev.stop_sequence : closest.stop_sequence;
 }
 
 const LINE_REF_BY_ROUTE: Record<string, [string, string]> = {
@@ -126,20 +150,34 @@ export async function fetchLiveVehiclesFromStride(
   const lineRef = resolveStrideLineRef(routeId, directionId);
   const nowMs = Date.now();
   const nowIso = new Date(nowMs).toISOString();
-  const routeStops = await supabaseService.getDirectionStopCoords(routeId, directionId);
+  // Load the (cached) stop list in parallel with the network call to Stride.
+  const routeStopsPromise = supabaseService.getDirectionStopCoords(routeId, directionId);
 
   let vehicles: VehicleTelemetry[] = [];
+  let routeStops: RouteStopCoord[] = [];
 
   if (lineRef) {
+    // Upper and lower time bounds keep Stride on its recorded_at_time index (~100-300 ms) and
+    // prevent corrupted future timestamps (e.g. 2038-01-14) from saturating order_by=desc.
+    const fromIso = new Date(nowMs - MAX_VEHICLE_STALE_SECONDS * 1000).toISOString();
+    const toIso = new Date(nowMs + 60_000).toISOString();
     const locationsUrl = `${STRIDE_API_BASE}/siri_vehicle_locations/list?siri_routes__line_ref=${encodeURIComponent(
       lineRef
-    )}&order_by=recorded_at_time%20desc&limit=20`;
+    )}&recorded_at_time_from=${encodeURIComponent(fromIso)}&recorded_at_time_to=${encodeURIComponent(
+      toIso
+    )}&order_by=recorded_at_time%20desc&limit=60`;
 
-    const locations = await fetchWithTimeout<StrideVehicleLocation[]>(locationsUrl);
+    const [locations, loadedStops] = await Promise.all([
+      fetchWithTimeout<StrideVehicleLocation[]>(locationsUrl),
+      routeStopsPromise
+    ]);
+    routeStops = loadedStops;
     if (locations && locations.length > 0) {
       const seenVehicles = new Set<string>();
       for (const loc of locations) {
         if (typeof loc.lat !== 'number' || typeof loc.lon !== 'number') continue;
+        const parsedMs = loc.recorded_at_time ? Date.parse(loc.recorded_at_time) : NaN;
+        if (Number.isFinite(parsedMs) && parsedMs > nowMs + 120_000) continue;
         const ageSec = calculateTelemetryAgeSeconds(loc.recorded_at_time, nowMs);
         if (loc.recorded_at_time && ageSec > MAX_VEHICLE_STALE_SECONDS) continue;
 
@@ -147,7 +185,7 @@ export async function fetchLiveVehiclesFromStride(
         if (seenVehicles.has(vehicleId)) continue;
         seenVehicles.add(vehicleId);
 
-        const matchedSequence = findClosestStopSequence(loc.lat, loc.lon, routeStops, 1);
+        const matchedSequence = findLastReachedStopSequence(loc.lat, loc.lon, routeStops, 1);
 
         vehicles.push({
           vehicle_id: vehicleId,
@@ -161,7 +199,7 @@ export async function fetchLiveVehiclesFromStride(
           is_realtime: true
         });
 
-        if (vehicles.length >= 4) break;
+        if (vehicles.length >= 6) break;
       }
     }
   }
@@ -174,6 +212,10 @@ export async function fetchLiveVehiclesFromStride(
       updated_at: nowIso,
       source: 'stride'
     };
+  }
+
+  if (routeStops.length === 0) {
+    routeStops = await routeStopsPromise;
   }
 
   return {

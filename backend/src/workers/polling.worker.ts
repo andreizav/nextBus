@@ -19,12 +19,17 @@ export class ActiveRoutePollingWorker {
         return 0;
       }
 
-      await Promise.all(
+      // allSettled: one failing route (Stride timeout, bad line ref) must not block the others.
+      const results = await Promise.allSettled(
         activeRoutes.map(async ({ routeId, directionId }) => {
           const freshState = await fetchLiveVehiclesFromStride(routeId, directionId);
           await redisService.setBusState(routeId, directionId, freshState);
         })
       );
+      const failed = results.filter((r) => r.status === 'rejected').length;
+      if (failed > 0) {
+        console.warn(`[PollingWorker] ${failed}/${activeRoutes.length} route refreshes failed`);
+      }
 
       return activeRoutes.length;
     } catch (error) {

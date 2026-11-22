@@ -7,6 +7,7 @@ import {
   selectNearestApproachingVehicle
 } from './eta.service.js';
 import { redisService } from './redis.service.js';
+import { scheduleService } from './schedule.service.js';
 import {
   supabaseService,
   type NearbyLineTerminusRow,
@@ -14,6 +15,7 @@ import {
   type UserRouteHistoryRow
 } from './supabase.service.js';
 import type {
+  EtaSource,
   LiveBusStatusResponse,
   LocalLineSuggestion,
   ReturningRouteSuggestion
@@ -70,10 +72,6 @@ function buildDedupeKey(item: {
   return `line:${item.route_id ?? item.line_number ?? 'unknown'}:${item.direction_id ?? 0}`;
 }
 
-function fallbackEtaMinutes(directionId: number, lineNumber: string): number {
-  return Math.max(2, Math.min(9, 3 + directionId * 2 + (lineNumber.length > 2 ? 2 : 0)));
-}
-
 async function computeLiveEtaForRoute(params: {
   routeId: string;
   directionId: 0 | 1;
@@ -82,13 +80,12 @@ async function computeLiveEtaForRoute(params: {
   stopLon: number;
   stopSequence?: number;
   originStopId?: string | null;
-}): Promise<number> {
-  const { routeId, directionId, lineNumber, stopLat, stopLon, stopSequence, originStopId } = params;
-  await redisService.touchActiveRoute(routeId, directionId);
-  const cached = await redisService.getBusState(routeId, directionId);
-  if (!cached || cached.vehicles.length === 0) {
-    return fallbackEtaMinutes(directionId, lineNumber);
-  }
+}): Promise<{ etaMinutes: number | undefined; etaIsRealtime: boolean; etaSource?: EtaSource }> {
+  const { routeId, directionId, stopLat, stopLon, stopSequence, originStopId } = params;
+  const [, cached] = await Promise.all([
+    redisService.touchActiveRoute(routeId, directionId),
+    redisService.getBusState(routeId, directionId)
+  ]);
 
   let resolvedSeq = stopSequence;
   let resolvedLat = stopLat;
@@ -106,31 +103,46 @@ async function computeLiveEtaForRoute(params: {
   }
 
   const targetSeq = resolvedSeq ?? 1;
-  const freshVehicles = filterFreshVehicles(cached.vehicles);
-  const approaching = selectNearestApproachingVehicle(
-    freshVehicles,
-    targetSeq,
-    resolvedLat,
-    resolvedLon
-  );
-  if (!approaching) {
-    return fallbackEtaMinutes(directionId, lineNumber);
+  if (cached && cached.source === 'stride' && cached.vehicles.length > 0) {
+    const freshVehicles = filterFreshVehicles(cached.vehicles);
+    const approaching = selectNearestApproachingVehicle(
+      freshVehicles,
+      targetSeq,
+      resolvedLat,
+      resolvedLon
+    );
+    if (approaching) {
+      const stopsAway = calculateStopsAway(targetSeq, approaching.current_stop_sequence);
+      const distM =
+        loadedStops && loadedStops.length > 0
+          ? calculateRoutePathDistanceMeters(
+              loadedStops,
+              approaching.current_stop_sequence,
+              targetSeq,
+              approaching.lat,
+              approaching.lon,
+              resolvedLat,
+              resolvedLon
+            )
+          : haversineDistanceMeters(approaching.lat, approaching.lon, resolvedLat, resolvedLon);
+      return {
+        etaMinutes: calculateEtaMinutes(stopsAway, distM, approaching.speed_kmh),
+        etaIsRealtime: true,
+        etaSource: 'realtime'
+      };
+    }
   }
 
-  const stopsAway = calculateStopsAway(targetSeq, approaching.current_stop_sequence);
-  const distM =
-    loadedStops && loadedStops.length > 0
-      ? calculateRoutePathDistanceMeters(
-          loadedStops,
-          approaching.current_stop_sequence,
-          targetSeq,
-          approaching.lat,
-          approaching.lon,
-          resolvedLat,
-          resolvedLon
-        )
-      : haversineDistanceMeters(approaching.lat, approaching.lon, resolvedLat, resolvedLon);
-  return calculateEtaMinutes(stopsAway, distM, approaching.speed_kmh);
+  const scheduled = scheduleService.getNextScheduledDeparture(routeId, directionId, targetSeq);
+  if (scheduled) {
+    return {
+      etaMinutes: scheduled.etaMinutes,
+      etaIsRealtime: false,
+      etaSource: 'scheduled'
+    };
+  }
+
+  return { etaMinutes: undefined, etaIsRealtime: false };
 }
 
 /**
@@ -348,7 +360,7 @@ export async function getReturningRoutesForLocation(
         return item;
       }
       const dir: 0 | 1 = item.direction_id === 1 ? 1 : 0;
-      const liveEta = await computeLiveEtaForRoute({
+      const etaResult = await computeLiveEtaForRoute({
         routeId: item.route_id,
         directionId: dir,
         lineNumber: item.line_number,
@@ -358,7 +370,7 @@ export async function getReturningRoutesForLocation(
       });
       return {
         ...item,
-        eta_minutes: liveEta
+        eta_minutes: etaResult.etaMinutes
       };
     })
   );
@@ -406,7 +418,7 @@ export async function getLocalStopSuggestions(
 
   return Promise.all(
     selectedRows.map(async (row): Promise<LocalLineSuggestion> => {
-      const liveEta = await computeLiveEtaForRoute({
+      const etaResult = await computeLiveEtaForRoute({
         routeId: row.route_id,
         directionId: row.direction_id,
         lineNumber: row.line_number,
@@ -418,7 +430,9 @@ export async function getLocalStopSuggestions(
 
       return {
         ...row,
-        eta_minutes: liveEta
+        eta_minutes: etaResult.etaMinutes,
+        eta_is_realtime: etaResult.etaIsRealtime,
+        ...(etaResult.etaSource ? { eta_source: etaResult.etaSource } : {})
       };
     })
   );

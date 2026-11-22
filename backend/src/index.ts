@@ -4,6 +4,7 @@ import express, { type Request, type Response } from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import zlib from 'node:zlib';
 import { z } from 'zod';
 import { handleMcpPostRequest } from './mcp/server.js';
 import { getLiveBusStatus } from './services/bus-status.service.js';
@@ -27,6 +28,40 @@ const port = Number(process.env.PORT ?? 3000);
 
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
+
+// Lightweight gzip/brotli for JSON API payloads (full stop timelines are 20-80 KB raw and
+// compress ~8-10x), built on node:zlib so no extra dependency is needed. Live endpoints
+// are also marked no-store so a proxy never serves a stale ETA.
+const COMPRESS_MIN_BYTES = 1024;
+app.use('/api', (req: Request, res: Response, next) => {
+  const originalJson = res.json.bind(res);
+  res.json = (body: unknown) => {
+    if (!res.getHeader('Cache-Control')) {
+      res.setHeader('Cache-Control', 'no-store');
+    }
+    const payload = Buffer.from(JSON.stringify(body));
+    const accept = String(req.headers['accept-encoding'] ?? '');
+    if (payload.length < COMPRESS_MIN_BYTES || res.headersSent) {
+      return originalJson(body);
+    }
+    const useBrotli = /\bbr\b/.test(accept);
+    if (!useBrotli && !/\bgzip\b/.test(accept)) {
+      return originalJson(body);
+    }
+    const compressed = useBrotli
+      ? zlib.brotliCompressSync(payload, {
+          params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 4 }
+        })
+      : zlib.gzipSync(payload, { level: 6 });
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Encoding', useBrotli ? 'br' : 'gzip');
+    res.setHeader('Vary', 'Accept-Encoding');
+    res.setHeader('Content-Length', compressed.length);
+    res.end(compressed);
+    return res;
+  };
+  next();
+});
 
 function resolveRepoPath(...segments: string[]): string {
   const fromDist = path.resolve(__dirname, '../..', ...segments);
@@ -205,6 +240,12 @@ app.get('/api/local-suggestions', async (req: Request, res: Response) => {
       userId ? getReturningRoutesForLocation(userId, lat, lon, 250) : Promise.resolve([]),
       getLocalStopSuggestions(lat, lon, radiusMeters, 8)
     ]);
+
+    // Lines without a live ETA were just registered as active routes: warm their Redis state
+    // now instead of waiting up to 15 s for the next worker tick.
+    if (localLines.some((l) => l.eta_minutes === undefined)) {
+      void pollingWorker.runCycle();
+    }
 
     res.json({
       user_location: { lat, lon },

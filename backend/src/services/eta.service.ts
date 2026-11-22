@@ -12,6 +12,29 @@ const AVG_URBAN_SPEED_KMH = 24;
 const DWELL_MINUTES_PER_STOP = 0.6;
 const LITE_MODE_MAX_ETA_MINUTES = 8;
 export const MAX_VEHICLE_STALE_SECONDS = 300;
+/** A vehicle whose last reached stop IS the user stop only counts as "arriving" while it is still this close. */
+export const AT_STOP_RADIUS_METERS = 60;
+/** Average pedestrian speed used for every walk estimate (≈4.5 km/h). */
+export const WALK_METERS_PER_MIN = 75;
+const MIN_EFFECTIVE_SPEED_KMH = 12;
+const MAX_EFFECTIVE_SPEED_KMH = 75;
+
+/**
+ * Instantaneous GPS velocity is a poor predictor of average speed to the stop
+ * (0 km/h at a red light, 90 km/h on a short highway stretch). Clamp it to a sane band.
+ */
+export function normalizeSpeedKmh(speedKmh?: number): number {
+  if (typeof speedKmh !== 'number' || !Number.isFinite(speedKmh) || speedKmh <= 0) {
+    return AVG_URBAN_SPEED_KMH;
+  }
+  return Math.min(MAX_EFFECTIVE_SPEED_KMH, Math.max(MIN_EFFECTIVE_SPEED_KMH, speedKmh));
+}
+
+/** Minutes needed to walk `meters` (0 for distances that are effectively "at the stop"). */
+export function calculateWalkMinutes(meters: number): number {
+  if (!Number.isFinite(meters) || meters <= 40) return 0;
+  return Math.ceil(meters / WALK_METERS_PER_MIN);
+}
 
 function toRadians(degrees: number): number {
   return (degrees * Math.PI) / 180;
@@ -182,8 +205,8 @@ export function calculateEtaMinutes(
     return 0;
   }
 
-  if (typeof distanceMeters === 'number' && distanceMeters >= 0 && speedKmh > 0) {
-    const travelMinutes = (distanceMeters / 1000 / speedKmh) * 60;
+  if (typeof distanceMeters === 'number' && distanceMeters >= 0) {
+    const travelMinutes = (distanceMeters / 1000 / normalizeSpeedKmh(speedKmh)) * 60;
     const dwellMinutes = Math.max(0, stopsAway - 1) * DWELL_MINUTES_PER_STOP;
     return Math.max(1, Math.round(travelMinutes + dwellMinutes));
   }
@@ -231,6 +254,22 @@ export function projectCoordinatesToBbox(
 }
 
 /**
+ * A vehicle is "approaching" when its last reached stop is before the user's stop, or when it
+ * is standing at the user's stop right now. A vehicle whose last reached stop is the user's stop
+ * but is already >60 m away has departed and can no longer be boarded.
+ */
+function isApproachingVehicle(
+  v: VehicleTelemetry,
+  userStopSequence: number,
+  userStopLat: number,
+  userStopLon: number
+): boolean {
+  if (v.current_stop_sequence < userStopSequence) return true;
+  if (v.current_stop_sequence > userStopSequence) return false;
+  return haversineDistanceMeters(v.lat, v.lon, userStopLat, userStopLon) <= AT_STOP_RADIUS_METERS;
+}
+
+/**
  * Selects the closest fresh approaching bus at or before userStopSequence.
  * Excludes stale ("ghost") telemetry older than MAX_VEHICLE_STALE_SECONDS.
  * Returns null if no live vehicle is approaching.
@@ -242,7 +281,9 @@ export function selectNearestApproachingVehicle(
   userStopLon: number
 ): VehicleTelemetry | null {
   const fresh = filterFreshVehicles(vehicles);
-  const approaching = fresh.filter((v) => v.current_stop_sequence <= userStopSequence);
+  const approaching = fresh.filter((v) =>
+    isApproachingVehicle(v, userStopSequence, userStopLat, userStopLon)
+  );
   if (approaching.length === 0) {
     return null;
   }
@@ -259,6 +300,67 @@ export function selectNearestApproachingVehicle(
     const currDist = haversineDistanceMeters(current.lat, current.lon, userStopLat, userStopLon);
     return currDist < bestDist ? current : best;
   });
+}
+
+export interface VehicleEtaEstimate {
+  vehicle: VehicleTelemetry;
+  stopsAway: number;
+  routeDistanceMeters: number;
+  etaMinutes: number;
+}
+
+/**
+ * Computes the ETA of one vehicle to the user's stop along the ordered route stops.
+ */
+export function estimateVehicleEta(
+  stops: Array<{ stop_sequence: number; lat: number; lon: number }>,
+  vehicle: VehicleTelemetry,
+  userStopSequence: number,
+  userStopLat: number,
+  userStopLon: number
+): VehicleEtaEstimate {
+  const stopsAway = calculateStopsAway(userStopSequence, vehicle.current_stop_sequence);
+  const routeDistanceMeters = calculateRoutePathDistanceMeters(
+    stops,
+    vehicle.current_stop_sequence,
+    userStopSequence,
+    vehicle.lat,
+    vehicle.lon,
+    userStopLat,
+    userStopLon
+  );
+  return {
+    vehicle,
+    stopsAway,
+    routeDistanceMeters,
+    etaMinutes: calculateEtaMinutes(stopsAway, routeDistanceMeters, vehicle.speed_kmh)
+  };
+}
+
+/**
+ * Picks the first approaching live vehicle the passenger can actually catch, i.e. whose ETA is
+ * not earlier than `minEtaMinutes` (time to walk to the stop / to reach a transfer hub).
+ * If every approaching vehicle arrives too early, returns the latest-arriving one flagged
+ * `catchable: false` so the caller can decide (the passenger may run, or add an assumed headway).
+ */
+export function selectCatchableVehicle(
+  vehicles: VehicleTelemetry[],
+  stops: Array<{ stop_sequence: number; lat: number; lon: number }>,
+  userStopSequence: number,
+  userStopLat: number,
+  userStopLon: number,
+  minEtaMinutes = 0
+): (VehicleEtaEstimate & { catchable: boolean }) | null {
+  const fresh = filterFreshVehicles(vehicles);
+  const estimates = fresh
+    .filter((v) => isApproachingVehicle(v, userStopSequence, userStopLat, userStopLon))
+    .map((v) => estimateVehicleEta(stops, v, userStopSequence, userStopLat, userStopLon))
+    .sort((a, b) => a.etaMinutes - b.etaMinutes || a.routeDistanceMeters - b.routeDistanceMeters);
+
+  if (estimates.length === 0) return null;
+  const catchable = estimates.find((e) => e.etaMinutes >= minEtaMinutes);
+  if (catchable) return { ...catchable, catchable: true };
+  return { ...estimates[estimates.length - 1], catchable: false };
 }
 
 const DEFAULT_MAP_ASPECT_RATIO = 600 / 320; // 15:8

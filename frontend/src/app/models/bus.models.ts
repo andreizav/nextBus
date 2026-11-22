@@ -36,7 +36,8 @@ export interface LineCandidate {
   stop_lat: number;
   stop_lon: number;
   distance_meters: number;
-  eta_minutes: number;
+  /** Undefined when no live vehicle data is available. */
+  eta_minutes?: number;
 }
 
 export interface TripLegBoardStop {
@@ -79,6 +80,8 @@ export interface TripOption {
   rank: 1 | 2 | 3;
   total_duration_min: number;
   estimated_arrival_time: string;
+  walk_to_dest_meters?: number;
+  walk_to_dest_min?: number;
   transfers_count: number;
   legs: TripLeg[];
 }
@@ -133,7 +136,8 @@ export interface UserStopInfo {
   distance_meters?: number;
 }
 
-export type EtaSource = 'realtime' | 'scheduled';
+/** 'estimated' = no live GPS and no GTFS timetable: heuristic guess, never a real schedule. */
+export type EtaSource = 'realtime' | 'scheduled' | 'estimated';
 
 export interface NearestBusInfo {
   vehicle_id: string;
@@ -233,6 +237,8 @@ export interface RecommendedBusOption {
   ride_duration_min: number;
   total_arrival_min: number;
   estimated_arrival_time: string;
+  walk_to_dest_meters?: number;
+  walk_to_dest_min?: number;
   leg1_alight_time?: string;
   timeline_stops: StopTimelineItem[];
   timeline_window?: TimelineWindow;
@@ -275,7 +281,10 @@ export interface LocalLineSuggestion {
   distance_meters: number;
   destination_name: string;
   destination_he: string;
-  eta_minutes: number;
+  /** Undefined when no live vehicle data is available yet. */
+  eta_minutes?: number;
+  eta_is_realtime?: boolean;
+  eta_source?: EtaSource;
 }
 
 export interface LocalSuggestionsResponse {

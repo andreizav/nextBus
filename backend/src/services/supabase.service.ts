@@ -254,16 +254,61 @@ export const MAJOR_INTERCITY_HUBS = [
   { name: 'Eilat CBS', lat: 29.5575, lon: 34.9530 }
 ];
 
+/** Arrays produced by the hardcoded demo fallback — never cached, so a DB outage self-heals. */
+const fallbackStopArrays = new WeakSet<RouteStopCoord[]>();
+
 function getFallbackStopsForDirection(directionId: 0 | 1): RouteStopCoord[] {
-  if (directionId === 0) {
-    return LINE_49_FALLBACK_STOPS;
+  const result =
+    directionId === 0
+      ? [...LINE_49_FALLBACK_STOPS]
+      : [...LINE_49_FALLBACK_STOPS].reverse().map((stop, idx) => ({
+          ...stop,
+          stop_sequence: idx + 1
+        }));
+  fallbackStopArrays.add(result);
+  return result;
+}
+
+/**
+ * Process-local TTL cache for static GTFS topology (stop lists per route direction and route
+ * metadata). These rows only change on a GTFS re-import, yet every live-status poll used to
+ * re-query them 3-4 times. In-flight promises are shared so concurrent requests hit the DB once.
+ */
+const TOPOLOGY_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const NEARBY_GRID_STEP = 0.0015; // ~150 m
+const NEARBY_GRID_MARGIN_METERS = 120; // > half the cell diagonal
+const TOPOLOGY_CACHE_MAX_ENTRIES = 5000;
+
+class TtlCache<V> {
+  private readonly entries = new Map<string, { value: Promise<V>; expiresAt: number }>();
+
+  async getOrLoad(key: string, load: () => Promise<V>, shouldCache: (v: V) => boolean): Promise<V> {
+    const now = Date.now();
+    const hit = this.entries.get(key);
+    if (hit && hit.expiresAt > now) {
+      return hit.value;
+    }
+
+    const pending = load();
+    this.entries.set(key, { value: pending, expiresAt: now + TOPOLOGY_CACHE_TTL_MS });
+    try {
+      const value = await pending;
+      if (!shouldCache(value)) {
+        this.entries.delete(key);
+      } else if (this.entries.size > TOPOLOGY_CACHE_MAX_ENTRIES) {
+        const oldestKey = this.entries.keys().next().value;
+        if (oldestKey !== undefined) this.entries.delete(oldestKey);
+      }
+      return value;
+    } catch (err) {
+      this.entries.delete(key);
+      throw err;
+    }
   }
-  return [...LINE_49_FALLBACK_STOPS]
-    .reverse()
-    .map((stop, idx) => ({
-      ...stop,
-      stop_sequence: idx + 1
-    }));
+
+  clear(): void {
+    this.entries.clear();
+  }
 }
 
 function parsePostgisPoint(location: unknown): { lat: number; lon: number } | null {
@@ -403,28 +448,9 @@ class SupabaseService {
             best = s;
           }
         }
-        let routeShort = lineNum;
-        let routeLong = `Line ${lineNum}`;
-        if (this.client) {
-          const { data: rMeta } = await this.client
-            .from('routes')
-            .select('route_short_name, route_long_name')
-            .eq('route_id', routeId)
-            .maybeSingle();
-          if (rMeta) {
-            routeShort = String(rMeta.route_short_name ?? routeShort);
-            routeLong = String(rMeta.route_long_name ?? routeLong);
-          }
-        } else if (this.pgPool) {
-          const rRes = await this.pgPool.query(
-            `SELECT route_short_name, route_long_name FROM routes WHERE route_id = $1 LIMIT 1`,
-            [routeId]
-          );
-          if (rRes.rows[0]) {
-            routeShort = String(rRes.rows[0].route_short_name ?? routeShort);
-            routeLong = String(rRes.rows[0].route_long_name ?? routeLong);
-          }
-        }
+        const meta = await this.getRouteMeta(routeId).catch(() => null);
+        const routeShort = meta?.short || lineNum;
+        const routeLong = meta?.long || `Line ${lineNum}`;
         return {
           route_id: routeId,
           direction_id: dirId,
@@ -537,10 +563,65 @@ class SupabaseService {
     };
   }
 
+  private readonly stopCoordsCache = new TtlCache<RouteStopCoord[]>();
+  private readonly routeMetaCache = new TtlCache<{ short: string; long: string } | null>();
+
+  /** Drops cached GTFS topology (e.g. after a re-import). */
+  clearTopologyCache(): void {
+    this.stopCoordsCache.clear();
+    this.routeMetaCache.clear();
+    this.nearbyLinesCache.clear();
+  }
+
   async getDirectionStopCoords(
     routeId: string,
     directionId: 0 | 1,
     allowReverseFallback = true
+  ): Promise<RouteStopCoord[]> {
+    const stops = await this.stopCoordsCache.getOrLoad(
+      `${routeId}:${directionId}:${allowReverseFallback ? 1 : 0}`,
+      () => this.loadDirectionStopCoords(routeId, directionId, allowReverseFallback),
+      (v) => v.length > 0 && !fallbackStopArrays.has(v)
+    );
+    // Callers may sort/mutate; hand out a shallow copy so the cached array stays pristine.
+    return [...stops];
+  }
+
+  private async getRouteMeta(routeId: string): Promise<{ short: string; long: string } | null> {
+    return this.routeMetaCache.getOrLoad(
+      routeId,
+      async () => {
+        if (this.client) {
+          const { data: rMeta } = await this.client
+            .from('routes')
+            .select('route_short_name, route_long_name')
+            .eq('route_id', routeId)
+            .maybeSingle();
+          if (rMeta) {
+            return { short: String(rMeta.route_short_name ?? ''), long: String(rMeta.route_long_name ?? '') };
+          }
+        } else if (this.pgPool) {
+          const rRes = await this.pgPool.query(
+            `SELECT route_short_name, route_long_name FROM routes WHERE route_id = $1 LIMIT 1`,
+            [routeId]
+          );
+          if (rRes.rows[0]) {
+            return {
+              short: String(rRes.rows[0].route_short_name ?? ''),
+              long: String(rRes.rows[0].route_long_name ?? '')
+            };
+          }
+        }
+        return null;
+      },
+      (v) => v !== null
+    );
+  }
+
+  private async loadDirectionStopCoords(
+    routeId: string,
+    directionId: 0 | 1,
+    allowReverseFallback: boolean
   ): Promise<RouteStopCoord[]> {
     this.ensureInit();
 
@@ -665,7 +746,15 @@ class SupabaseService {
     busStopSequence: number
   ): Promise<StopTimelineItem[]> {
     const allStops = await this.getDirectionStopCoords(routeId, directionId);
+    return this.buildStopsTimeline(allStops, userStopSequence, busStopSequence);
+  }
 
+  /** Pure variant of getRouteStopsTimeline for callers that already hold the stop list. */
+  buildStopsTimeline(
+    allStops: RouteStopCoord[],
+    userStopSequence: number,
+    busStopSequence: number
+  ): StopTimelineItem[] {
     return allStops.map((stop) => {
       let status: StopTimelineItem['status'] = 'upcoming';
       if (stop.stop_sequence < busStopSequence) {
@@ -1527,11 +1616,49 @@ class SupabaseService {
     };
   }
 
+  private readonly nearbyLinesCache = new TtlCache<NearbyLineTerminusRow[]>();
+
+  /**
+   * Nearby lines are static GTFS topology, so results are cached per ~150 m grid cell and the
+   * per-user distances are recomputed from the exact position. Cold cells still hit the DB once.
+   */
   async getNearbyLinesAndTermini(
     userLat: number,
     userLon: number,
     radiusMeters = 600,
     maxLines = 8
+  ): Promise<NearbyLineTerminusRow[]> {
+    const cellLat = Math.round(userLat / NEARBY_GRID_STEP) * NEARBY_GRID_STEP;
+    const cellLon = Math.round(userLon / NEARBY_GRID_STEP) * NEARBY_GRID_STEP;
+    // Query the cell centre with a margin so every stop within `radiusMeters` of any point in
+    // the cell is included, and fetch extra rows so exact re-ranking cannot drop a closer line.
+    const cellRows = await this.nearbyLinesCache.getOrLoad(
+      `${cellLat.toFixed(4)},${cellLon.toFixed(4)}:${radiusMeters}:${maxLines}`,
+      () =>
+        this.queryNearbyLinesAndTermini(
+          cellLat,
+          cellLon,
+          radiusMeters + NEARBY_GRID_MARGIN_METERS,
+          maxLines * 3
+        ),
+      (rows) => rows.length > 0
+    );
+
+    return cellRows
+      .map((row) => ({
+        ...row,
+        distance_meters: Math.round(haversineDistanceMeters(userLat, userLon, row.stop_lat, row.stop_lon))
+      }))
+      .filter((row) => row.distance_meters <= radiusMeters)
+      .sort((a, b) => a.distance_meters - b.distance_meters || a.line_number.localeCompare(b.line_number))
+      .slice(0, maxLines);
+  }
+
+  private async queryNearbyLinesAndTermini(
+    userLat: number,
+    userLon: number,
+    radiusMeters: number,
+    maxLines: number
   ): Promise<NearbyLineTerminusRow[]> {
     this.ensureInit();
 

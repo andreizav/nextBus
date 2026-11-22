@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { buildRoutePairCacheKey, redisService } from '../services/redis.service.js';
+import { scheduleService } from '../services/schedule.service.js';
 import { supabaseService, type RouteStopCoord } from '../services/supabase.service.js';
 import {
   buildTripOptions,
@@ -536,7 +537,7 @@ describe('Trip Planner A -> B matching and Top-3 ranking', () => {
         route_id: 'stride-10024',
         direction_id: 0,
         updated_at: '2026-11-21T12:00:00Z',
-        source: 'fallback',
+        source: 'stride',
         vehicles: [
           {
             vehicle_id: 'bus-24-live',
@@ -717,7 +718,7 @@ describe('Trip Planner A -> B matching and Top-3 ranking', () => {
       }
     });
 
-    it('returns full GTFS stops & explicit scheduled ETA for Eilat / Be\'er Sheva when Redis bus:state is empty', async () => {
+    it('returns full GTFS stops & an explicitly estimated (non-live) ETA for Eilat / Be\'er Sheva when Redis bus:state is empty', async () => {
       vi.spyOn(redisService, 'getCachedRoutePair').mockResolvedValue(null);
       vi.spyOn(redisService, 'setCachedRoutePair').mockResolvedValue(undefined);
       vi.spyOn(redisService, 'touchActiveRoute').mockResolvedValue(undefined);
@@ -775,7 +776,7 @@ describe('Trip Planner A -> B matching and Top-3 ranking', () => {
 
         expect(res.no_verified_route).toBeUndefined();
         expect(res.route.short_name).toBe('993');
-        expect(res.nearest_bus?.eta_source).toBe('scheduled');
+        expect(res.nearest_bus?.eta_source).toBe('estimated');
         expect(res.nearest_bus?.is_realtime).toBe(false);
         expect(res.timeline_stops).toHaveLength(9);
         expect(res.timeline_window?.total_stops_count).toBe(9);
@@ -891,6 +892,276 @@ describe('Trip Planner A -> B matching and Top-3 ranking', () => {
         expect(matches[0].dest_stop_id).toBe('stop-31100');
         expect(directSpy).toHaveBeenCalled();
       } finally {
+        vi.restoreAllMocks();
+      }
+    });
+
+    it('uses GTFS stop_times schedules, real 1-transfer wait times, and final walk to destination', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-11-23T10:00:00+02:00'));
+
+      scheduleService.setScheduleOverrideForTests(
+        new Map([
+          // Leg 1: departs 10:05 (605) at seq 1, arrives seq 3 at 10:15 (offset 10 -> ride 10m from seq 1)
+          ['gtfs-1x-a:0', { w: [605, 640], f: [], s: [], o: [0, 5, 10] }],
+          // Leg 2: arrives hub at 10:15 + 1m walk + 1m margin = 10:17 (17m).
+          // Scheduled dep at 626 + offset 0 at seq 1 -> 10:26 (eta=26 -> wait = 26 - 15 = 11m, ride 12m -> alight 10:38)
+          // Final walk ~225m -> ceil(225/75) = 3m -> total = 41m (10:41)
+          ['gtfs-1x-b:0', { w: [610, 626], f: [], s: [], o: [0, 6, 12] }]
+        ])
+      );
+
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(JSON.stringify({ elements: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        })
+      );
+      vi.spyOn(redisService, 'getCachedRoutePair').mockResolvedValue(null);
+      vi.spyOn(redisService, 'setCachedRoutePair').mockResolvedValue(undefined);
+      vi.spyOn(redisService, 'touchActiveRoute').mockResolvedValue(undefined);
+      vi.spyOn(redisService, 'getBusState').mockResolvedValue(null);
+
+      const makeStops = (prefix: string, count: number, baseLat: number, endLat?: number): RouteStopCoord[] =>
+        Array.from({ length: count }, (_, idx) => ({
+          stop_id: `${prefix}-s${idx + 1}`,
+          stop_code: `${prefix}${idx + 1}`,
+          stop_name: `${prefix} Stop ${idx + 1}`,
+          stop_name_he: `${prefix} תחנה ${idx + 1}`,
+          stop_sequence: idx + 1,
+          lat: idx === count - 1 && endLat !== undefined ? endLat : baseLat + idx * 0.01,
+          lon: 34.96
+        }));
+
+      vi.spyOn(supabaseService, 'getDirectionStopCoords').mockImplementation(async (routeId) => {
+        if (routeId === 'gtfs-1x-a') return makeStops('a', 3, 32.76);
+        return makeStops('b', 3, 32.78, 32.81);
+      });
+      vi.spyOn(supabaseService, 'findDirectTrips').mockResolvedValue([]);
+      vi.spyOn(supabaseService, 'findTransferTrips').mockResolvedValue([
+        {
+          transfers_count: 1,
+          leg1_route_id: 'gtfs-1x-a',
+          leg1_route_short_name: '24',
+          leg1_route_long_name: 'Leg A',
+          leg1_direction_id: 0,
+          origin_stop_id: 'a-s1',
+          origin_stop_code: 'a1',
+          origin_stop_name: 'Origin',
+          origin_stop_name_he: 'מוצא',
+          origin_stop_sequence: 1,
+          origin_lat: 32.76,
+          origin_lon: 34.96,
+          xfer1_alight_stop_id: 'a-s3',
+          xfer1_alight_stop_code: 'a3',
+          xfer1_alight_stop_name: 'Hub',
+          xfer1_alight_stop_name_he: 'צומת',
+          xfer1_alight_stop_sequence: 3,
+          xfer1_alight_lat: 32.78,
+          xfer1_alight_lon: 34.96,
+          leg1_stops_between: 2,
+          xfer1_walk_meters: 50,
+          leg2_route_id: 'gtfs-1x-b',
+          leg2_route_short_name: '37',
+          leg2_route_long_name: 'Leg B',
+          leg2_direction_id: 0,
+          xfer1_board_stop_id: 'b-s1',
+          xfer1_board_stop_code: 'b1',
+          xfer1_board_stop_name: 'Hub Board',
+          xfer1_board_stop_name_he: 'צומת עלייה',
+          xfer1_board_stop_sequence: 1,
+          xfer1_board_lat: 32.7804,
+          xfer1_board_lon: 34.96,
+          dest_stop_id: 'b-s3',
+          dest_stop_code: 'b3',
+          dest_stop_name: 'Dest',
+          dest_stop_name_he: 'יעד',
+          dest_stop_sequence: 3,
+          dest_lat: 32.81,
+          dest_lon: 34.96,
+          leg2_stops_between: 2
+        }
+      ]);
+
+      try {
+        // Destination is ~225 m south of b-s3 -> 3 min final walk
+        const res = await planBestBusesToDestination({
+          userLocation: { lat: 32.76, lon: 34.96 },
+          destination: {
+            lat: 32.808,
+            lon: 34.96,
+            place_name: 'Technion',
+            formatted_address: 'Technion, Haifa'
+          },
+          entryContext: 'standalone',
+          allowColdBootstrap: false
+        });
+
+        const opt = res.recommended_options?.[0];
+        const trip = res.trip_options?.[0];
+        expect(opt?.bus.eta_source).toBe('scheduled');
+        expect(opt?.eta_to_boarding_min).toBe(5);
+        expect(opt?.ride_duration_min).toBe(22);
+        expect(opt?.transfer_info?.wait_minutes).toBe(11);
+        expect(trip?.legs[1].transfer_wait_min).toBe(11);
+        expect(opt?.walk_to_dest_min).toBe(3);
+        expect(opt?.total_arrival_min).toBe(41);
+        expect(opt?.estimated_arrival_time).toBe('10:41');
+      } finally {
+        vi.useRealTimers();
+        scheduleService.clearScheduleOverrideForTests();
+        vi.restoreAllMocks();
+      }
+    });
+
+    it('uses GTFS stop_times schedules, real 2-transfer wait times, and final walk to destination in total ETA', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      // Monday 10:00 IST -> minutesSinceMidnight = 600
+      vi.setSystemTime(new Date('2026-11-23T10:00:00+02:00'));
+
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(JSON.stringify({ elements: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        })
+      );
+
+      scheduleService.setScheduleOverrideForTests(
+        new Map([
+          // Leg 1: departs 10:05 (605) at seq 1, offset 5m at seq 2 -> boards at 10:10 (eta=10), arrives hub1 seq 4 (+18-5=13m -> 10:23)
+          ['gtfs-leg1:0', { w: [605, 640], f: [], s: [], o: [0, 5, 11, 18] }],
+          // Leg 2: arrives hub1 10:23 + 1m walk + 1m margin = minBoard 10:25 (25m from now).
+          // Scheduled dep at 637 + offset 0 at seq 1 -> 10:37 (eta=37 -> wait = 37 - 23 = 14 min, NOT fixed 5!)
+          // Ride seq 1..3 = 20 min -> arrives hub2 at 10:57 (57m from now).
+          ['gtfs-leg2:0', { w: [615, 637], f: [], s: [], o: [0, 10, 20] }],
+          // Leg 3: arrives hub2 10:57 + 1m walk + 1m margin = minBoard 10:59 (59m from now).
+          // Scheduled dep 668 + offset 0 -> 11:08 (eta=68 -> wait = 68 - 57 = 11 min, NOT fixed 6!)
+          // Ride seq 1..3 = 15 min -> alight at 11:23 (83m).
+          // Plus ~300m final walk from alight stop to destination -> ceil(300/75) = 4 min -> total = 87 min (11:27)!
+          ['gtfs-leg3:0', { w: [645, 668], f: [], s: [], o: [0, 7, 15] }]
+        ])
+      );
+
+      vi.spyOn(redisService, 'getCachedRoutePair').mockResolvedValue(null);
+      vi.spyOn(redisService, 'setCachedRoutePair').mockResolvedValue(undefined);
+      vi.spyOn(redisService, 'touchActiveRoute').mockResolvedValue(undefined);
+      vi.spyOn(redisService, 'getBusState').mockResolvedValue(null);
+
+      const makeStops = (prefix: string, count: number, baseLat: number, endLat?: number, endLon?: number): RouteStopCoord[] =>
+        Array.from({ length: count }, (_, idx) => ({
+          stop_id: `${prefix}-s${idx + 1}`,
+          stop_code: `${prefix}${idx + 1}`,
+          stop_name: `${prefix} Stop ${idx + 1}`,
+          stop_name_he: `${prefix} תחנה ${idx + 1}`,
+          stop_sequence: idx + 1,
+          lat: idx === count - 1 && endLat !== undefined ? endLat : baseLat + idx * 0.01,
+          lon: idx === count - 1 && endLon !== undefined ? endLon : 34.96
+        }));
+
+      vi.spyOn(supabaseService, 'getDirectionStopCoords').mockImplementation(async (routeId) => {
+        if (routeId === 'gtfs-leg1') return makeStops('l1', 4, 32.76);
+        if (routeId === 'gtfs-leg2') return makeStops('l2', 3, 32.50);
+        return makeStops('l3', 3, 31.90, 31.8913, 34.7796);
+      });
+
+      vi.spyOn(supabaseService, 'findDirectTrips').mockResolvedValue([]);
+      vi.spyOn(supabaseService, 'findTransferTrips').mockResolvedValue([
+        {
+          transfers_count: 2,
+          leg1_route_id: 'gtfs-leg1',
+          leg1_route_short_name: '49',
+          leg1_route_long_name: 'Leg 1',
+          leg1_direction_id: 0,
+          origin_stop_id: 'l1-s2',
+          origin_stop_code: 'l12',
+          origin_stop_name: 'Origin Board',
+          origin_stop_name_he: 'עלייה',
+          origin_stop_sequence: 2,
+          origin_lat: 32.77,
+          origin_lon: 34.96,
+          xfer1_alight_stop_id: 'l1-s4',
+          xfer1_alight_stop_code: 'l14',
+          xfer1_alight_stop_name: 'Hub 1',
+          xfer1_alight_stop_name_he: 'מרכזית 1',
+          xfer1_alight_stop_sequence: 4,
+          xfer1_alight_lat: 32.79,
+          xfer1_alight_lon: 34.96,
+          leg1_stops_between: 2,
+          xfer1_walk_meters: 50,
+          leg2_route_id: 'gtfs-leg2',
+          leg2_route_short_name: '900',
+          leg2_route_long_name: 'Leg 2',
+          leg2_direction_id: 0,
+          xfer1_board_stop_id: 'l2-s1',
+          xfer1_board_stop_code: 'l21',
+          xfer1_board_stop_name: 'Hub 1 Board',
+          xfer1_board_stop_name_he: 'מרכזית 1 עלייה',
+          xfer1_board_stop_sequence: 1,
+          xfer1_board_lat: 32.7904,
+          xfer1_board_lon: 34.96,
+          xfer2_alight_stop_id: 'l2-s3',
+          xfer2_alight_stop_code: 'l23',
+          xfer2_alight_stop_name: 'Hub 2',
+          xfer2_alight_stop_name_he: 'מרכזית 2',
+          xfer2_alight_stop_sequence: 3,
+          xfer2_alight_lat: 32.08,
+          xfer2_alight_lon: 34.79,
+          leg2_stops_between: 2,
+          xfer2_walk_meters: 60,
+          leg3_route_id: 'gtfs-leg3',
+          leg3_route_short_name: '272',
+          leg3_route_long_name: 'Leg 3',
+          leg3_direction_id: 0,
+          xfer2_board_stop_id: 'l3-s1',
+          xfer2_board_stop_code: 'l31',
+          xfer2_board_stop_name: 'Hub 2 Board',
+          xfer2_board_stop_name_he: 'מרכזית 2 עלייה',
+          xfer2_board_stop_sequence: 1,
+          xfer2_board_lat: 32.0805,
+          xfer2_board_lon: 34.79,
+          dest_stop_id: 'l3-s3',
+          dest_stop_code: 'l33',
+          dest_stop_name: 'Dest Alight',
+          dest_stop_name_he: 'יעד',
+          dest_stop_sequence: 3,
+          dest_lat: 31.8913,
+          dest_lon: 34.7796,
+          leg3_stops_between: 2
+        }
+      ]);
+
+      try {
+        // Destination is ~300 m south of dest_stop -> 4 min walk added to total arrival time!
+        const res = await planBestBusesToDestination({
+          userLocation: { lat: 32.77, lon: 34.96 },
+          destination: {
+            lat: 31.8886,
+            lon: 34.7796,
+            place_name: 'Final Dest',
+            formatted_address: 'Dest St, Rehovot'
+          },
+          entryContext: 'standalone',
+          allowColdBootstrap: false
+        });
+
+        const opt = res.recommended_options?.[0];
+        const trip = res.trip_options?.[0];
+        expect(opt).toBeDefined();
+        expect(trip).toBeDefined();
+        expect(opt?.bus.eta_source).toBe('scheduled');
+        expect(opt?.eta_to_boarding_min).toBe(10);
+        expect(opt?.ride_duration_min).toBe(13 + 20 + 15);
+        expect(trip?.legs[1].transfer_wait_min).toBe(14);
+        expect(trip?.legs[2].transfer_wait_min).toBe(11);
+        expect(opt?.walk_to_dest_min).toBe(4);
+        expect(trip?.walk_to_dest_min).toBe(4);
+        expect(trip?.walk_to_dest_meters).toBeGreaterThan(250);
+        expect(opt?.total_arrival_min).toBe(87);
+        expect(trip?.total_duration_min).toBe(87);
+        expect(opt?.estimated_arrival_time).toBe('11:27');
+      } finally {
+        vi.useRealTimers();
+        scheduleService.clearScheduleOverrideForTests();
         vi.restoreAllMocks();
       }
     });

@@ -37,7 +37,7 @@ describe('User Context Service (per-user history & local stop suggestions)', () 
       route_id: 'stride-10049',
       direction_id: 0,
       updated_at: '2026-11-21T13:00:00Z',
-      source: 'fallback',
+      source: 'stride',
       vehicles: [
         {
           vehicle_id: 'egged-49-1',
