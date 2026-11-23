@@ -254,7 +254,7 @@ export const MAJOR_INTERCITY_HUBS = [
   { name: 'Eilat CBS', lat: 29.5575, lon: 34.9530 }
 ];
 
-/** Arrays produced by the hardcoded demo fallback — never cached, so a DB outage self-heals. */
+/** Arrays produced by the emergency static fallback — never cached, so a DB outage self-heals. */
 const fallbackStopArrays = new WeakSet<RouteStopCoord[]>();
 
 function getFallbackStopsForDirection(directionId: 0 | 1): RouteStopCoord[] {

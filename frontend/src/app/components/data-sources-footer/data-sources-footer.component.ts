@@ -1,7 +1,9 @@
 import {
+  AfterViewInit,
   ChangeDetectionStrategy,
   Component,
   ElementRef,
+  OnDestroy,
   computed,
   input,
   viewChild
@@ -136,24 +138,30 @@ const TEXTS: Record<
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <footer class="ds-footer">
+    <footer class="ds-footer" [attr.dir]="isRtl() ? 'rtl' : 'ltr'">
       <button type="button" class="ds-trigger" (click)="open()" aria-haspopup="dialog">
         ⓘ {{ t().trigger }}
       </button>
+      <span class="ds-sep" aria-hidden="true">•</span>
+      <a class="ds-foot-link" href="/privacy" target="_blank" rel="noopener noreferrer">{{ t().privacy }}</a>
+      <span class="ds-sep" aria-hidden="true">•</span>
+      <a class="ds-foot-link" href="/terms" target="_blank" rel="noopener noreferrer">{{ t().terms }}</a>
     </footer>
 
     <dialog
       #dlg
       class="ds-dialog"
+      closedby="any"
       [attr.dir]="isRtl() ? 'rtl' : 'ltr'"
       [attr.lang]="lang()"
       aria-labelledby="nb-ds-title"
-      (click)="onBackdropClick($event)"
     >
       <div class="ds-card">
         <div class="ds-head">
           <h2 id="nb-ds-title" class="ds-title">{{ t().title }}</h2>
-          <button type="button" class="ds-close" (click)="close()" [attr.aria-label]="t().close">✕</button>
+          <form method="dialog" class="ds-close-form">
+            <button type="submit" class="ds-close" autofocus [attr.aria-label]="t().close">✕</button>
+          </form>
         </div>
 
         <p class="ds-disclaimer">{{ t().disclaimer }}</p>
@@ -185,26 +193,39 @@ const TEXTS: Record<
 
       .ds-footer {
         display: flex;
+        flex-wrap: wrap;
+        align-items: center;
         justify-content: center;
-        margin-block: -0.4rem -0.3rem;
+        gap: 0.25rem 0.45rem;
+        margin-block: -0.35rem -0.25rem;
+        font-size: 0.66rem;
+        color: #7c8796;
       }
 
-      .ds-trigger {
+      .ds-trigger,
+      .ds-foot-link {
         background: transparent;
         border: none;
-        color: #7c8796;
+        color: #8b96a5;
         font-size: 0.66rem;
         font-weight: 500;
-        padding: 0.2rem 0.4rem;
+        padding: 0.18rem 0.35rem;
         border-radius: 0.4rem;
         cursor: pointer;
+        text-decoration: none;
         text-align: center;
       }
 
       .ds-trigger:hover,
-      .ds-trigger:focus-visible {
+      .ds-trigger:focus-visible,
+      .ds-foot-link:hover,
+      .ds-foot-link:focus-visible {
         color: #cbd5e1;
         background: rgba(255, 255, 255, 0.06);
+      }
+
+      .ds-sep {
+        color: rgba(148, 163, 184, 0.45);
       }
 
       .ds-dialog {
@@ -220,8 +241,15 @@ const TEXTS: Record<
         box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
       }
 
+      .ds-dialog:modal {
+        overscroll-behavior: contain;
+      }
+
       .ds-dialog::backdrop {
-        background: rgba(8, 12, 16, 0.65);
+        background: rgba(4, 9, 18, 0.72);
+        backdrop-filter: blur(4px);
+        overflow: hidden;
+        overscroll-behavior: contain;
       }
 
       .ds-card {
@@ -250,6 +278,11 @@ const TEXTS: Record<
         font-size: 0.85rem;
       }
 
+      .ds-close-form {
+        margin: 0;
+        flex-shrink: 0;
+      }
+
       .ds-close {
         background: transparent;
         border: none;
@@ -258,7 +291,6 @@ const TEXTS: Record<
         padding: 0.15rem 0.35rem;
         border-radius: 0.4rem;
         cursor: pointer;
-        flex-shrink: 0;
       }
 
       .ds-close:hover {
@@ -302,14 +334,47 @@ const TEXTS: Record<
     `
   ]
 })
-export class DataSourcesFooterComponent {
+export class DataSourcesFooterComponent implements AfterViewInit, OnDestroy {
   readonly lang = input<WidgetLang>('he');
 
   private readonly dialog = viewChild.required<ElementRef<HTMLDialogElement>>('dlg');
+  private cleanupFallback: (() => void) | null = null;
 
   readonly sources = SOURCE_LINKS;
   readonly t = computed(() => TEXTS[this.lang()] ?? TEXTS.en);
   readonly isRtl = computed(() => this.lang() === 'he' || this.lang() === 'ar');
+
+  ngAfterViewInit(): void {
+    const el = this.dialog().nativeElement;
+    // Feature-detected light-dismiss fallback for browsers without <dialog closedby="any">
+    if (typeof HTMLDialogElement !== 'undefined' && !('closedBy' in HTMLDialogElement.prototype)) {
+      let pressedOutside = false;
+      const isOutside = (e: PointerEvent): boolean => {
+        const r = el.getBoundingClientRect();
+        return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+      };
+      const onDown = (e: PointerEvent) => {
+        pressedOutside = isOutside(e);
+      };
+      const onUp = (e: PointerEvent) => {
+        if (pressedOutside && isOutside(e)) {
+          el.close();
+        }
+        pressedOutside = false;
+      };
+      el.addEventListener('pointerdown', onDown);
+      el.addEventListener('pointerup', onUp);
+      this.cleanupFallback = () => {
+        el.removeEventListener('pointerdown', onDown);
+        el.removeEventListener('pointerup', onUp);
+      };
+    }
+  }
+
+  ngOnDestroy(): void {
+    this.cleanupFallback?.();
+    this.cleanupFallback = null;
+  }
 
   open(): void {
     const el = this.dialog().nativeElement;
@@ -317,22 +382,6 @@ export class DataSourcesFooterComponent {
       el.showModal();
     } else {
       el.setAttribute('open', '');
-    }
-  }
-
-  close(): void {
-    const el = this.dialog().nativeElement;
-    if (typeof el.close === 'function') {
-      el.close();
-    } else {
-      el.removeAttribute('open');
-    }
-  }
-
-  /** Clicks on the dialog element itself (outside the card) land on the backdrop. */
-  onBackdropClick(event: MouseEvent): void {
-    if (event.target === this.dialog().nativeElement) {
-      this.close();
     }
   }
 }

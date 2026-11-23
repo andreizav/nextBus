@@ -1170,68 +1170,48 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
     switch (this.lang()) {
       case 'he':
         return {
-          live: 'חי • 15 שניות',
-          paused: 'מושהה ברקע',
           locateMe: 'המיקום שלי',
           locating: 'מאתר...',
-          defaultArea: 'חיפה (ברירת מחדל)',
-          toStop: 'מרחק לתחנה',
+          defaultArea: 'חיפה',
           viewMap: 'צפה במפה',
           liveTrack: 'מעקב חי',
-          loadingMap: 'טוען מפה אינטראקטיבית...',
-          lineWord: 'קו'
+          loadingMap: 'טוען מפה אינטראקטיבית...'
         };
       case 'ar':
         return {
-          live: 'مباشر • 15ث',
-          paused: 'متوقف مؤقتاً',
           locateMe: 'موقعي',
           locating: 'جارٍ التحديد...',
-          defaultArea: 'حيفا (افتراضي)',
-          toStop: 'المسافة للمحطة',
+          defaultArea: 'حيفا',
           viewMap: 'عرض الخريطة',
           liveTrack: 'تتبع مباشر',
-          loadingMap: 'جارٍ تحميل الخريطة...',
-          lineWord: 'خط'
+          loadingMap: 'جارٍ تحميل الخريطة...'
         };
       case 'uk':
         return {
-          live: 'Онлайн • 15с',
-          paused: 'Пауза (фон)',
           locateMe: 'Моя геопозиція',
           locating: 'Пошук GPS...',
-          defaultArea: 'Хайфа (за замовч.)',
-          toStop: 'До зупинки',
+          defaultArea: 'Хайфа',
           viewMap: 'Карта',
           liveTrack: 'Live Track',
-          loadingMap: 'Завантаження інтерактивної карти...',
-          lineWord: 'Автобус'
+          loadingMap: 'Завантаження інтерактивної карти...'
         };
       case 'en':
         return {
-          live: 'Live • 15s',
-          paused: 'Paused',
           locateMe: 'My Location',
           locating: 'Locating...',
-          defaultArea: 'Haifa (default)',
-          toStop: 'To nearest stop',
+          defaultArea: 'Haifa',
           viewMap: 'View Map',
           liveTrack: 'Live Track',
-          loadingMap: 'Loading map...',
-          lineWord: 'Line'
+          loadingMap: 'Loading interactive map...'
         };
       default:
         return {
-          live: 'Онлайн • 15с',
-          paused: 'Пауза (не видим)',
           locateMe: 'Моя геопозиция',
           locating: 'Поиск GPS...',
-          defaultArea: 'Хайфа (по умолчанию)',
-          toStop: 'До остановки',
+          defaultArea: 'Хайфа',
           viewMap: 'Карта',
           liveTrack: 'Live Track',
-          loadingMap: 'Загрузка интерактивной карты...',
-          lineWord: 'Автобус'
+          loadingMap: 'Загрузка интерактивной карты...'
         };
     }
   });
@@ -1387,28 +1367,43 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
     const c = this.userCoords();
     if (!c) return this.labels().defaultArea;
     const l = this.lang();
-    if (c.lat >= 32.74 && c.lat <= 32.785 && c.lon >= 34.95 && c.lon <= 34.995) {
-      if (l === 'he') return 'טירת כרמל';
-      if (l === 'ar') return 'طيرة الكرمل';
-      if (l === 'uk') return 'Тірат-Кармель';
-      return l === 'en' ? 'Tirat Carmel' : 'Тират-Кармель';
-    }
-    if (c.lat >= 32.0 && c.lat <= 32.15 && c.lon >= 34.74 && c.lon <= 34.85) {
-      if (l === 'he') return 'תל אביב';
-      if (l === 'ar') return 'تل أبيب';
-      if (l === 'uk') return 'Тель-Авів';
-      return l === 'en' ? 'Tel Aviv' : 'Тель-Авив';
-    }
-    if (c.lat >= 31.74 && c.lat <= 31.85 && c.lon >= 35.15 && c.lon <= 35.25) {
-      if (l === 'he') return 'ירושלים';
-      if (l === 'ar') return 'القدس';
-      if (l === 'uk') return 'Єрусалим';
-      return l === 'en' ? 'Jerusalem' : 'Иерусалим';
-    }
-    if (l === 'he') return 'חיפה';
-    if (l === 'ar') return 'حيفا';
-    if (l === 'uk') return 'Хайфа';
-    return l === 'en' ? 'Haifa' : 'Хайфа';
+    const cityBoxes: ReadonlyArray<{
+      minLat: number;
+      maxLat: number;
+      minLon: number;
+      maxLon: number;
+      names: Record<WidgetLang, string>;
+    }> = [
+      { minLat: 32.74, maxLat: 32.785, minLon: 34.95, maxLon: 34.995, names: { he: 'טירת כרמל', ar: 'طيرة الكرمل', uk: 'Тірат-Кармель', en: 'Tirat Carmel', ru: 'Тират-Кармель' } },
+      { minLat: 32.76, maxLat: 32.85, minLon: 34.94, maxLon: 35.07, names: { he: 'חיפה', ar: 'حيفا', uk: 'Хайфа', en: 'Haifa', ru: 'Хайфа' } },
+      { minLat: 32.98, maxLat: 33.04, minLon: 35.07, maxLon: 35.13, names: { he: 'נהריה', ar: 'نهاريا', uk: 'Нагарія', en: 'Nahariya', ru: 'Нагария' } },
+      { minLat: 32.76, maxLat: 32.82, minLon: 35.50, maxLon: 35.56, names: { he: 'טבריה', ar: 'طبريا', uk: 'Тверія', en: 'Tiberias', ru: 'Тверия' } },
+      { minLat: 32.58, maxLat: 32.63, minLon: 35.26, maxLon: 35.33, names: { he: 'עפולה', ar: 'العفولة', uk: 'Афула', en: 'Afula', ru: 'Афула' } },
+      { minLat: 32.41, maxLat: 32.47, minLon: 34.88, maxLon: 34.96, names: { he: 'חדרה', ar: 'الخضيرة', uk: 'Хадера', en: 'Hadera', ru: 'Хадера' } },
+      { minLat: 32.27, maxLat: 32.36, minLon: 34.83, maxLon: 34.90, names: { he: 'נתניה', ar: 'نتانيا', uk: 'Нетанія', en: 'Netanya', ru: 'Нетания' } },
+      { minLat: 32.0, maxLat: 32.15, minLon: 34.74, maxLon: 34.85, names: { he: 'תל אביב', ar: 'تل أبيب', uk: 'Тель-Авів', en: 'Tel Aviv', ru: 'Тель-Авив' } },
+      { minLat: 32.06, maxLat: 32.12, minLon: 34.85, maxLon: 34.93, names: { he: 'פתח תקווה', ar: 'بيتح تكفا', uk: 'Петах-Тіква', en: 'Petah Tikva', ru: 'Петах-Тиква' } },
+      { minLat: 31.94, maxLat: 32.01, minLon: 34.74, maxLon: 34.84, names: { he: 'ראשון לציון', ar: 'ريشون لتسيون', uk: 'Рішон-ле-Ціон', en: 'Rishon LeZion', ru: 'Ришон-ле-Цион' } },
+      { minLat: 31.86, maxLat: 31.93, minLon: 34.77, maxLon: 34.84, names: { he: 'רחובות', ar: 'رحوفوت', uk: 'Реховот', en: 'Rehovot', ru: 'Реховот' } },
+      { minLat: 31.87, maxLat: 31.93, minLon: 34.97, maxLon: 35.04, names: { he: 'מודיעין', ar: 'موديعين', uk: 'Модіїн', en: "Modi'in", ru: 'Модиин' } },
+      { minLat: 31.76, maxLat: 31.84, minLon: 34.61, maxLon: 34.69, names: { he: 'אשדוד', ar: 'أشدود', uk: 'Ашдоד', en: 'Ashdod', ru: 'Ашдод' } },
+      { minLat: 31.64, maxLat: 31.71, minLon: 34.53, maxLon: 34.62, names: { he: 'אשקלון', ar: 'عسقلان', uk: 'Ашкелон', en: 'Ashkelon', ru: 'Ашкелон' } },
+      { minLat: 31.74, maxLat: 31.85, minLon: 35.15, maxLon: 35.25, names: { he: 'ירושלים', ar: 'القدس', uk: 'Єрусалим', en: 'Jerusalem', ru: 'Иерусалим' } },
+      { minLat: 31.21, maxLat: 31.29, minLon: 34.75, maxLon: 34.84, names: { he: 'באר שבע', ar: 'بئر السبع', uk: 'Беер-Шева', en: "Be'er Sheva", ru: 'Беэр-Шева' } },
+      { minLat: 29.52, maxLat: 29.59, minLon: 34.91, maxLon: 34.99, names: { he: 'אילת', ar: 'إيلات', uk: 'Ейлат', en: 'Eilat', ru: 'Эйлат' } }
+    ];
+    const matched = cityBoxes.find(
+      (b) => c.lat >= b.minLat && c.lat <= b.maxLat && c.lon >= b.minLon && c.lon <= b.maxLon
+    );
+    if (matched) return matched.names[l];
+    const countryFallback: Record<WidgetLang, string> = {
+      he: 'ישראל',
+      ar: 'إسرائيل',
+      uk: 'Ізраїль',
+      en: 'Israel',
+      ru: 'Израиль'
+    };
+    return countryFallback[l];
   });
 
   cleanPlaceName(name: string): string {

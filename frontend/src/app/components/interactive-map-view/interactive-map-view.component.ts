@@ -1287,7 +1287,7 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
           offersTitle: 'בתי קפה בקרבת מקום',
           openMaps: 'פתח במפות',
           intercityAdvice:
-            'היעד המבוקש נמצא מחוץ לרשת העירונית. מומלץ לקחת קו אקספרס 910/900 או רכבת ממרכזית חוף הכרמל.',
+            'לא נמצא מסלול אוטובוס ישיר ליעד המבוקש. נסו לחפש תחנה מרכזית קרובה או לשנות את שם היעד.',
           scheduledEta: 'לפי לו״ז',
           estimatedEta: 'זמן משוער',
           secShort: 'ש׳',
@@ -1312,7 +1312,7 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
           offersTitle: 'مقاهي قريبة أثناء الانتظار',
           openMaps: 'فتح في الخرائط',
           intercityAdvice:
-            'الوجهة خارج الشبكة الحضرية المحلية. يُنصح بأخذ خط إكسبرس 900/910 أو القطار من محطة حوف هكرمل.',
+            'لم يتم العثور على مسار حافلات مباشر للوجهة المطلوبة. جرّب البحث عن محطة مركزية قريبة أو تعديل الوجهة.',
           scheduledEta: 'حسب الجدول',
           estimatedEta: 'وقت تقديري',
           secShort: 'ث',
@@ -1337,7 +1337,7 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
           offersTitle: 'Кафе поруч на час очікування',
           openMaps: 'Відкрити на карті',
           intercityAdvice:
-            'Пункт призначення за межами міської мережі. Рекомендуємо експрес №900/910 або потяг від Хоф ха-Кармель.',
+            'Прямий автобусний маршрут до вказаної точки не знайдено. Спробуйте обрати найближчу центральну станцію або уточнити пункт призначення.',
           scheduledEta: 'За розкладом',
           estimatedEta: 'Орієнтовно',
           secShort: 'с',
@@ -1362,7 +1362,7 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
           offersTitle: 'Cafes nearby while you wait',
           openMaps: 'Open in Maps',
           intercityAdvice:
-            'Destination is outside the local urban corridor. Take Express 910/900 or rail from Hof HaCarmel Central.',
+            'No direct bus route was found for this destination. Try searching for a nearby central station or refining your destination.',
           scheduledEta: 'Scheduled',
           estimatedEta: 'Estimated',
           secShort: 's',
@@ -1387,7 +1387,7 @@ export class InteractiveMapViewComponent implements AfterViewInit, OnDestroy {
           offersTitle: 'Кафе рядом на время ожидания',
           openMaps: 'Открыть на карте',
           intercityAdvice:
-            'Пункт назначения находится за пределами городской сети. Рекомендуем экспресс №910/900 или поезд от Хоф ха-Кармель.',
+            'Прямой автобусный маршрут до указанной точки не найден. Попробуйте выбрать ближайшую центральную станцию или уточнить пункт назначения.',
           scheduledEta: 'По расписанию',
           estimatedEta: 'Примерно',
           secShort: 'с',
