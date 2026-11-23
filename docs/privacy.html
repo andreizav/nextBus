@@ -30,7 +30,7 @@
         nextBus provides real-time public transit arrival estimates in Israel via Google Connected Apps
         and the Model Context Protocol (MCP), as well as our standalone web widget. When you request bus status
         or route directions, your query transmits your requested line number or destination and approximate GPS
-        coordinates solely to locate nearby public transit stops and verified GTFS routes.
+        coordinates solely to locate nearby public transit stops and public transit routes.
       </p>
 
       <h2>2. Ephemeral Caching, Anonymous Route History &amp; No Personal Tracking</h2>
@@ -49,11 +49,29 @@
 
       <h2>3. Third-Party Data Sources</h2>
       <p>
-        Real-time vehicle telemetry is sourced asynchronously from the Open Bus Stride API (Hasadna / MOT Israel)
-        by background workers.
+        Real-time vehicle telemetry is retrieved asynchronously by background workers from the Open Bus Stride API,
+        an open-data service operated by The Public Knowledge Workshop (Hasadna), which republishes official government open data.
+        No personal data is sent to these sources.
       </p>
 
-      <h2>4. Contact</h2>
+      <h2 id="government-data-sources">4. Government Data Sources &amp; Non-Affiliation Disclaimer</h2>
+      <p>
+        <strong>nextBus is an independent application.</strong> It is NOT affiliated with, endorsed by, or representing
+        the Israeli Ministry of Transport and Road Safety, the National Public Transport Authority, or any other government entity.
+      </p>
+      <p>
+        Public transit schedule (GTFS) and real-time (SIRI) information displayed in nextBus is derived from publicly available
+        open data published by the National Public Transport Authority (Israel Ministry of Transport and Road Safety):
+      </p>
+      <ul>
+        <li><a href="https://www.gov.il/en/departments/public_transportion_authority" target="_blank" rel="noopener noreferrer">National Public Transport Authority (Israel Ministry of Transport)</a></li>
+        <li><a href="https://www.gov.il/he/pages/gtfs_general_transit_feed_specifications" target="_blank" rel="noopener noreferrer">Official GTFS Static Schedule Data</a></li>
+        <li><a href="https://www.gov.il/he/pages/real_time_information_siri" target="_blank" rel="noopener noreferrer">Official SIRI Real-Time Data</a></li>
+        <li><a href="https://open-bus-stride-api.hasadna.org.il/docs" target="_blank" rel="noopener noreferrer">Open Data Aggregator — The Public Knowledge Workshop (Open Bus Stride API)</a></li>
+      </ul>
+
+
+      <h2>5. Contact</h2>
       <p>For privacy inquiries regarding the nextBus service, contact the project maintainer via the verified service domain.</p>
     </main>
   </body>

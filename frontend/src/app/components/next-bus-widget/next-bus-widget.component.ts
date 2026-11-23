@@ -23,6 +23,7 @@ import type {
   UserStopInfo,
   WidgetLang
 } from '../../models/bus.models';
+import { DataSourcesFooterComponent } from '../data-sources-footer/data-sources-footer.component';
 import { InteractiveMapViewComponent } from '../interactive-map-view/interactive-map-view.component';
 import { LiteTimelineViewComponent } from '../lite-timeline-view/lite-timeline-view.component';
 import { SearchBarComponent } from '../search-bar/search-bar.component';
@@ -92,7 +93,8 @@ const EMPTY_INITIAL_STATE: LiveBusStatusResponse = {
     CommonModule,
     LiteTimelineViewComponent,
     InteractiveMapViewComponent,
-    SearchBarComponent
+    SearchBarComponent,
+    DataSourcesFooterComponent
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
@@ -477,6 +479,8 @@ const EMPTY_INITIAL_STATE: LiveBusStatusResponse = {
           </button>
         </div>
       }
+
+      <nb-data-sources-footer [lang]="lang()" />
     </main>
   `,
   styles: [
@@ -1206,14 +1210,14 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
       case 'en':
         return {
           live: 'Live • 15s',
-          paused: 'Polling paused',
+          paused: 'Paused',
           locateMe: 'My Location',
           locating: 'Locating...',
-          defaultArea: 'Haifa (default coords)',
+          defaultArea: 'Haifa (default)',
           toStop: 'To nearest stop',
           viewMap: 'View Map',
           liveTrack: 'Live Track',
-          loadingMap: 'Loading interactive map module...',
+          loadingMap: 'Loading map...',
           lineWord: 'Line'
         };
       default:
@@ -1329,7 +1333,7 @@ export class NextBusWidgetComponent implements OnInit, OnDestroy {
           requestedOriginLabel: 'Requested origin',
           confirmProposedBtn: 'Yes, search from the specified point',
           useCurrentBtn: 'Use my current location',
-          noRouteTitle: 'No verified GTFS route found',
+          noRouteTitle: 'No verified route found',
           routeToHubPrefix: 'Route to nearest confirmed hub',
           streetStopsTitle: 'Stops along this street'
         };

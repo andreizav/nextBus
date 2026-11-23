@@ -884,9 +884,6 @@ export async function planBestBusesToDestination(
     directMatches = filterValidDirectionMatches(cachedPair.direct_matches ?? []);
     transferMatches = filterValidTransferMatches(cachedPair.transfer_matches ?? []);
     twoTransferRows = filterValidTwoTransferMatches(cachedPair.two_transfer_matches ?? []);
-    console.log(
-      `[TripPlanner] Route-pair CACHE HIT (${pairCacheKey}) — reusing static topology, refreshing live Redis ETAs`
-    );
   } else {
     let [rawDirect, rawTransfersAll] = await Promise.all([
       supabaseService.findDirectTrips(
@@ -1931,9 +1928,6 @@ export async function planBestBusesToDestination(
     };
 
     await redisService.setCachedRoutePair(pairCacheKey, cachePayload, ROUTE_PAIR_TTL_SECONDS);
-    console.log(
-      `[TripPlanner] Route-pair CACHE MISS (${pairCacheKey}) — stored static topology in Redis (TTL ${ROUTE_PAIR_TTL_SECONDS}s)`
-    );
   }
 
   const rawOptionsList =

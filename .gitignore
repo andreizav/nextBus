@@ -27,6 +27,8 @@ yarn-error.log*
 *.jks
 keystore.properties
 twa-keystore*
+*service-account*.json
+play-service-account*.json
 android-twa/.gradle/
 android-twa/build/
 android-twa/app/build/
